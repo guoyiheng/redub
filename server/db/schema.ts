@@ -1,0 +1,30 @@
+import { sqliteTable, text, integer, real, index } from 'drizzle-orm/sqlite-core'
+import type { MediaKind, Stage, JobStatus } from '../../shared/types'
+
+export const projects = sqliteTable('projects', {
+  id: text().primaryKey(), name: text().notNull(), kind: text().$type<MediaKind>().notNull(),
+  sourcePath: text(), duration: real().notNull().default(0), sourceLanguage: text().notNull().default('auto'),
+  targetLanguage: text().notNull().default('中文'), channelId: text().notNull().default('volcengine-default'),
+  paused: integer({ mode: 'boolean' }).notNull().default(false),
+  audioPath: text(), vocalsPath: text(), backgroundPath: text(), mixedPath: text(), outputPath: text(),
+  createdAt: integer().notNull(), updatedAt: integer().notNull()
+})
+export const segments = sqliteTable('segments', {
+  id: text().primaryKey(), projectId: text().notNull().references(() => projects.id),
+  start: real().notNull(), end: real().notNull(), text: text().notNull().default(''), translation: text().notNull().default(''),
+  speaker: text().notNull().default('角色 1'), enabled: integer({ mode: 'boolean' }).notNull().default(true),
+  referencePath: text(), generatedPath: text(), generatedHash: text(), generatedDuration: real(), subtitle: text()
+}, t => [index('segments_project').on(t.projectId)])
+export const jobs = sqliteTable('jobs', {
+  id: text().primaryKey(), projectId: text().notNull().references(() => projects.id), stage: text().$type<Stage>().notNull(),
+  segmentId: text(), status: text().$type<JobStatus>().notNull().default('queued'), progress: integer().notNull().default(0),
+  message: text().notNull().default('等待执行'), error: text(), dependsOn: text(), attempts: integer().notNull().default(0),
+  createdAt: integer().notNull(), updatedAt: integer().notNull()
+}, t => [index('jobs_status').on(t.status), index('jobs_project').on(t.projectId)])
+export const channels = sqliteTable('channels', {
+  id: text().primaryKey(), name: text().notNull(), type: text().$type<'volcengine' | 'openai'>().notNull(),
+  endpoint: text().notNull(), model: text().notNull(), keyEnv: text().notNull(),
+  enabled: integer({ mode: 'boolean' }).notNull().default(true),
+  pitch: integer().notNull().default(0), speed: integer().notNull().default(0), loudness: integer().notNull().default(0)
+})
+export const settings = sqliteTable('settings', { key: text().primaryKey(), value: text().notNull() })

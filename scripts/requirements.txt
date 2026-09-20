@@ -1,0 +1,5 @@
+torch==2.5.1
+torchaudio==2.5.1
+demucs==4.0.1
+faster-whisper==1.2.1
+numpy<2
