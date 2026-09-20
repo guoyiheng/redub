@@ -58,9 +58,34 @@ export async function executeJob(job: Job, progress: (value: number, message: st
       join(dir, 'stems'),
       join(dir, 'original.wav')
     ])
-    await copyFile(join(dir, 'stems/htdemucs/original/vocals.wav'), join(dir, 'vocals.wav'))
-    await copyFile(join(dir, 'stems/htdemucs/original/no_vocals.wav'), join(dir, 'background.wav'))
-    await update({ vocalsPath: rel('vocals.wav'), backgroundPath: rel('background.wav') })
+    const revision = randomUUID()
+    const vocalsPath = rel(`vocals-${revision}.wav`)
+    const backgroundPath = rel(`background-${revision}.wav`)
+    await copyFile(join(dir, 'stems/htdemucs/original/vocals.wav'), assetPath(vocalsPath))
+    await copyFile(join(dir, 'stems/htdemucs/original/no_vocals.wav'), assetPath(backgroundPath))
+    // Publish both stems together; previous results remain usable if separation fails.
+    await db.transaction(async (tx) => {
+      await tx
+        .update(projects)
+        .set({
+          vocalsPath,
+          backgroundPath,
+          mixedPath: null,
+          outputPath: null,
+          updatedAt: Date.now()
+        })
+        .where(eq(projects.id, p.id))
+      await tx
+        .update(segments)
+        .set({
+          referencePath: null,
+          generatedPath: null,
+          generatedHash: null,
+          generatedDuration: null,
+          subtitle: null
+        })
+        .where(eq(segments.projectId, p.id))
+    })
   }
   if (job.stage === 'segment') {
     if (!p.vocalsPath) throw new Error('请先完成人声分离')
@@ -161,10 +186,29 @@ export async function executeJob(job: Job, progress: (value: number, message: st
       (s) => s.enabled && (!job.segmentId || s.id === job.segmentId)
     )
     if (!lines.length) throw new Error('没有启用的配音片段')
+    if (p.kind !== 'text' && (!p.vocalsPath || !existsSync(assetPath(p.vocalsPath))))
+      throw new Error('请先完成人声分离，再使用原声参考配音')
     await invalidateOutput(p.id)
     for (let i = 0; i < lines.length; i++) {
-      const s = lines[i]!,
-        hash = synthesisHash(s, channel)
+      const s = lines[i]!
+      if (p.kind !== 'text' && (!s.referencePath || !existsSync(assetPath(s.referencePath)))) {
+        const referencePath = rel(`reference-${s.id}-${randomUUID()}.wav`)
+        await cutAudio(assetPath(p.vocalsPath!), assetPath(referencePath), s.start, s.end - s.start)
+        await db
+          .update(segments)
+          .set({
+            referencePath,
+            generatedPath: null,
+            generatedHash: null,
+            generatedDuration: null,
+            subtitle: null
+          })
+          .where(eq(segments.id, s.id))
+        s.referencePath = referencePath
+        s.generatedPath = null
+        s.generatedHash = null
+      }
+      const hash = synthesisHash(s, channel)
       if (s.generatedPath && s.generatedHash === hash && existsSync(assetPath(s.generatedPath))) continue
       await progress(
         Math.round((i / lines.length) * 100),

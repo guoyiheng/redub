@@ -66,6 +66,10 @@ describe.sequential('媒体处理与服务协议', () => {
   })
   it('参考原音色发送火山规定的请求，落盘音频及字幕', async () => {
     await copyFile(join(dir, 'original.wav'), join(dir, 'reference.wav'))
+    await db
+      .update(projects)
+      .set({ vocalsPath: `${id}/original.wav` })
+      .where(eq(projects.id, id))
     await db.insert(segments).values([
       {
         id: 'line-1',
