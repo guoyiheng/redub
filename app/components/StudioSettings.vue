@@ -138,7 +138,7 @@ onMounted(check)
           ><UButton color="neutral" variant="ghost" @click="draft = undefined">取消</UButton>
         </div>
       </form>
-      <p class="help">配音渠道可在项目设置中选择。翻译默认使用「台词翻译」渠道，请编辑它的地址与模型。</p>
+      <p class="help">配音渠道可在项目设置中选择。翻译渠道可在下方「任务与识别」中选择。</p>
     </section>
     <section class="settings-section">
       <div class="section-heading">
@@ -150,6 +150,15 @@ onMounted(check)
           >检查环境</UButton
         >
       </div>
+      <UButton
+        v-if="desktop && health && !health.models"
+        color="neutral"
+        variant="outline"
+        :loading="desktopBusy"
+        @click="updateDesktop('models')"
+        >安装本地模型环境</UButton
+      >
+      <p v-if="desktopBusy" class="help">正在处理，请保持应用打开。模型环境首次安装可能需要几分钟。</p>
       <div class="health-list">
         <span
           ><i :class="{ ok: health?.ffmpeg && health?.ffprobe }" />音视频引擎
@@ -180,6 +189,15 @@ onMounted(check)
               :items="['tiny', 'base', 'small', 'medium', 'large-v3']"
           /></UFormField>
         </div>
+        <UFormField label="翻译渠道"
+          ><USelect
+            v-model="queueDraft.translationChannelId"
+            :items="
+              channels
+                .filter((c) => c.type === 'openai' && c.enabled)
+                .map((c) => ({ label: c.name, value: c.id }))
+            "
+        /></UFormField>
         <UCheckbox v-model="queueDraft.pauseOnFailure" label="任务失败后暂停该项目的后续队列" />
         <p class="help">关闭暂停后，失败步骤的依赖任务仍会等待你重试或跳过，其他独立任务可继续。</p>
         <UButton color="neutral" variant="outline" type="submit">保存任务设置</UButton>

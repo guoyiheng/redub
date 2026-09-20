@@ -11,7 +11,7 @@ const client = createClient({ url: pathToFileURL(join(dataDir, 'redub.sqlite')).
 export const db = drizzle(client, { schema })
 let ready: Promise<void> | undefined
 export function initDb() {
-  return ready ??= (async () => {
+  return (ready ??= (async () => {
     await client.execute('PRAGMA journal_mode=WAL')
     await client.execute('PRAGMA foreign_keys=ON')
     await client.executeMultiple(`
@@ -44,9 +44,26 @@ export function initDb() {
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       PRAGMA user_version=1;
     `)
-    await db.insert(schema.channels).values([
-      { id: 'volcengine-default', name: '火山 Audio', type: 'volcengine', endpoint: 'https://openspeech.bytedance.com/api/v3/tts/create', model: 'seed-audio-1.0', keyEnv: 'VOLCENGINE_API_KEY' },
-      { id: 'translation-default', name: '台词翻译', type: 'openai', endpoint: process.env.TRANSLATION_BASE_URL || 'https://api.openai.com/v1', model: process.env.TRANSLATION_MODEL || 'gpt-4o-mini', keyEnv: 'TRANSLATION_API_KEY' }
-    ]).onConflictDoNothing()
-  })()
+    await db
+      .insert(schema.channels)
+      .values([
+        {
+          id: 'volcengine-default',
+          name: '火山 Audio',
+          type: 'volcengine',
+          endpoint: 'https://openspeech.bytedance.com/api/v3/tts/create',
+          model: 'seed-audio-1.0',
+          keyEnv: 'VOLCENGINE_API_KEY'
+        },
+        {
+          id: 'translation-default',
+          name: '台词翻译',
+          type: 'openai',
+          endpoint: process.env.TRANSLATION_BASE_URL || 'https://api.openai.com/v1',
+          model: process.env.TRANSLATION_MODEL || 'gpt-4o-mini',
+          keyEnv: 'TRANSLATION_API_KEY'
+        }
+      ])
+      .onConflictDoNothing()
+  })())
 }

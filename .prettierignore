@@ -1,0 +1,8 @@
+node_modules
+.nuxt
+.output
+.data
+.venv
+release
+package-lock.json
+AGENT.md

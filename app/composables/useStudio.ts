@@ -10,7 +10,8 @@ export function useStudio() {
   const settings = useState<Settings>('settings', () => ({
     concurrency: 2,
     pauseOnFailure: true,
-    whisperModel: 'small'
+    whisperModel: 'small',
+    translationChannelId: 'translation-default'
   }))
   const selected = useState<string | null>('selected', () => null)
   const detail = useState<ProjectDetail | null>('detail', () => null)
