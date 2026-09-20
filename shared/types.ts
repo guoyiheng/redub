@@ -69,6 +69,7 @@ export interface Channel {
   pitch: number
   speed: number
   loudness: number
+  apiKey?: string | null
   configured?: boolean
 }
 export interface Settings {

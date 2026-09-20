@@ -70,9 +70,7 @@ onBeforeUnmount(() => clearInterval(timer))
       </button>
       <nav class="sidebar-nav" aria-label="主导航">
         <button :class="{ active: view === 'home' }" @click="show('home')">
-          <UIcon name="i-carbon-folder" />项目</button
-        ><button :class="{ active: view === 'settings' }" @click="show('settings')">
-          <UIcon name="i-carbon-settings" />渠道与设置
+          <UIcon name="i-carbon-folder" />项目
         </button>
       </nav>
       <div v-if="projects.length" class="sidebar-projects">
@@ -92,6 +90,11 @@ onBeforeUnmount(() => clearInterval(timer))
                   : 'i-carbon-document'
             "
           /><span>{{ p.name }}</span>
+        </button>
+      </div>
+      <div class="sidebar-footer">
+        <button :class="{ active: view === 'settings' }" @click="show('settings')">
+          <UIcon name="i-carbon-settings" />设置
         </button>
       </div>
     </aside>

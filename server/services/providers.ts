@@ -24,6 +24,9 @@ export function safeError(error: unknown) {
   }
   return message.slice(-2200)
 }
+function channelKey(channel: Channel) {
+  return channel.apiKey || process.env[channel.keyEnv] || ''
+}
 async function responseJson(response: Response) {
   const data = await response.json().catch(() => ({}))
   if (!response.ok)
@@ -36,7 +39,7 @@ export async function translateLines(lines: Segment[], target: string, channel: 
   const result = await responseJson(
     await fetch(`${channel.endpoint.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env[channel.keyEnv]}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${channelKey(channel)}` },
       signal: AbortSignal.timeout(180000),
       body: JSON.stringify({
         model: channel.model,
@@ -95,7 +98,7 @@ export async function synthesizeSpeech(segment: Segment, channel: Channel, outpu
       signal: AbortSignal.timeout(240000),
       headers: {
         'Content-Type': 'application/json',
-        'X-Api-Key': process.env[channel.keyEnv]!,
+        'X-Api-Key': channelKey(channel),
         'X-Api-Request-Id': randomUUID()
       },
       body: JSON.stringify({

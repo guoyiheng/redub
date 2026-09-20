@@ -39,11 +39,14 @@ export function initDb() {
       CREATE TABLE IF NOT EXISTS channels (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, endpoint TEXT NOT NULL, model TEXT NOT NULL,
         keyEnv TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, pitch INTEGER NOT NULL DEFAULT 0,
-        speed INTEGER NOT NULL DEFAULT 0, loudness INTEGER NOT NULL DEFAULT 0
+        speed INTEGER NOT NULL DEFAULT 0, loudness INTEGER NOT NULL DEFAULT 0, apiKey TEXT
       );
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       PRAGMA user_version=1;
     `)
+    const columns = await client.execute('PRAGMA table_info(channels)')
+    if (!columns.rows.some((row) => row.name === 'apiKey'))
+      await client.execute('ALTER TABLE channels ADD COLUMN apiKey TEXT')
     await db
       .insert(schema.channels)
       .values([

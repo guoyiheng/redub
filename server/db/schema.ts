@@ -70,6 +70,7 @@ export const channels = sqliteTable('channels', {
   enabled: integer({ mode: 'boolean' }).notNull().default(true),
   pitch: integer().notNull().default(0),
   speed: integer().notNull().default(0),
-  loudness: integer().notNull().default(0)
+  loudness: integer().notNull().default(0),
+  apiKey: text()
 })
 export const settings = sqliteTable('settings', { key: text().primaryKey(), value: text().notNull() })

@@ -39,8 +39,8 @@ export async function getSettings(): Promise<Settings> {
 export async function getChannel(id: string) {
   const [channel] = await db.select().from(channels).where(eq(channels.id, id))
   if (!channel?.enabled) throw new Error('所选渠道不存在或已停用，请先配置渠道')
-  if (!process.env[channel.keyEnv])
-    throw new Error(`缺少 ${channel.keyEnv}，请在本机 .env 中填写 Key 并重启应用`)
+  if (!channel.apiKey && !process.env[channel.keyEnv])
+    throw new Error(`请先在设置中填写 API Key（或配置 ${channel.keyEnv}）`)
   return channel
 }
 export async function invalidateOutput(projectId: string) {

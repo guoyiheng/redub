@@ -21,7 +21,8 @@ const channelSchema = z.object({
   enabled: z.boolean(),
   pitch: z.number().int().min(-12).max(12),
   speed: z.number().int().min(-50).max(100),
-  loudness: z.number().int().min(-50).max(100)
+  loudness: z.number().int().min(-50).max(100),
+  apiKey: z.string().max(10000).optional()
 })
 const segmentSchema = z
   .object({
@@ -73,19 +74,28 @@ export default defineEventHandler(async (event) => {
     }
     if (resource === 'channels') {
       if (method === 'GET')
-        return (await db.select().from(channels)).map((c) => ({ ...c, configured: !!process.env[c.keyEnv] }))
+        return (await db.select().from(channels)).map(({ apiKey: _apiKey, ...c }) => ({
+          ...c,
+          configured: !!_apiKey || !!process.env[c.keyEnv]
+        }))
       if (method === 'POST' || (method === 'PATCH' && id)) {
-        const data = channelSchema.parse(await readBody(event))
+        const input = channelSchema.parse(await readBody(event))
+        const { apiKey, ...data } = input
         const active = await db
           .select()
           .from(jobs)
           .where(inArray(jobs.status, ['running', 'queued']))
         if (active.length) throw createError({ statusCode: 409, statusMessage: '请等待任务完成后再修改渠道' })
         const channelId = id || randomUUID()
+        const existing = id ? (await db.select().from(channels).where(eq(channels.id, id)))[0] : undefined
+        const values = {
+          ...data,
+          ...(apiKey?.trim() ? { apiKey: apiKey.trim() } : existing ? {} : { apiKey: null })
+        }
         await db
           .insert(channels)
-          .values({ id: channelId, ...data })
-          .onConflictDoUpdate({ target: channels.id, set: data })
+          .values({ id: channelId, ...values })
+          .onConflictDoUpdate({ target: channels.id, set: values })
         const affected = await db.select().from(projects).where(eq(projects.channelId, channelId))
         for (const p of affected) {
           await db

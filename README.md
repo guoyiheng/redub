@@ -10,7 +10,7 @@ cp .env.example .env
 npm run dev
 ```
 
-`npm run dev` 会启动 Electron 开发窗口及其 Nuxt 热更新服务，自动选择空闲端口；退出开发窗口会一并停止服务。素材和 SQLite 数据会保存在 `.data/`，API Key 只从 `.env` 读取。
+`npm run dev` 会启动 Electron 开发窗口及其 Nuxt 热更新服务，自动选择空闲端口；退出开发窗口会一并停止服务。素材和 SQLite 数据会保存在 `.data/`。API Key 优先在应用左下角的「设置」中填写并保存，也可用 `.env` 作为兼容配置。
 
 本地人声分离和台词识别需要一次安装 Python 运行环境：
 
@@ -34,7 +34,7 @@ npm run models:install
 
 ## 配置渠道
 
-在「渠道与设置」中查看渠道。把对应 Key 写入 `.env` 后重启：
+在应用左下角打开「设置」，进入「AI 渠道」即可添加或编辑渠道并填写 API Key。密钥只保存在本机 SQLite 中，编辑已有渠道时留空不会覆盖原密钥。也可以使用 `.env` 作为兼容配置：
 
 ```dotenv
 VOLCENGINE_API_KEY=your-volcengine-key
@@ -52,7 +52,7 @@ npm run desktop:pack
 npm run desktop:dist
 ```
 
-桌面版为 Electron 本地壳，服务固定监听回环地址并使用一次性会话令牌；渲染进程无 Node 权限，导航和媒体路径经过限制。首次启动会在系统应用数据目录创建 `.env`，方便正式安装版配置 Key。macOS 默认路径为 `~/Library/Application Support/redub/.env`。安装版可在设置中点击「安装本地模型环境」（需 Python 3.11），或用 `REDUB_PYTHON` 指向已有虚拟环境。
+桌面版为 Electron 本地壳，服务固定监听回环地址并使用一次性会话令牌；渲染进程无 Node 权限，导航和媒体路径经过限制。安装版可在设置中点击「安装模型环境」（需 Python 3.11），或用 `REDUB_PYTHON` 指向已有虚拟环境。
 
 正式发布前：
 
