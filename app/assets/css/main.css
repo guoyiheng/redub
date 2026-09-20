@@ -1,0 +1,24 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+@theme static {
+  --color-terracotta-50: #fcf3ee;
+  --color-terracotta-100: #f6e5db;
+  --color-terracotta-200: #edc9b5;
+  --color-terracotta-300: #dfa58a;
+  --color-terracotta-400: #d58261;
+  --color-terracotta-500: #c96442;
+  --color-terracotta-600: #ad4c30;
+  --color-terracotta-700: #8f3e2b;
+  --color-terracotta-800: #763628;
+  --color-terracotta-900: #622f25;
+  --color-terracotta-950: #351710;
+  --font-sans: 'Avenir Next', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+:root { --ui-bg: #f5f4ed; --ui-bg-elevated: #faf9f5; --ui-bg-muted: #eeece3; --ui-border: #e1dfd5; --ui-text: #30302e; --ui-text-muted: #73716a; --ui-primary: #ad4c30; }
+body { margin: 0; background: var(--ui-bg); color: var(--ui-text); }
+h1,h2,h3 { font-family: Georgia, 'Songti SC', 'SimSun', serif; font-weight: 500; }
+button, a, input, textarea, select { -webkit-tap-highlight-color: transparent; }
+button:not(:disabled), a { cursor: pointer; }
+:focus-visible { outline: 2px solid #3898ec; outline-offset: 3px; }
+button:disabled { cursor: not-allowed; }
+::selection { background: #edc9b5; }

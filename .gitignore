@@ -1,0 +1,14 @@
+node_modules/
+.nuxt/
+.output/
+.data/
+.env
+.env.*
+!.env.example
+dist/
+release/
+.venv/
+__pycache__/
+*.log
+.DS_Store
+coverage/
