@@ -1,4 +1,4 @@
-// Real local model smoke test. Run against npm run dev after models:install.
+// Real local model smoke test. Run against the local API after models:install.
 import { readFile } from 'node:fs/promises'
 const base = process.env.REDUB_TEST_URL || 'http://127.0.0.1:3000'
 const file = process.argv[2]

@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process'
 import net from 'node:net'
 const version = process.argv[2]
 if (!/^\d+\.\d+\.\d+$/.test(version || '') || !process.env.REDUB_WEB_PRIVATE_KEY_FILE)
-  throw new Error('用法：REDUB_WEB_PRIVATE_KEY_FILE=/path/key.pem npm run web:bundle -- 0.1.1')
+  throw new Error('用法：REDUB_WEB_PRIVATE_KEY_FILE=/path/key.pem node scripts/web-bundle.mjs 0.1.1')
 const port = await new Promise((resolvePort) => {
   const s = net.createServer()
   s.listen(0, '127.0.0.1', () => {

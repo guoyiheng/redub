@@ -210,7 +210,7 @@ app.on('activate', () => {
   if (!mainWindow && localOrigin) createWindow()
 })
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  if (devUrl || process.platform !== 'darwin') app.quit()
 })
 app.on('before-quit', () => {
   quitting = true

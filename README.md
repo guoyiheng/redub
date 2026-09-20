@@ -10,7 +10,7 @@ cp .env.example .env
 npm run dev
 ```
 
-浏览器打开 `http://127.0.0.1:3000`。素材和 SQLite 数据会保存在 `.data/`，API Key 只从 `.env` 读取。
+`npm run dev` 会启动 Electron 开发窗口及其 Nuxt 热更新服务，自动选择空闲端口；退出开发窗口会一并停止服务。素材和 SQLite 数据会保存在 `.data/`，API Key 只从 `.env` 读取。
 
 本地人声分离和台词识别需要一次安装 Python 运行环境：
 
@@ -48,7 +48,6 @@ TRANSLATION_MODEL=gpt-4o-mini
 ## 桌面版
 
 ```bash
-npm run desktop:dev
 npm run desktop:pack
 npm run desktop:dist
 ```
@@ -58,7 +57,7 @@ npm run desktop:dist
 正式发布前：
 
 - 在环境变量中设置 `REDUB_UPDATE_URL=https://...`，让 electron-builder 生成通用更新源配置。
-- 网页热更新包使用 `REDUB_WEB_PRIVATE_KEY_FILE` 生成：`npm run web:bundle -- 0.1.1`；桌面端配置对应 `REDUB_WEB_UPDATE_URL` 和 `REDUB_WEB_PUBLIC_KEY`。
+- 网页热更新包可通过 `scripts/web-bundle.mjs` 在发布环境生成；桌面端配置对应 `REDUB_WEB_UPDATE_URL` 和 `REDUB_WEB_PUBLIC_KEY`。
 - macOS 签名、公证、Windows 签名和更新服务器托管属于发布环境工作，当前仓库不包含生产证书。
 
 ## 检查
