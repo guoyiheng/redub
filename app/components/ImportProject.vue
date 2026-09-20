@@ -66,11 +66,8 @@ async function submit() {
 </script>
 <template>
   <section class="import-panel">
-    <div class="section-heading">
-      <div>
-        <p class="eyebrow">NEW PROJECT</p>
-        <h2>从一个故事开始</h2>
-      </div>
+    <header class="page-header">
+      <h1>新建项目</h1>
       <UButton
         icon="i-carbon-close"
         aria-label="关闭导入"
@@ -79,11 +76,23 @@ async function submit() {
         :disabled="busy"
         @click="emit('cancel')"
       />
-    </div>
-    <div class="segmented">
-      <button :class="{ active: type === 'file' }" :disabled="busy" @click="type = 'file'">
-        视频 / 音频 / 字幕</button
-      ><button :class="{ active: type === 'text' }" :disabled="busy" @click="type = 'text'">粘贴台词</button>
+    </header>
+    <div class="segmented" role="group" aria-label="导入方式">
+      <button
+        :class="{ active: type === 'file' }"
+        :aria-pressed="type === 'file'"
+        :disabled="busy"
+        @click="type = 'file'"
+      >
+        上传文件</button
+      ><button
+        :class="{ active: type === 'text' }"
+        :aria-pressed="type === 'text'"
+        :disabled="busy"
+        @click="type = 'text'"
+      >
+        粘贴台词
+      </button>
     </div>
     <form @submit.prevent="submit">
       <div
@@ -99,7 +108,7 @@ async function submit() {
         <p>
           {{
             file
-              ? `${(file.size / 1024 / 1024).toFixed(1)} MB · 文件仅保存到本机`
+              ? `${(file.size / 1024 / 1024).toFixed(1)} MB`
               : 'MP4、MOV、MKV、MP3、WAV，或 TXT / SRT / VTT'
           }}
         </p>
@@ -114,20 +123,17 @@ async function submit() {
           @change="choose(($event.target as HTMLInputElement).files?.[0])"
         />
       </div>
-      <UFormField
-        v-else
-        label="原始台词"
-        description="每行一条台词，或直接粘贴 SRT / VTT；普通文本的时长可在导入后调整。"
+      <UFormField v-else label="原始台词"
         ><UTextarea
           v-model="text"
           class="w-full"
           :rows="7"
-          placeholder="有些故事，值得被更多人听见。"
+          placeholder="每行一条台词，或粘贴 SRT / VTT"
           :disabled="busy"
       /></UFormField>
       <div class="form-grid">
         <UFormField label="项目名称" required
-          ><UInput v-model="name" class="w-full" placeholder="为这个故事命名" :disabled="busy" /></UFormField
+          ><UInput v-model="name" class="w-full" placeholder="输入项目名称" :disabled="busy" /></UFormField
         ><UFormField label="目标语言"
           ><USelect
             v-model="language"
@@ -152,8 +158,8 @@ async function submit() {
         <p class="help">{{ upload === 100 ? '文件已上传，正在读取素材…' : `正在导入 ${upload}%` }}</p>
       </div>
       <div class="form-footer">
-        <p>素材在本机处理。翻译与配音时，相关台词和参考人声会发送至所选服务。</p>
-        <UButton type="submit" icon="i-carbon-arrow-right" trailing :loading="busy">创建项目</UButton>
+        <p class="help">AI 服务会接收台词及参考人声。</p>
+        <UButton type="submit" :loading="busy">创建项目</UButton>
       </div>
     </form>
   </section>

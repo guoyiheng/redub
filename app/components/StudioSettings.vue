@@ -65,16 +65,11 @@ onMounted(check)
 </script>
 <template>
   <section class="settings-page">
-    <header>
-      <p class="eyebrow">STUDIO SETTINGS</p>
-      <h1>把工具调到顺手。</h1>
-      <p class="subtitle">管理声音渠道、本机处理和任务队列。</p>
-    </header>
+    <header class="page-header"><h1>渠道与设置</h1></header>
     <section class="settings-section">
       <div class="section-heading">
         <div>
           <h2>AI 渠道</h2>
-          <p class="help">配音支持火山 Audio 兼容接口，翻译支持 OpenAI 兼容接口。</p>
         </div>
         <UButton icon="i-carbon-add" color="neutral" variant="outline" @click="add">添加渠道</UButton>
       </div>
@@ -91,7 +86,7 @@ onMounted(check)
           <UBadge
             :color="!channel.enabled ? 'neutral' : channel.configured ? 'success' : 'warning'"
             variant="soft"
-            >{{ !channel.enabled ? '已停用' : channel.configured ? '已配置 Key' : '等待填写 Key' }}</UBadge
+            >{{ !channel.enabled ? '已停用' : channel.configured ? '已配置 Key' : '未配置 Key' }}</UBadge
           ><UIcon name="i-carbon-chevron-right" />
         </button>
       </div>
@@ -108,43 +103,46 @@ onMounted(check)
               class="w-full"
           /></UFormField>
         </div>
-        <UFormField
-          label="接口地址"
-          :description="
-            draft.type === 'openai'
-              ? '填写基础地址，例如 https://api.openai.com/v1'
-              : '填写完整的音频生成接口地址'
-          "
-          ><UInput v-model="draft.endpoint" class="w-full"
-        /></UFormField>
+        <UFormField label="接口地址"><UInput v-model="draft.endpoint" class="w-full" /></UFormField>
         <div class="form-grid">
           <UFormField label="模型 ID"><UInput v-model="draft.model" class="w-full" /></UFormField
-          ><UFormField label="Key 的环境变量名" description="将对应 Key 填入本机 .env 文件，重启后生效。"
+          ><UFormField label="Key 环境变量" description="在 .env 填写，重启生效。"
             ><UInput v-model="draft.keyEnv" class="w-full"
           /></UFormField>
         </div>
-        <div v-if="draft.type === 'volcengine'" class="time-fields">
-          <UFormField label="音调（-12 ～ 12）"
-            ><UInput v-model.number="draft.pitch" type="number" min="-12" max="12" /></UFormField
-          ><UFormField label="语速（-50 ～ 100）"
-            ><UInput v-model.number="draft.speed" type="number" min="-50" max="100" /></UFormField
-          ><UFormField label="音量（-50 ～ 100）"
-            ><UInput v-model.number="draft.loudness" type="number" min="-50" max="100"
-          /></UFormField>
-        </div>
+        <details v-if="draft.type === 'volcengine'" class="advanced-options">
+          <summary>声音参数</summary>
+          <div class="time-fields">
+            <UFormField label="音调（-12 ～ 12）"
+              ><UInput
+                class="w-full"
+                v-model.number="draft.pitch"
+                type="number"
+                min="-12"
+                max="12" /></UFormField
+            ><UFormField label="语速（-50 ～ 100）"
+              ><UInput
+                class="w-full"
+                v-model.number="draft.speed"
+                type="number"
+                min="-50"
+                max="100" /></UFormField
+            ><UFormField label="音量（-50 ～ 100）"
+              ><UInput class="w-full" v-model.number="draft.loudness" type="number" min="-50" max="100"
+            /></UFormField>
+          </div>
+        </details>
         <UCheckbox v-model="draft.enabled" label="启用渠道" />
         <div class="row-actions">
           <UButton type="submit" :loading="saving">保存渠道</UButton
           ><UButton color="neutral" variant="ghost" @click="draft = undefined">取消</UButton>
         </div>
       </form>
-      <p class="help">配音渠道可在项目设置中选择。翻译渠道可在下方「任务与识别」中选择。</p>
     </section>
     <section class="settings-section">
       <div class="section-heading">
         <div>
           <h2>本机音频处理</h2>
-          <p class="help">分离与识别无需上传素材，模型首次运行时下载。</p>
         </div>
         <UButton color="neutral" variant="ghost" icon="i-carbon-renew" :loading="checking" @click="check"
           >检查环境</UButton
@@ -158,7 +156,7 @@ onMounted(check)
         @click="updateDesktop('models')"
         >安装本地模型环境</UButton
       >
-      <p v-if="desktopBusy" class="help">正在处理，请保持应用打开。模型环境首次安装可能需要几分钟。</p>
+      <p v-if="desktopBusy" class="help">正在安装，请保持应用打开。</p>
       <div class="health-list">
         <span
           ><i :class="{ ok: health?.ffmpeg && health?.ffprobe }" />音视频引擎
@@ -168,9 +166,7 @@ onMounted(check)
           {{ !health ? '检查中' : health.models ? '已就绪' : '待安装' }}</span
         >
       </div>
-      <p v-if="health && !health.models" class="help">
-        请按 README 安装本地模型环境；桌面版可在本地配置文件中指定 Python 路径。
-      </p>
+      <p v-if="health && !health.models" class="help">需安装 Python 3.11 与模型依赖，见 README。</p>
     </section>
     <section class="settings-section">
       <h2>任务与识别</h2>
@@ -181,31 +177,36 @@ onMounted(check)
         "
       >
         <div class="form-grid">
-          <UFormField label="同时处理任务数" description="同一项目按步骤执行，不同项目并行。"
-            ><USelect v-model="queueDraft.concurrency" :items="[1, 2, 3, 4, 5, 6, 7, 8]" /></UFormField
-          ><UFormField label="本地识别模型" description="更大的模型通常更准确，也更慢。"
+          <UFormField label="并发任务数"
+            ><USelect
+              v-model="queueDraft.concurrency"
+              class="w-full"
+              :items="[1, 2, 3, 4, 5, 6, 7, 8]" /></UFormField
+          ><UFormField label="本地识别模型"
             ><USelect
               v-model="queueDraft.whisperModel"
+              class="w-full"
               :items="['tiny', 'base', 'small', 'medium', 'large-v3']"
           /></UFormField>
         </div>
         <UFormField label="翻译渠道"
           ><USelect
             v-model="queueDraft.translationChannelId"
+            class="w-full"
             :items="
               channels
                 .filter((c) => c.type === 'openai' && c.enabled)
                 .map((c) => ({ label: c.name, value: c.id }))
             "
         /></UFormField>
-        <UCheckbox v-model="queueDraft.pauseOnFailure" label="任务失败后暂停该项目的后续队列" />
-        <p class="help">关闭暂停后，失败步骤的依赖任务仍会等待你重试或跳过，其他独立任务可继续。</p>
+        <UCheckbox v-model="queueDraft.pauseOnFailure" label="失败后暂停队列" />
+
         <UButton color="neutral" variant="outline" type="submit">保存任务设置</UButton>
       </form>
     </section>
     <section v-if="desktop" class="settings-section">
       <h2>桌面应用与更新</h2>
-      <p class="help">网页界面可独立更新；桌面组件更新下载完成后可重启安装。</p>
+
       <div class="row-actions">
         <UButton color="neutral" variant="outline" :loading="desktopBusy" @click="updateDesktop('check')"
           >检查桌面更新</UButton
@@ -216,7 +217,7 @@ onMounted(check)
           >更新网页界面</UButton
         ><UButton color="neutral" variant="ghost" @click="updateDesktop('config')">打开本地配置</UButton>
       </div>
-      <p role="status">{{ desktopStatus }}</p>
+      <p v-if="desktopStatus" role="status" class="help">{{ desktopStatus }}</p>
     </section>
   </section>
 </template>

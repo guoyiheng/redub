@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { stageLabels, type Stage } from '../../shared/types'
-const { detail, channels, act, refresh } = useStudio()
+const { detail, channels, act } = useStudio()
 const current = ref<string>(),
   mode = ref<'original' | 'dubbed'>('original'),
   activeStep = ref(0),
@@ -143,16 +143,12 @@ function switchMode(value: 'original' | 'dubbed') {
 </script>
 <template>
   <section v-if="detail" class="workspace">
-    <header class="workspace-header">
+    <header class="page-header">
       <div>
-        <p class="eyebrow">
-          DUBBING WORKSPACE <span>/</span>
-          {{ project.kind === 'video' ? '视频项目' : project.kind === 'audio' ? '音频项目' : '文本项目' }}
-        </p>
         <h1>{{ project.name }}</h1>
         <p class="help">
           {{ formatTime(totalDuration) }} <span>·</span> {{ lines.length }} 个片段 <span>·</span>
-          {{ project.targetLanguage }} <span>·</span> 本地保存
+          {{ project.targetLanguage }}
         </p>
       </div>
       <div class="row-actions">
@@ -174,10 +170,12 @@ function switchMode(value: 'original' | 'dubbed') {
       </div>
     </header>
     <form v-if="showOptions" class="project-options" @submit.prevent="saveOptions">
-      <UFormField label="项目名称"><UInput v-model="options.name" :disabled="locked" /></UFormField
+      <UFormField label="项目名称"
+        ><UInput class="w-full" v-model="options.name" :disabled="locked" /></UFormField
       ><UFormField label="原始语言"
         ><USelect
           v-model="options.sourceLanguage"
+          class="w-full"
           :disabled="locked"
           :items="[
             { label: '自动检测', value: 'auto' },
@@ -186,10 +184,12 @@ function switchMode(value: 'original' | 'dubbed') {
             { label: '日语', value: 'ja' },
             { label: '韩语', value: 'ko' }
           ]" /></UFormField
-      ><UFormField label="目标语言"><UInput v-model="options.targetLanguage" :disabled="locked" /></UFormField
+      ><UFormField label="目标语言"
+        ><UInput class="w-full" v-model="options.targetLanguage" :disabled="locked" /></UFormField
       ><UFormField label="配音渠道"
         ><USelect
           v-model="options.channelId"
+          class="w-full"
           :disabled="locked"
           :items="
             channels
@@ -197,7 +197,7 @@ function switchMode(value: 'original' | 'dubbed') {
               .map((c) => ({ label: c.name, value: c.id }))
           " /></UFormField
       ><UButton type="submit" :disabled="locked">保存设置</UButton>
-      <p class="help">修改语言或配音渠道会使已有配音失效，需要重新生成。</p>
+      <p class="help">修改语言或渠道后需重新配音。</p>
     </form>
     <nav class="workflow" aria-label="配音步骤">
       <button
@@ -209,6 +209,8 @@ function switchMode(value: 'original' | 'dubbed') {
           [stepState(step.stages)]: !step.skipped
         }"
         :disabled="step.skipped"
+        :aria-current="activeStep === index ? 'step' : undefined"
+        :aria-label="`${step.name}：${step.skipped ? '无需此步骤' : stepState(step.stages) === 'completed' ? '已完成' : stepState(step.stages) === 'failed' ? '失败' : stepState(step.stages) === 'running' ? '处理中' : '未执行'}`"
         @click="activeStep = index"
       >
         <span class="step-number"
@@ -216,29 +218,15 @@ function switchMode(value: 'original' | 'dubbed') {
             v-if="!step.skipped && stepState(step.stages) === 'completed'"
             name="i-carbon-checkmark"
           /><template v-else>{{ String(index + 1).padStart(2, '0') }}</template></span
-        ><span
-          >{{ step.name
-          }}<small>{{
-            step.skipped
-              ? '无需此步骤'
-              : stepState(step.stages) === 'running'
-                ? '处理中'
-                : stepState(step.stages) === 'failed'
-                  ? '需要处理'
-                  : stepState(step.stages) === 'completed'
-                    ? '已完成'
-                    : '准备就绪'
-          }}</small></span
+        ><span>{{ step.name }}</span>
+        <span
+          v-if="!step.skipped && ['running', 'failed'].includes(stepState(step.stages))"
+          class="step-status"
+          >{{ stepState(step.stages) === 'running' ? '处理中' : '失败' }}</span
         >
       </button>
     </nav>
     <div class="step-toolbar">
-      <div>
-        <UIcon :name="steps[activeStep]?.icon || 'i-carbon-music'" class="size-5" /><strong>{{
-          steps[activeStep]?.name
-        }}</strong
-        ><span class="help">每一步独立执行，可随时校对与重试</span>
-      </div>
       <div class="row-actions">
         <UButton
           v-if="locked || project.paused"
@@ -246,13 +234,12 @@ function switchMode(value: 'original' | 'dubbed') {
           variant="ghost"
           :icon="project.paused ? 'i-carbon-play' : 'i-carbon-pause'"
           @click="pause"
-          >{{ project.paused ? '继续队列' : '完成当前任务后暂停' }}</UButton
+          >{{ project.paused ? '继续队列' : '暂停队列' }}</UButton
         ><UButton
           v-for="stage in steps[activeStep]?.stages"
           :key="stage"
           color="neutral"
           variant="outline"
-          size="sm"
           :disabled="locked || (stage === 'segment' && !!lines.length)"
           :loading="busy"
           @click="run(stage)"
@@ -263,16 +250,18 @@ function switchMode(value: 'original' | 'dubbed') {
     <div class="editing-grid">
       <div class="preview-column">
         <div class="panel-heading">
-          <h2>画面与声音</h2>
-          <div class="segmented compact">
+          <h2>预览</h2>
+          <div class="segmented" role="group" aria-label="预览音轨">
             <button
               :class="{ active: mode === 'original' }"
+              :aria-pressed="mode === 'original'"
               :disabled="project.kind === 'text'"
               @click="switchMode('original')"
             >
               原始素材</button
             ><button
               :class="{ active: mode === 'dubbed' }"
+              :aria-pressed="mode === 'dubbed'"
               :disabled="!project.outputPath"
               @click="switchMode('dubbed')"
             >
@@ -294,7 +283,6 @@ function switchMode(value: 'original' | 'dubbed') {
               :name="project.kind === 'text' ? 'i-carbon-quotes' : 'i-carbon-waveform'"
               class="preview-icon"
             />
-            <h3>{{ project.kind === 'text' ? '每一句，都有新的可能。' : '专注于声音本身。' }}</h3>
             <audio
               v-if="previewSource && (project.kind !== 'text' || mode === 'dubbed')"
               ref="player"
@@ -303,20 +291,15 @@ function switchMode(value: 'original' | 'dubbed') {
               preload="metadata"
               @timeupdate="time = ($event.target as HTMLMediaElement).currentTime"
             />
-            <p v-else>完成配音与合并后，在这里试听。</p></template
+            <p v-else>暂无配音</p></template
           >
         </div>
-        <p class="preview-note">
-          <UIcon name="i-carbon-headphones" /> 建议使用耳机，比较原声、语气和背景的连续性。
-        </p>
         <div v-if="project.mixedPath || project.backgroundPath" class="stem-list">
           <div v-if="project.backgroundPath">
-            <label>分离后的背景音</label
-            ><audio :src="mediaUrl(project.backgroundPath)" controls preload="none" />
+            <label>背景音</label><audio :src="mediaUrl(project.backgroundPath)" controls preload="none" />
           </div>
           <div v-if="project.mixedPath">
-            <label>合并后的完整音轨</label
-            ><audio :src="mediaUrl(project.mixedPath)" controls preload="none" />
+            <label>合并音轨</label><audio :src="mediaUrl(project.mixedPath)" controls preload="none" />
           </div>
           <UButton
             v-if="project.mixedPath"
@@ -327,32 +310,20 @@ function switchMode(value: 'original' | 'dubbed') {
             >下载字幕 SRT</UButton
           >
         </div>
-        <div class="project-note">
-          <UIcon name="i-carbon-information" />
-          <p>仅替换已启用的片段。其余原声保留，配音会自动对齐原片段时长。</p>
-        </div>
       </div>
       <div class="script-column">
         <div class="panel-heading">
           <h2>
-            台词工作区 <small>{{ completed }} / {{ lines.length }} 已配音</small>
+            台词 <small>{{ completed }} / {{ lines.length }} 已配音</small>
           </h2>
-          <UButton
-            icon="i-carbon-add"
-            color="neutral"
-            variant="ghost"
-            size="sm"
-            :disabled="locked"
-            @click="addLine"
+          <UButton icon="i-carbon-add" color="neutral" variant="ghost" :disabled="locked" @click="addLine"
             >添加片段</UButton
           >
         </div>
-        <div v-if="!lines.length" class="script-empty">
-          <UIcon name="i-carbon-text-align-left" class="size-8" />
-          <h3>先听见，再看见</h3>
-          <p>运行人声分离与分段，台词片段将在这里出现。<br />也可以手动添加片段。</p>
+        <div v-if="!lines.length" class="empty-state">
+          <p>暂无片段</p>
           <UButton :disabled="locked" color="neutral" variant="outline" @click="activeStep = 1"
-            >前往人声分段</UButton
+            >人声分段</UButton
           >
         </div>
         <template v-else
@@ -393,17 +364,15 @@ function switchMode(value: 'original' | 'dubbed') {
     </div>
     <section class="timeline">
       <div class="panel-heading">
-        <h2>声音时间轴</h2>
+        <h2>时间轴</h2>
         <span class="help">{{ formatTime(time) }} / {{ formatTime(totalDuration) }}</span>
       </div>
       <div class="timeline-ruler">
         <span v-for="n in 6" :key="n">{{ formatTime((totalDuration * (n - 1)) / 5) }}</span>
       </div>
       <div class="timeline-track">
-        <span class="track-label">原始音轨</span>
-        <div class="original-track">
-          <span>{{ project.kind === 'text' ? '文本时间轴' : '原始素材 · 保留未替换部分' }}</span>
-        </div>
+        <span class="track-label">{{ project.kind === 'text' ? '文本' : '原始音轨' }}</span>
+        <div class="original-track" />
       </div>
       <div class="timeline-track">
         <span class="track-label">配音片段</span>

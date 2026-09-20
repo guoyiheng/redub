@@ -47,7 +47,7 @@ async function synthesize() {
   <div class="segment-editor">
     <div class="editor-top">
       <h3>片段编辑</h3>
-      <span v-if="dirty" class="help">有未保存的修改</span
+      <span v-if="dirty" class="help">未保存</span
       ><UCheckbox
         v-model="draft.enabled"
         label="替换此片段"
@@ -58,6 +58,7 @@ async function synthesize() {
     <div class="time-fields">
       <UFormField label="开始（秒）"
         ><UInput
+          class="w-full"
           v-model.number="draft.start"
           type="number"
           :min="0"
@@ -66,35 +67,36 @@ async function synthesize() {
           @update:model-value="dirty = true" /></UFormField
       ><UFormField label="结束（秒）"
         ><UInput
+          class="w-full"
           v-model.number="draft.end"
           type="number"
           :min="0"
           :step="0.01"
           :disabled="locked"
           @update:model-value="dirty = true" /></UFormField
-      ><UFormField label="角色备注"
-        ><UInput v-model="draft.speaker" :disabled="locked" @update:model-value="dirty = true"
+      ><UFormField label="角色"
+        ><UInput class="w-full" v-model="draft.speaker" :disabled="locked" @update:model-value="dirty = true"
       /></UFormField>
     </div>
-    <UFormField label="原始台词"
+    <UFormField label="原文"
       ><UTextarea
         v-model="draft.text"
         class="w-full"
         :rows="2"
         :disabled="locked"
-        placeholder="识别后可在这里校对"
+        placeholder="输入原文"
         @update:model-value="dirty = true"
     /></UFormField>
-    <UFormField label="替换台词 / 译文"
+    <UFormField label="译文 / 替换台词"
       ><UTextarea
         v-model="draft.translation"
         class="w-full"
         :rows="3"
         :disabled="locked"
-        placeholder="填写希望说出的内容；留空时使用原始台词"
+        placeholder="填写希望说出的内容；留空时使用原文"
         @update:model-value="dirty = true"
     /></UFormField>
-    <div class="editor-audio">
+    <div v-if="segment.referencePath || segment.generatedPath" class="editor-audio">
       <div v-if="segment.referencePath">
         <p class="help">原声参考</p>
         <audio :src="mediaUrl(segment.referencePath)" controls preload="none" />
@@ -112,9 +114,9 @@ async function synthesize() {
         :loading="saving"
         icon="i-carbon-save"
         @click="save"
-        >保存修改</UButton
+        >保存</UButton
       ><UButton :disabled="locked || !draft.enabled" icon="i-carbon-microphone" @click="synthesize">{{
-        segment.generatedPath ? '重新配音' : '生成此片段'
+        segment.generatedPath ? '重新配音' : '生成配音'
       }}</UButton>
     </div>
   </div>
