@@ -411,27 +411,107 @@ button:disabled {
 .form-footer button {
   flex-shrink: 0;
 }
-.project-options {
+.project-options-form {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: end;
-  gap: 16px;
-  margin-bottom: 24px;
-  padding: 24px;
-  background: var(--ui-bg-muted);
+  gap: 18px;
+}
+.project-options {
+  position: fixed;
+  inset: 0 0 0 auto;
+  z-index: 40;
+  display: grid;
+  align-content: start;
+  grid-template-columns: 1fr;
+  gap: 18px;
+  width: min(420px, 100vw);
+  margin: 0;
+  padding: 88px 28px 32px;
+  background: var(--ui-bg-elevated);
+  border-left: 1px solid var(--ui-border);
+  box-shadow: -12px 0 32px #302e2314;
+  overflow-y: auto;
+}
+.project-options-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--ui-border);
+}
+.project-options-header h2 {
+  margin: 0 0 4px;
+}
+.workflow-bar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  margin: 8px 0 22px;
+  padding: 4px;
   border: 1px solid var(--ui-border);
-  border-radius: 8px;
+  border-radius: 10px;
+  background: var(--ui-bg-muted);
 }
-.project-options > button {
-  justify-self: start;
+.workflow-step {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 12px 14px;
+  color: var(--ui-text-muted);
+  font-size: 13px;
 }
-.project-options > .help {
-  align-self: center;
+.workflow-step:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 0;
+  width: 1px;
+  height: 20px;
+  background: var(--ui-border);
+  transform: translateY(-50%);
+}
+.workflow-step.active {
+  border-radius: 7px;
+  background: var(--ui-bg-elevated);
+  color: var(--ui-text);
+  box-shadow: 0 1px 3px #3431270d;
+}
+.workflow-step.completed {
+  color: #68774f;
+}
+.workflow-step small {
+  margin-left: auto;
+  color: var(--ui-primary);
+  font-size: 11px;
+}
+.workflow-index {
+  display: grid;
+  place-items: center;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  border: 1px solid #d4cfc3;
+  border-radius: 50%;
+  font-size: 11px;
+}
+.workflow-step.active .workflow-index {
+  border-color: var(--ui-primary);
+  background: var(--ui-primary);
+  color: var(--ui-bg-elevated);
+}
+.workflow-step.completed .workflow-index {
+  border-color: #c9d4bb;
+  background: #e4e9db;
+}
+.workflow-step > span:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .workflow {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 8px;
+  display: none;
   padding-bottom: 16px;
   border-bottom: 1px solid var(--ui-border);
 }
@@ -486,11 +566,14 @@ button:disabled {
 }
 .editing-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  grid-template-columns: minmax(0, 1.2fr) minmax(340px, 0.8fr);
   border: 1px solid var(--ui-border);
   border-radius: 8px;
   background: var(--ui-bg-elevated);
   overflow: hidden;
+}
+.workspace-focus {
+  min-height: min(680px, calc(100dvh - 290px));
 }
 .preview-column {
   min-width: 0;
@@ -553,7 +636,7 @@ button:disabled {
   margin: 24px 24px 16px;
 }
 .segment-list {
-  max-height: 240px;
+  max-height: min(520px, calc(100dvh - 420px));
   overflow-y: auto;
   border-block: 1px solid var(--ui-border);
 }
@@ -645,11 +728,36 @@ button:disabled {
   gap: 8px;
 }
 .timeline {
-  margin-top: 24px;
+  margin-top: 0;
   padding: 24px;
   border: 1px solid var(--ui-border);
   border-radius: 8px;
   background: var(--ui-bg-muted);
+}
+.timeline-collapsible {
+  margin-top: 14px;
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
+  background: var(--ui-bg-muted);
+  overflow: hidden;
+}
+.timeline-toggle {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 12px;
+  padding: 13px 16px;
+  text-align: left;
+}
+.timeline-toggle span {
+  font-weight: 500;
+}
+.timeline-toggle small {
+  margin-left: auto;
+  color: var(--ui-text-muted);
+}
+.timeline-toggle .iconify {
+  flex-shrink: 0;
 }
 .timeline-ruler {
   display: flex;
@@ -1012,36 +1120,28 @@ button:disabled {
     display: none;
   }
   .form-grid,
-  .project-options,
   .settings-grid {
     grid-template-columns: 1fr;
+  }
+  .project-options {
+    width: 100vw;
+    padding-inline: 20px;
   }
   .settings-channels,
   .settings-desktop {
     grid-column: auto;
   }
-  .project-options,
   .preview-column,
   .segment-editor,
   .timeline,
   .channel-editor {
     padding: 16px;
   }
-  .workflow {
-    gap: 4px;
+  .workflow-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .workflow button {
-    gap: 6px;
-    padding: 8px 4px;
-    font-size: 12px;
-  }
-  .step-number {
-    width: 22px;
-    height: 22px;
-    font-size: 11px;
-  }
-  .step-status {
-    padding-left: 28px;
+  .workflow-step:nth-child(2)::after {
+    display: none;
   }
   .panel-heading {
     gap: 8px;
