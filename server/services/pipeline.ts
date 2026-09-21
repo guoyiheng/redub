@@ -181,17 +181,24 @@ export async function executeJob(job: Job, progress: (value: number, message: st
     await invalidateOutput(p.id)
   }
   if (job.stage === 'synthesize') {
-    const channel = await getChannel(p.channelId)
     const lines = (await getSegments(p.id)).filter(
       (s) => s.enabled && (!job.segmentId || s.id === job.segmentId)
     )
     if (!lines.length) throw new Error('没有启用的配音片段')
-    if (p.kind !== 'text' && (!p.vocalsPath || !existsSync(assetPath(p.vocalsPath))))
+    const needsAi = lines.some((s) => s.synthesisMode !== 'tts')
+    const needsReference = lines.some((s) => s.synthesisMode !== 'tts' && s.aiUseReference)
+    const channel = needsAi ? await getChannel(p.channelId) : undefined
+    if (needsReference && p.kind !== 'text' && (!p.vocalsPath || !existsSync(assetPath(p.vocalsPath))))
       throw new Error('请先完成人声分离，再使用原声参考配音')
     await invalidateOutput(p.id)
     for (let i = 0; i < lines.length; i++) {
       const s = lines[i]!
-      if (p.kind !== 'text' && (!s.referencePath || !existsSync(assetPath(s.referencePath)))) {
+      if (
+        s.synthesisMode !== 'tts' &&
+        s.aiUseReference &&
+        p.kind !== 'text' &&
+        (!s.referencePath || !existsSync(assetPath(s.referencePath)))
+      ) {
         const referencePath = rel(`reference-${s.id}-${randomUUID()}.wav`)
         await cutAudio(assetPath(p.vocalsPath!), assetPath(referencePath), s.start, s.end - s.start)
         await db
@@ -214,8 +221,10 @@ export async function executeJob(job: Job, progress: (value: number, message: st
         Math.round((i / lines.length) * 100),
         `正在配音 ${i + 1} / ${lines.length}，保留已成功片段`
       )
-      const output = rel(`voice-${s.id}-${randomUUID()}.mp3`)
-      const result = await synthesizeSpeech(s, channel, assetPath(output))
+      const output = rel(
+        `voice-${s.id}-${randomUUID()}.${s.synthesisMode === 'ai' ? (s.aiFormat === 'wav' ? 'wav' : 'mp3') : 'mp3'}`
+      )
+      const result = await synthesizeSpeech(s, channel!, assetPath(output))
       await db
         .update(segments)
         .set({

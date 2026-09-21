@@ -341,6 +341,43 @@ button:disabled {
   display: grid;
   gap: 16px;
 }
+.voice-settings {
+  display: grid;
+  gap: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--ui-border);
+}
+.voice-settings-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.voice-settings-heading h4 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.voice-settings-heading .help {
+  margin: 0;
+}
+.voice-settings-heading [data-slot='base'] {
+  min-width: 180px;
+}
+.reference-audio,
+.generated-audio {
+  display: grid;
+  gap: 8px;
+}
+.reference-audio p,
+.generated-audio p {
+  margin: 0;
+}
+.reference-audio audio,
+.generated-audio audio {
+  width: 100%;
+  height: 36px;
+}
 .segmented {
   display: flex;
   width: fit-content;

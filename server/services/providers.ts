@@ -2,8 +2,9 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Channel, Segment } from '../../shared/types'
 import { assetPath, cutAudio, probe } from './media'
+import { tts as edgeTts } from 'edge-tts/out/index.js'
 
-export function synthesisHash(segment: Segment, channel: Channel) {
+export function synthesisHash(segment: Segment, channel: Channel | null | undefined) {
   return createHash('sha256')
     .update(
       JSON.stringify({
@@ -11,6 +12,19 @@ export function synthesisHash(segment: Segment, channel: Channel) {
         start: segment.start,
         end: segment.end,
         reference: segment.referencePath,
+        synthesisMode: segment.synthesisMode,
+        aiSpeaker: segment.aiSpeaker,
+        aiUseReference: segment.aiUseReference,
+        aiPrompt: segment.aiPrompt,
+        aiFormat: segment.aiFormat,
+        aiSampleRate: segment.aiSampleRate,
+        aiPitchRate: segment.aiPitchRate,
+        aiSpeechRate: segment.aiSpeechRate,
+        aiLoudnessRate: segment.aiLoudnessRate,
+        ttsVoice: segment.ttsVoice,
+        ttsRate: segment.ttsRate,
+        ttsPitch: segment.ttsPitch,
+        ttsVolume: segment.ttsVolume,
         channel
       })
     )
@@ -73,12 +87,23 @@ export async function translateLines(lines: Segment[], target: string, channel: 
   return map
 }
 export async function synthesizeSpeech(segment: Segment, channel: Channel, output: string) {
-  if (channel.type !== 'volcengine') throw new Error('请选择火山 Audio 兼容配音渠道')
   const text = segment.translation || segment.text
   if (!text.trim()) throw new Error('请先填写译文或台词')
+  if (segment.synthesisMode === 'tts') {
+    const audio = await edgeTts(text, {
+      voice: segment.ttsVoice || 'zh-CN-XiaoxiaoNeural',
+      rate: `${segment.ttsRate >= 0 ? '+' : ''}${segment.ttsRate}%`,
+      pitch: `${segment.ttsPitch >= 0 ? '+' : ''}${segment.ttsPitch}Hz`,
+      volume: `${segment.ttsVolume >= 0 ? '+' : ''}${segment.ttsVolume}%`
+    })
+    await writeFile(output, audio)
+    const info = await probe(output)
+    return { duration: info.duration, subtitle: null }
+  }
+  if (channel.type !== 'volcengine') throw new Error('AI 配音请选择火山 Audio 兼容渠道')
   const duration = segment.end - segment.start
   let references: { audio_data: string }[] | undefined
-  if (segment.referencePath) {
+  if (segment.aiUseReference && segment.referencePath) {
     const path = assetPath(segment.referencePath)
     const info = await probe(path)
     let referencePath = path
@@ -90,7 +115,7 @@ export async function synthesizeSpeech(segment: Segment, channel: Channel, outpu
     if (bytes.length > 10 * 1024 * 1024) throw new Error('参考音频超过 10 MB，请缩短参考片段')
     references = [{ audio_data: bytes.toString('base64') }]
   }
-  const prompt = `${references ? '参考@音频1的说话音色，' : ''}只朗读以下台词，保持自然语气，目标时长约${duration.toFixed(2)}秒：\n${text}`
+  const prompt = `${segment.aiPrompt?.trim() ? `${segment.aiPrompt.trim()}\n` : ''}${references ? '参考@音频1的说话音色，' : ''}只朗读以下台词，保持自然语气，目标时长约${duration.toFixed(2)}秒：\n${text}`
   if (prompt.length > 3000) throw new Error('配音文本超过 3000 字限制')
   const result = await responseJson(
     await fetch(channel.endpoint, {
@@ -105,12 +130,13 @@ export async function synthesizeSpeech(segment: Segment, channel: Channel, outpu
         model: channel.model,
         text_prompt: prompt,
         references,
+        ...(segment.aiSpeaker?.trim() && !references ? { speaker: segment.aiSpeaker.trim() } : {}),
         audio_config: {
-          format: 'mp3',
-          sample_rate: 48000,
-          pitch_rate: channel.pitch,
-          speech_rate: channel.speed,
-          loudness_rate: channel.loudness,
+          format: segment.aiFormat || 'mp3',
+          sample_rate: segment.aiSampleRate || 48000,
+          pitch_rate: segment.aiPitchRate ?? channel.pitch,
+          speech_rate: segment.aiSpeechRate ?? channel.speed,
+          loudness_rate: segment.aiLoudnessRate ?? channel.loudness,
           enable_subtitle: true
         },
         watermark: {}

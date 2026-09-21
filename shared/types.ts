@@ -39,6 +39,19 @@ export interface Segment {
   speaker: string
   enabled: boolean
   referencePath: string | null
+  synthesisMode: 'ai' | 'tts'
+  aiSpeaker: string | null
+  aiUseReference: boolean
+  aiPrompt: string | null
+  aiFormat: string
+  aiSampleRate: number
+  aiPitchRate: number
+  aiSpeechRate: number
+  aiLoudnessRate: number
+  ttsVoice: string
+  ttsRate: number
+  ttsPitch: number
+  ttsVolume: number
   generatedPath: string | null
   generatedHash: string | null
   generatedDuration: number | null

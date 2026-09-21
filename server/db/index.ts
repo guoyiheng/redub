@@ -25,8 +25,13 @@ export function initDb() {
       CREATE TABLE IF NOT EXISTS segments (
         id TEXT PRIMARY KEY, projectId TEXT NOT NULL REFERENCES projects(id), start REAL NOT NULL, end REAL NOT NULL,
         text TEXT NOT NULL DEFAULT '', translation TEXT NOT NULL DEFAULT '', speaker TEXT NOT NULL DEFAULT '角色 1',
-        enabled INTEGER NOT NULL DEFAULT 1, referencePath TEXT, generatedPath TEXT, generatedHash TEXT,
-        generatedDuration REAL, subtitle TEXT
+        enabled INTEGER NOT NULL DEFAULT 1, referencePath TEXT,
+        synthesisMode TEXT NOT NULL DEFAULT 'ai', aiSpeaker TEXT, aiUseReference INTEGER NOT NULL DEFAULT 1, aiPrompt TEXT,
+        aiFormat TEXT NOT NULL DEFAULT 'mp3', aiSampleRate INTEGER NOT NULL DEFAULT 48000,
+        aiPitchRate INTEGER NOT NULL DEFAULT 0, aiSpeechRate INTEGER NOT NULL DEFAULT 0,
+        aiLoudnessRate INTEGER NOT NULL DEFAULT 0, ttsVoice TEXT NOT NULL DEFAULT 'zh-CN-XiaoxiaoNeural',
+        ttsRate INTEGER NOT NULL DEFAULT 0, ttsPitch INTEGER NOT NULL DEFAULT 0, ttsVolume INTEGER NOT NULL DEFAULT 0,
+        generatedPath TEXT, generatedHash TEXT, generatedDuration REAL, subtitle TEXT
       );
       CREATE INDEX IF NOT EXISTS segments_project ON segments(projectId);
       CREATE TABLE IF NOT EXISTS jobs (
@@ -47,6 +52,26 @@ export function initDb() {
     const columns = await client.execute('PRAGMA table_info(channels)')
     if (!columns.rows.some((row) => row.name === 'apiKey'))
       await client.execute('ALTER TABLE channels ADD COLUMN apiKey TEXT')
+    const segmentColumns = await client.execute('PRAGMA table_info(segments)')
+    const segmentColumnNames = new Set(segmentColumns.rows.map((row) => row.name))
+    const segmentMigrations: Record<string, string> = {
+      synthesisMode: "TEXT NOT NULL DEFAULT 'ai'",
+      aiSpeaker: 'TEXT',
+      aiUseReference: 'INTEGER NOT NULL DEFAULT 1',
+      aiPrompt: 'TEXT',
+      aiFormat: "TEXT NOT NULL DEFAULT 'mp3'",
+      aiSampleRate: 'INTEGER NOT NULL DEFAULT 48000',
+      aiPitchRate: 'INTEGER NOT NULL DEFAULT 0',
+      aiSpeechRate: 'INTEGER NOT NULL DEFAULT 0',
+      aiLoudnessRate: 'INTEGER NOT NULL DEFAULT 0',
+      ttsVoice: "TEXT NOT NULL DEFAULT 'zh-CN-XiaoxiaoNeural'",
+      ttsRate: 'INTEGER NOT NULL DEFAULT 0',
+      ttsPitch: 'INTEGER NOT NULL DEFAULT 0',
+      ttsVolume: 'INTEGER NOT NULL DEFAULT 0'
+    }
+    for (const [name, definition] of Object.entries(segmentMigrations))
+      if (!segmentColumnNames.has(name))
+        await client.execute(`ALTER TABLE segments ADD COLUMN ${name} ${definition}`)
     await db
       .insert(schema.channels)
       .values([
