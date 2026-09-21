@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 export const exportSchema = z.object({
+  optimized: z.boolean().default(false),
   original: z.boolean(),
   background: z.boolean(),
   dubbed: z.boolean(),
@@ -13,7 +14,7 @@ export interface ExportResult {
   filename: string
 }
 
-export const exportTrackKeys = ['original', 'background', 'dubbed'] as const
+export const exportTrackKeys = ['optimized', 'original', 'background', 'dubbed'] as const
 export type ExportTrackKey = (typeof exportTrackKeys)[number]
 
 export function selectedTrackKeys(options: ExportOptions): ExportTrackKey[] {

@@ -2231,6 +2231,9 @@ textarea.generation-prompt::placeholder {
 .track-original .mixer-waveform {
   color: #9b9272;
 }
+.track-optimized .mixer-waveform {
+  color: #ad4c30;
+}
 .track-background .mixer-waveform {
   color: #7e9a78;
 }
@@ -2336,7 +2339,7 @@ textarea.generation-prompt::placeholder {
 }
 .export-options {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 10px;
 }
 .export-option {
@@ -2351,6 +2354,10 @@ textarea.generation-prompt::placeholder {
 }
 .export-option.unavailable {
   opacity: 0.58;
+}
+.export-option.recommended {
+  border-color: #d6ad94;
+  background: #f8eee7;
 }
 .export-option-copy {
   display: grid;

@@ -21,6 +21,8 @@ export interface PreviewTracks {
   revision: string
   duration: number
   tracks: {
+    /** Final mix: background + generated dubs in replaced ranges, original audio elsewhere. */
+    optimized: PreviewTrack
     original: PreviewTrack
     background: PreviewTrack
     dubbed: PreviewTrack

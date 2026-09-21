@@ -4,7 +4,13 @@ import { basename, join } from 'node:path'
 import { getProject } from './store'
 import { assetPath, ffmpeg, projectDir } from './media'
 import { getPreviewTracks } from './preview-tracks'
-import { exportSchema, selectedTrackKeys, type ExportOptions, type ExportResult } from '../../shared/export'
+import {
+  exportSchema,
+  selectedTrackKeys,
+  type ExportOptions,
+  type ExportResult,
+  type ExportTrackKey
+} from '../../shared/export'
 import type { PreviewTracks, PreviewTrack } from '../../shared/preview'
 
 const activeExports = new Map<string, Promise<ExportResult>>()
@@ -27,11 +33,7 @@ export function exportSourcePath(path: string | null | undefined) {
   return file
 }
 
-function selectTrack(
-  tracks: PreviewTracks,
-  key: 'original' | 'background' | 'dubbed',
-  options: ExportOptions
-): PreviewTrack {
+function selectTrack(tracks: PreviewTracks, key: ExportTrackKey, options: ExportOptions): PreviewTrack {
   const track = tracks.tracks[key]
   if (!track?.path) throw new Error(`所选音轨「${track?.label || key}」尚未准备好`)
   if (key === 'original' && options.originalMode === 'preserve-gaps') {
@@ -67,6 +69,8 @@ async function exportProjectInternal(projectId: string, options: ExportOptions):
   const tracks = await getPreviewTracks(projectId)
   const selected = selectedTrackKeys(options)
   if (!selected.length) throw new Error('至少选择一条音轨')
+  if (selected.includes('optimized') && selected.length > 1)
+    throw new Error('“优化合成”已经包含完整成片音轨，不能与其他音轨重复合并')
   if (options.dubbed && tracks.missingDubs > 0)
     throw new Error(`还有 ${tracks.missingDubs} 句配音未生成，暂时不能导出配音音轨`)
   if (project.kind === 'video' && !['mkv', 'mp4'].includes(options.format))

@@ -160,6 +160,142 @@ async function buildDubbed(projectDirPath: string, output: string, duration: num
   }
 }
 
+/**
+ * Build the exact final mix without duplicating background audio:
+ * replaced ranges use background + aligned dub, all other ranges keep the original.
+ */
+async function buildOptimized(
+  projectDirPath: string,
+  output: string,
+  duration: number,
+  project: Project,
+  lines: Segment[]
+) {
+  const generated = lines.filter((line) => line.enabled && line.generatedPath && line.end > line.start)
+  const originalSource = project.kind === 'text' ? null : project.audioPath || project.sourcePath || null
+  const hasOriginal = isAvailable(originalSource)
+  const hasBackground = isAvailable(project.backgroundPath)
+  if (!generated.length && !hasOriginal && !hasBackground) return false
+
+  const work = join(projectDirPath, `.preview-build-${basename(output).replace(/\.wav$/, '')}`)
+  await rm(work, { recursive: true, force: true })
+  await mkdir(work, { recursive: true })
+  const chunks: string[] = []
+
+  const silence = async (length: number) => {
+    if (length <= 0.00001) return
+    const path = join(work, `silence-${chunks.length}.wav`)
+    await ffmpeg([
+      '-f',
+      'lavfi',
+      '-i',
+      'anullsrc=r=48000:cl=stereo',
+      '-t',
+      String(length),
+      '-c:a',
+      'pcm_s16le',
+      path
+    ])
+    chunks.push(path)
+  }
+
+  const originalChunk = async (start: number, end: number) => {
+    const length = end - start
+    if (length <= 0.00001) return
+    if (!hasOriginal) {
+      await silence(length)
+      return
+    }
+    const path = join(work, `original-${chunks.length}.wav`)
+    await ffmpeg([
+      '-ss',
+      String(start),
+      '-i',
+      assetPath(originalSource!),
+      '-t',
+      String(length),
+      '-ar',
+      '48000',
+      '-ac',
+      '2',
+      '-c:a',
+      'pcm_s16le',
+      path
+    ])
+    chunks.push(path)
+  }
+
+  const replacementChunk = async (line: Segment, start: number, end: number) => {
+    const length = end - start
+    if (length <= 0.00001 || !line.generatedPath) return
+    const aligned = join(work, `aligned-${chunks.length}.wav`)
+    await alignAudio(assetPath(line.generatedPath), aligned, length)
+    if (!hasBackground || project.kind === 'text') {
+      chunks.push(aligned)
+      return
+    }
+    const path = join(work, `replacement-${chunks.length}.wav`)
+    await ffmpeg([
+      '-ss',
+      String(start),
+      '-t',
+      String(length),
+      '-i',
+      assetPath(project.backgroundPath!),
+      '-i',
+      aligned,
+      '-filter_complex',
+      '[0:a][1:a]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.98:latency=1',
+      '-t',
+      String(length),
+      '-ar',
+      '48000',
+      '-ac',
+      '2',
+      '-c:a',
+      'pcm_s16le',
+      path
+    ])
+    chunks.push(path)
+  }
+
+  try {
+    let cursor = 0
+    for (const line of generated) {
+      const start = Math.max(cursor, Math.max(0, line.start))
+      const end = Math.min(duration, line.end)
+      if (end <= start) continue
+      await originalChunk(cursor, start)
+      await replacementChunk(line, start, end)
+      cursor = end
+    }
+    await originalChunk(cursor, duration)
+    if (!chunks.length) return false
+    const list = join(work, 'concat.txt')
+    await writeFile(list, chunks.map((path) => `file '${basename(path)}'`).join('\n'))
+    await ffmpeg([
+      '-f',
+      'concat',
+      '-safe',
+      '1',
+      '-i',
+      list,
+      '-t',
+      String(duration),
+      '-ar',
+      '48000',
+      '-ac',
+      '2',
+      '-c:a',
+      'pcm_s16le',
+      assetPath(`${output}.partial.wav`)
+    ])
+    return true
+  } finally {
+    await rm(work, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
 async function peaksFor(path: string | null, revision: string, key: string) {
   if (!path) return []
   const cacheKey = `${revision}:${key}:${path}`
@@ -184,8 +320,10 @@ export async function getPreviewTracks(projectId: string): Promise<PreviewTracks
   const originalAvailable = isAvailable(originalSource)
   const backgroundAvailable = isAvailable(project.backgroundPath)
   const dubbedAvailable = lines.some((line) => line.enabled && line.generatedPath)
+  const optimizedAvailable = dubbedAvailable || originalAvailable || backgroundAvailable
   const originalGaps = `${project.id}/preview-${revision}-original-gaps.wav`
   const dubbed = `${project.id}/preview-${revision}-dubbed.wav`
+  const optimized = `${project.id}/preview-${revision}-optimized.wav`
   const peaksFile = join(dir, `preview-${revision}-peaks.json`)
 
   const tasks: Promise<unknown>[] = []
@@ -197,9 +335,25 @@ export async function getPreviewTracks(projectId: string): Promise<PreviewTracks
   if (dubbedAvailable) {
     tasks.push(publish(dubbed, async () => void (await buildDubbed(dir, dubbed, duration, lines))))
   }
+  if (dubbedAvailable) {
+    tasks.push(
+      publish(optimized, async () => {
+        if (!(await buildOptimized(dir, optimized, duration, project, lines))) {
+          throw new Error('没有可用的音轨用于生成优化合成')
+        }
+      })
+    )
+  }
   await Promise.all(tasks)
 
-  const [originalPeaks, alternatePeaks, backgroundPeaks, dubbedPeaks] = await Promise.all([
+  const optimizedPath = dubbedAvailable
+    ? optimized
+    : originalAvailable
+      ? originalSource
+      : backgroundAvailable
+        ? project.backgroundPath
+        : null
+  const [originalPeaks, alternatePeaks, backgroundPeaks, dubbedPeaks, optimizedPeaks] = await Promise.all([
     peaksFor(originalAvailable ? originalSource : null, revision, 'original'),
     peaksFor(
       originalAvailable ? (replacements.length ? originalGaps : originalSource!) : null,
@@ -207,13 +361,15 @@ export async function getPreviewTracks(projectId: string): Promise<PreviewTracks
       'original-gaps'
     ),
     peaksFor(backgroundAvailable ? project.backgroundPath : null, revision, 'background'),
-    peaksFor(dubbedAvailable ? dubbed : null, revision, 'dubbed')
+    peaksFor(dubbedAvailable ? dubbed : null, revision, 'dubbed'),
+    peaksFor(optimizedPath, revision, 'optimized')
   ])
   const peaksCache = {
     original: originalPeaks,
     'original-gaps': alternatePeaks,
     background: backgroundPeaks,
-    dubbed: dubbedPeaks
+    dubbed: dubbedPeaks,
+    optimized: optimizedPeaks
   }
   await writeFile(peaksFile, JSON.stringify(peaksCache))
 
@@ -241,10 +397,22 @@ export async function getPreviewTracks(projectId: string): Promise<PreviewTracks
         : undefined
       : '尚未生成配音；完成配音后可单独试听'
   }
+  const optimizedTrack: PreviewTrack = {
+    path: optimizedPath,
+    peaks: optimizedPeaks,
+    label: '优化合成',
+    reason: optimizedAvailable
+      ? dubbedAvailable
+        ? missingDubs
+          ? `还有 ${missingDubs} 句未生成，这些片段会保留原声`
+          : undefined
+        : '尚未生成配音，当前等同原始音轨'
+      : '还没有可合成的音轨'
+  }
   return {
     revision,
     duration,
-    tracks: { original, background, dubbed: dubbedTrack },
+    tracks: { optimized: optimizedTrack, original, background, dubbed: dubbedTrack },
     replacementRanges: replacements,
     missingDubs
   }

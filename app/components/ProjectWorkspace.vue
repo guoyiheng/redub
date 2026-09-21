@@ -4,15 +4,18 @@ import type { ExportResult } from '../../shared/export'
 import type { PreviewTracks } from '../../shared/preview'
 import { languageOptions, normalizeLanguage } from '../../shared/languages'
 
-type PreviewTrackKey = 'original' | 'background' | 'dubbed'
+type PreviewTrackKey = 'optimized' | 'original' | 'background' | 'dubbed'
 type ExportFormat = 'mkv' | 'mp4' | 'wav'
-const trackKeys: PreviewTrackKey[] = ['original', 'background', 'dubbed']
+const trackKeys: PreviewTrackKey[] = ['optimized', 'original', 'background', 'dubbed']
+const sourceTrackKeys: PreviewTrackKey[] = ['original', 'background', 'dubbed']
 const trackLabels: Record<PreviewTrackKey, string> = {
+  optimized: '优化合成',
   original: '原始音轨',
   background: '背景音',
   dubbed: '配音'
 }
 const trackDescriptions: Record<PreviewTrackKey, string> = {
+  optimized: '替换区间为背景音 + 新配音，未配音片段保留原声',
   original: '原素材中的人声与环境声',
   background: '分离后保留的环境声与音乐',
   dubbed: '按时间轴对齐后的新配音'
@@ -23,6 +26,7 @@ const current = ref<string>()
 const time = ref(0)
 const playing = ref(false)
 const clockPlayer = ref<HTMLMediaElement>()
+const optimizedAudio = ref<HTMLAudioElement>()
 const originalAudio = ref<HTMLAudioElement>()
 const backgroundAudio = ref<HTMLAudioElement>()
 const dubbedAudio = ref<HTMLAudioElement>()
@@ -31,14 +35,16 @@ const previewLoading = ref(false)
 const previewError = ref('')
 const exporting = ref(false)
 const trackEnabled = reactive<Record<PreviewTrackKey, boolean>>({
+  optimized: true,
   original: false,
-  background: true,
-  dubbed: true
+  background: false,
+  dubbed: false
 })
 const exportTracks = reactive<Record<PreviewTrackKey, boolean>>({
+  optimized: true,
   original: false,
-  background: true,
-  dubbed: true
+  background: false,
+  dubbed: false
 })
 const exportOriginalMode = ref<'preserve-gaps' | 'full'>('preserve-gaps')
 const exportFormat = ref<ExportFormat>('mkv')
@@ -85,6 +91,7 @@ const clockSource = computed(() => {
   if (project.value.kind === 'video' || project.value.kind === 'audio')
     return project.value.sourcePath || project.value.audioPath
   return (
+    previewTracks.value?.tracks.optimized.path ||
     previewTracks.value?.tracks.background.path ||
     previewTracks.value?.tracks.dubbed.path ||
     previewTracks.value?.tracks.original.path ||
@@ -93,16 +100,16 @@ const clockSource = computed(() => {
 })
 const playbackPaths = computed<Record<PreviewTrackKey, string | null>>(() => {
   const tracks = previewTracks.value?.tracks
-  if (!tracks) return { original: null, background: null, dubbed: null }
-  const useOriginalGaps =
-    trackEnabled.dubbed && !!previewTracks.value?.replacementRanges.length && !!tracks.original.alternatePath
+  if (!tracks) return { optimized: null, original: null, background: null, dubbed: null }
   return {
-    original: useOriginalGaps ? tracks.original.alternatePath! : tracks.original.path,
+    optimized: tracks.optimized.path,
+    original: tracks.original.path,
     background: tracks.background.path,
     dubbed: tracks.dubbed.path
   }
 })
 const audioElements = computed<Record<PreviewTrackKey, HTMLAudioElement | undefined>>(() => ({
+  optimized: optimizedAudio.value,
   original: originalAudio.value,
   background: backgroundAudio.value,
   dubbed: dubbedAudio.value
@@ -122,12 +129,9 @@ function downsample(values: number[], count = 96) {
 }
 const waveforms = computed<Record<PreviewTrackKey, number[]>>(() => {
   const tracks = previewTracks.value?.tracks
-  const originalPeaks =
-    trackEnabled.dubbed && tracks?.original.alternatePeaks?.length
-      ? tracks.original.alternatePeaks
-      : tracks?.original.peaks
   return {
-    original: downsample(originalPeaks || []),
+    optimized: downsample(tracks?.optimized.peaks || []),
+    original: downsample(tracks?.original.peaks || []),
     background: downsample(tracks?.background.peaks || []),
     dubbed: downsample(tracks?.dubbed.peaks || [])
   }
@@ -151,8 +155,10 @@ const exportSummary = computed(() => {
   return names.length ? `${names.join(' + ')} → ${format}` : '尚未选择音轨'
 })
 const exportWarning = computed(() => {
+  if (exportTracks.optimized && selectedExportCount.value > 1)
+    return '优化合成已经包含完整成片音轨，不能与其他音轨重复合并。'
   if (exportTracks.original && exportTracks.background && exportTracks.dubbed)
-    return '原声与背景音同时合并会叠加未替换区间的环境声；正式导出推荐“背景音 + 配音”。'
+    return '原声与背景音同时合并会叠加未替换区间的环境声；正式导出推荐“优化合成”。'
   if (exportTracks.original && exportTracks.dubbed && exportOriginalMode.value === 'full')
     return '完整原声会在替换区间保留旧人声，可能和新配音重叠。'
   return ''
@@ -294,6 +300,15 @@ function seekFromLane(event: MouseEvent) {
 }
 function setTrackEnabled(key: PreviewTrackKey, value: boolean | 'indeterminate') {
   const enabled = value === true
+  if (enabled && key === 'optimized') {
+    for (const sourceKey of sourceTrackKeys) {
+      trackEnabled[sourceKey] = false
+      audioFor(sourceKey)?.pause()
+    }
+  } else if (enabled && trackEnabled.optimized) {
+    trackEnabled.optimized = false
+    audioFor('optimized')?.pause()
+  }
   trackEnabled[key] = enabled
   const element = audioFor(key)
   if (!enabled) element?.pause()
@@ -304,33 +319,41 @@ function setTrackEnabled(key: PreviewTrackKey, value: boolean | 'indeterminate')
     })
 }
 function setExportTrack(key: PreviewTrackKey, value: boolean | 'indeterminate') {
-  exportTracks[key] = value === true
+  const enabled = value === true
+  if (enabled && key === 'optimized') {
+    for (const sourceKey of sourceTrackKeys) exportTracks[sourceKey] = false
+  } else if (enabled) {
+    exportTracks.optimized = false
+  }
+  exportTracks[key] = enabled
 }
 function trackState(key: PreviewTrackKey) {
   const track = previewTracks.value?.tracks[key]
   if (!track?.path) return track?.reason || '尚未准备'
   if (!trackEnabled[key]) return '已关闭'
-  if (key === 'original')
-    return trackEnabled.dubbed && previewTracks.value?.replacementRanges.length
-      ? '替换区间已静音'
-      : '完整原声'
+  if (key === 'optimized') return previewTracks.value?.missingDubs ? '未配音片段保留原声' : '最终成片效果'
+  if (key === 'original') return '完整原声'
   if (key === 'dubbed' && previewTracks.value?.missingDubs)
     return `${previewTracks.value.missingDubs} 句未生成`
   return '参与试听'
 }
 function applyRecommendedExport() {
+  const hasOptimized = !!previewTracks.value?.tracks.optimized.path
+  exportTracks.optimized = hasOptimized
   exportTracks.original = false
-  exportTracks.background = !!previewTracks.value?.tracks.background.path
-  exportTracks.dubbed = !!previewTracks.value?.tracks.dubbed.path
+  exportTracks.background = !hasOptimized && !!previewTracks.value?.tracks.background.path
+  exportTracks.dubbed = !hasOptimized && !!previewTracks.value?.tracks.dubbed.path
   exportOriginalMode.value = 'preserve-gaps'
   exportFormat.value = project.value.kind === 'video' ? 'mkv' : 'wav'
 }
 function applyDubbedOnlyExport() {
+  exportTracks.optimized = false
   exportTracks.original = false
   exportTracks.background = false
   exportTracks.dubbed = !!previewTracks.value?.tracks.dubbed.path
 }
 function applyOriginalGapsExport() {
+  exportTracks.optimized = false
   exportTracks.original = !!previewTracks.value?.tracks.original.path
   exportTracks.background = false
   exportTracks.dubbed = !!previewTracks.value?.tracks.dubbed.path
@@ -343,6 +366,7 @@ async function exportFilm() {
     const result = await $fetch<ExportResult>(`/api/projects/${project.value.id}/export`, {
       method: 'POST',
       body: {
+        optimized: exportTracks.optimized,
         original: exportTracks.original,
         background: exportTracks.background,
         dubbed: exportTracks.dubbed,
@@ -384,15 +408,18 @@ async function loadPreviewTracks() {
     const changed = previewTracks.value?.revision !== result.revision
     previewTracks.value = result
     if (changed) {
+      const hasOptimized = !!result.tracks.optimized.path
       const hasOriginal = !!result.tracks.original.path
       const hasBackground = !!result.tracks.background.path
       const hasDubbed = !!result.tracks.dubbed.path
-      trackEnabled.original = !hasBackground && !hasDubbed && hasOriginal
-      trackEnabled.background = hasBackground
-      trackEnabled.dubbed = hasDubbed
+      trackEnabled.optimized = hasOptimized
+      trackEnabled.original = !hasOptimized && !hasBackground && !hasDubbed && hasOriginal
+      trackEnabled.background = !hasOptimized && hasBackground
+      trackEnabled.dubbed = !hasOptimized && hasDubbed
+      exportTracks.optimized = hasOptimized
       exportTracks.original = false
-      exportTracks.background = hasBackground
-      exportTracks.dubbed = hasDubbed
+      exportTracks.background = !hasOptimized && hasBackground
+      exportTracks.dubbed = !hasOptimized && hasDubbed
       exportOriginalMode.value = 'preserve-gaps'
       exportFormat.value = project.value.kind === 'video' ? 'mkv' : 'wav'
     } else {
@@ -697,7 +724,7 @@ async function addLine() {
         <div>
           <h2>预览成片</h2>
           <p class="help">
-            上方画面始终无声；声音由三条音轨按开关实时混合。拖动主进度条或点击任意音轨可跳转核对。
+            上方画面始终无声；默认试听优化合成，也可开启三条源音轨对比。拖动主进度条或点击任意音轨可跳转核对。
           </p>
         </div>
         <div class="row-actions">
@@ -803,7 +830,9 @@ async function addLine() {
           <header class="mixer-heading">
             <div>
               <h3>音轨混音器</h3>
-              <p class="help">三条音轨已对齐到同一时间轴。开启开关参与试听；关闭后不影响其他音轨。</p>
+              <p class="help">
+                优化合成与三条源音轨已对齐到同一时间轴；优化合成与源音轨互斥，避免重复叠加声音。
+              </p>
             </div>
             <div class="mixer-legend"><span class="playhead-mark" />播放头</div>
           </header>
@@ -878,8 +907,8 @@ async function addLine() {
           </header>
           <div class="export-presets">
             <button type="button" class="export-preset recommended" @click="applyRecommendedExport">
-              <strong>推荐：背景音 + 配音</strong>
-              <span>保留环境声与音乐，用新配音替换人声，适合大多数成片。</span>
+              <strong>优化合成（推荐）</strong>
+              <span>替换区间使用背景音 + 新配音，未配音片段保留原声，适合直接导出成片。</span>
             </button>
             <button type="button" class="export-preset" @click="applyDubbedOnlyExport">
               <strong>仅配音</strong>
@@ -895,7 +924,7 @@ async function addLine() {
               v-for="key in trackKeys"
               :key="`export-${key}`"
               class="export-option"
-              :class="{ unavailable: !trackAvailable(key) }"
+              :class="{ recommended: key === 'optimized', unavailable: !trackAvailable(key) }"
             >
               <UCheckbox
                 :model-value="exportTracks[key]"
@@ -950,6 +979,12 @@ async function addLine() {
           </div>
         </section>
       </div>
+      <audio
+        ref="optimizedAudio"
+        class="mixer-hidden-audio"
+        :src="mediaUrl(playbackPaths.optimized)"
+        preload="auto"
+      />
       <audio
         ref="originalAudio"
         class="mixer-hidden-audio"
