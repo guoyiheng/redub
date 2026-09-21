@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Stage } from '../../shared/types'
-const { detail, channels, act } = useStudio()
+const { detail, channels, settingsProject, act } = useStudio()
 const current = ref<string>(),
   panel = ref<'script' | 'preview'>('script'),
   mode = ref<'original' | 'dubbed'>('original'),
@@ -10,6 +10,7 @@ const player = ref<HTMLMediaElement>(),
   showOptions = ref(false),
   showTimeline = ref(false),
   showEditor = ref(false),
+  showGeneration = ref(false),
   dirty = ref(false)
 const options = ref({ name: '', sourceLanguage: 'auto', targetLanguage: '中文', channelId: '' })
 const project = computed(() => detail.value!.project),
@@ -52,7 +53,17 @@ watch(
     showOptions.value = false
     showTimeline.value = false
     showEditor.value = false
+    showGeneration.value = false
     dirty.value = false
+  },
+  { immediate: true }
+)
+watch(
+  settingsProject,
+  (id) => {
+    if (id !== project.value.id) return
+    openOptions()
+    settingsProject.value = null
   },
   { immediate: true }
 )
@@ -69,6 +80,10 @@ function selectLine(id: string) {
     player.value.currentTime = line.start
     time.value = line.start
   }
+}
+function openGeneration() {
+  showEditor.value = false
+  showGeneration.value = true
 }
 async function run(stage?: Stage) {
   if (dirty.value) {
@@ -150,17 +165,19 @@ function switchMode(value: 'original' | 'dubbed') {
         </p>
       </div>
       <div class="row-actions">
-        <UButton icon="i-carbon-settings-adjust" color="neutral" variant="ghost" @click="openOptions"
-          >设置</UButton
-        ><UButton
-          v-if="project.outputPath"
-          :href="mediaUrl(project.outputPath, true)"
-          icon="i-carbon-download"
+        <UButton v-if="project.outputPath" :href="mediaUrl(project.outputPath, true)" icon="i-carbon-download"
           >导出成片</UButton
         ><UButton
           v-else
           :loading="busy"
           :disabled="locked || (panel === 'script' && !lines.length && project.kind !== 'text')"
+          :title="
+            locked
+              ? '任务执行中，完成后可操作'
+              : panel === 'script' && !lines.length && project.kind !== 'text'
+                ? '请先处理素材'
+                : undefined
+          "
           icon="i-carbon-play-filled-alt"
           @click="runMain"
           >{{ mainActionLabel }}</UButton
@@ -205,6 +222,7 @@ function switchMode(value: 'original' | 'dubbed') {
                 color="neutral"
                 variant="outline"
                 :disabled="locked"
+                :title="locked ? '任务执行中，完成后可添加片段' : undefined"
                 @click="addLine"
                 >添加片段</UButton
               >
@@ -215,9 +233,12 @@ function switchMode(value: 'original' | 'dubbed') {
             <p>
               {{ project.kind === 'text' ? '添加台词片段后开始配音。' : '先处理素材，系统会自动识别台词。' }}
             </p>
-            <UButton :disabled="locked" @click="runMain">{{
-              project.kind === 'text' ? '开始翻译' : '处理素材'
-            }}</UButton>
+            <UButton
+              :disabled="locked"
+              :title="locked ? '任务执行中，完成后可操作' : undefined"
+              @click="runMain"
+              >{{ project.kind === 'text' ? '开始翻译' : '处理素材' }}</UButton
+            >
           </div>
           <div v-else class="segment-list segment-list-large">
             <button
@@ -258,6 +279,7 @@ function switchMode(value: 'original' | 'dubbed') {
                 :class="{ active: mode === 'original' }"
                 :aria-pressed="mode === 'original'"
                 :disabled="project.kind === 'text'"
+                :title="project.kind === 'text' ? '文本项目没有原始音轨' : undefined"
                 @click="switchMode('original')"
               >
                 原始素材</button
@@ -265,6 +287,7 @@ function switchMode(value: 'original' | 'dubbed') {
                 :class="{ active: mode === 'dubbed' }"
                 :aria-pressed="mode === 'dubbed'"
                 :disabled="!project.outputPath"
+                :title="!project.outputPath ? '完成合并后才能预览成片' : undefined"
                 @click="switchMode('dubbed')"
               >
                 配音成片
@@ -367,8 +390,30 @@ function switchMode(value: 'original' | 'dubbed') {
           :key="selected.id"
           :segment="selected"
           :locked="locked"
-          @dirty="dirty = $event" /></template
+          @dirty="dirty = $event"
+          @generate="openGeneration" /></template
     ></USlideover>
+    <UDrawer
+      v-model:open="showGeneration"
+      direction="bottom"
+      :handle="false"
+      title="生成配音"
+      :inset="true"
+      :handle-only="true"
+      :ui="{ content: 'generation-drawer ring-0', overlay: 'bg-black/15' }"
+    >
+      <template #content>
+        <div class="generation-drawer-inner">
+          <VoiceGenerationPanel
+            v-if="selected"
+            :segment="selected"
+            :locked="locked"
+            @close="showGeneration = false"
+            @generated="showGeneration = false"
+          />
+        </div>
+      </template>
+    </UDrawer>
     <USlideover v-model:open="showOptions" title="项目设置" side="right" :ui="{ content: 'sm:max-w-md' }"
       ><template #body
         ><form class="project-options-form" @submit.prevent="saveOptions">
@@ -388,7 +433,19 @@ function switchMode(value: 'original' | 'dubbed') {
                 { label: '韩语', value: 'ko' }
               ]" /></UFormField
           ><UFormField label="目标语言"
-            ><UInput class="w-full" v-model="options.targetLanguage" :disabled="locked" /></UFormField
+            ><USelect
+              v-model="options.targetLanguage"
+              class="w-full"
+              :disabled="locked"
+              :items="[
+                { label: '中文', value: '中文' },
+                { label: '英语', value: '英语' },
+                { label: '日语', value: '日语' },
+                { label: '韩语', value: '韩语' },
+                { label: '西班牙语', value: '西班牙语' },
+                { label: '法语', value: '法语' },
+                { label: '德语', value: '德语' }
+              ]" /></UFormField
           ><UFormField label="配音渠道"
             ><USelect
               v-model="options.channelId"

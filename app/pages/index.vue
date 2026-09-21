@@ -1,5 +1,5 @@
 <script setup lang="ts">
-const { projects, selected, detail, jobs, refresh, select, errorMessage } = useStudio()
+const { projects, selected, detail, jobs, refresh, select, settingsProject, errorMessage } = useStudio()
 const view = ref<'home' | 'project' | 'settings'>('home'),
   importing = ref(false),
   loading = ref(true),
@@ -25,6 +25,10 @@ async function choose(id: string) {
 }
 async function created(id: string) {
   await choose(id)
+}
+async function openProjectSettings(id: string) {
+  await choose(id)
+  settingsProject.value = id
 }
 async function load() {
   loading.value = true
@@ -75,22 +79,43 @@ onBeforeUnmount(() => clearInterval(timer))
       </nav>
       <div v-if="projects.length" class="sidebar-projects">
         <p class="nav-label">最近项目</p>
-        <button
+        <div
           v-for="p in projects.slice(0, 8)"
           :key="p.id"
+          class="sidebar-project-item"
           :class="{ active: selected === p.id && view === 'project' }"
-          @click="choose(p.id)"
         >
-          <UIcon
-            :name="
-              p.kind === 'video'
-                ? 'i-carbon-video'
-                : p.kind === 'audio'
-                  ? 'i-carbon-music'
-                  : 'i-carbon-document'
-            "
-          /><span>{{ p.name }}</span>
-        </button>
+          <button class="sidebar-project-main" @click="choose(p.id)">
+            <UIcon
+              :name="
+                p.kind === 'video'
+                  ? 'i-carbon-video'
+                  : p.kind === 'audio'
+                    ? 'i-carbon-music'
+                    : 'i-carbon-document'
+              "
+            /><span>{{ p.name }}</span>
+          </button>
+          <UDropdownMenu
+            :items="[
+              [
+                {
+                  label: '项目设置',
+                  icon: 'i-carbon-settings-adjust',
+                  onSelect: () => openProjectSettings(p.id)
+                }
+              ]
+            ]"
+          >
+            <UButton
+              color="neutral"
+              variant="ghost"
+              icon="i-carbon-overflow-menu-horizontal"
+              :aria-label="`${p.name} 的更多操作`"
+              size="xs"
+            />
+          </UDropdownMenu>
+        </div>
       </div>
       <div class="sidebar-footer">
         <button :class="{ active: view === 'settings' }" @click="show('settings')">
@@ -130,31 +155,52 @@ onBeforeUnmount(() => clearInterval(timer))
           </header>
           <div v-if="!projects.length" class="empty-state"><p>暂无项目</p></div>
           <div v-else class="project-list">
-            <button v-for="p in list" :key="p.id" class="project-row" @click="choose(p.id)">
-              <div class="project-symbol">
-                <UIcon
-                  :name="
-                    p.kind === 'video'
-                      ? 'i-carbon-video'
-                      : p.kind === 'audio'
-                        ? 'i-carbon-music'
-                        : 'i-carbon-document'
-                  "
+            <div v-for="p in list" :key="p.id" class="project-row">
+              <button class="project-row-main" :aria-label="`打开项目：${p.name}`" @click="choose(p.id)">
+                <div class="project-symbol">
+                  <UIcon
+                    :name="
+                      p.kind === 'video'
+                        ? 'i-carbon-video'
+                        : p.kind === 'audio'
+                          ? 'i-carbon-music'
+                          : 'i-carbon-document'
+                    "
+                  />
+                </div>
+                <div class="project-row-name">
+                  <strong>{{ p.name }}</strong
+                  ><span
+                    >{{ p.kind === 'video' ? '视频' : p.kind === 'audio' ? '音频' : '文本' }} ·
+                    {{ formatTime(p.duration) }} · {{ p.targetLanguage }}</span
+                  >
+                </div>
+                <span class="project-date">{{ new Date(p.updatedAt).toLocaleDateString('zh-CN') }}</span
+                ><UBadge
+                  :color="p.outputPath ? 'success' : p.paused ? 'warning' : 'neutral'"
+                  variant="soft"
+                  >{{ p.outputPath ? '可导出' : p.paused ? '已暂停' : '编辑中' }}</UBadge
+                ><UIcon name="i-carbon-arrow-up-right" />
+              </button>
+              <UDropdownMenu
+                :items="[
+                  [
+                    {
+                      label: '项目设置',
+                      icon: 'i-carbon-settings-adjust',
+                      onSelect: () => openProjectSettings(p.id)
+                    }
+                  ]
+                ]"
+              >
+                <UButton
+                  color="neutral"
+                  variant="ghost"
+                  icon="i-carbon-overflow-menu-horizontal"
+                  :aria-label="`${p.name} 的更多操作`"
                 />
-              </div>
-              <div class="project-row-name">
-                <strong>{{ p.name }}</strong
-                ><span
-                  >{{ p.kind === 'video' ? '视频' : p.kind === 'audio' ? '音频' : '文本' }} ·
-                  {{ formatTime(p.duration) }} · {{ p.targetLanguage }}</span
-                >
-              </div>
-              <span class="project-date">{{ new Date(p.updatedAt).toLocaleDateString('zh-CN') }}</span
-              ><UBadge :color="p.outputPath ? 'success' : p.paused ? 'warning' : 'neutral'" variant="soft">{{
-                p.outputPath ? '可导出' : p.paused ? '已暂停' : '编辑中'
-              }}</UBadge
-              ><UIcon name="i-carbon-arrow-up-right" />
-            </button>
+              </UDropdownMenu>
+            </div>
             <p v-if="!list.length" class="help">没有找到匹配的项目。</p>
           </div>
         </section>

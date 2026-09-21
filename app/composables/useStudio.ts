@@ -14,6 +14,7 @@ export function useStudio() {
     translationChannelId: 'translation-default'
   }))
   const selected = useState<string | null>('selected', () => null)
+  const settingsProject = useState<string | null>('settingsProject', () => null)
   const detail = useState<ProjectDetail | null>('detail', () => null)
   const toast = useToast()
   const errorMessage = (error: unknown) => {
@@ -52,5 +53,17 @@ export function useStudio() {
       return false
     }
   }
-  return { projects, jobs, channels, settings, selected, detail, refresh, select, act, errorMessage }
+  return {
+    projects,
+    jobs,
+    channels,
+    settings,
+    selected,
+    settingsProject,
+    detail,
+    refresh,
+    select,
+    act,
+    errorMessage
+  }
 }
