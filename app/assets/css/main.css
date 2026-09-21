@@ -1089,7 +1089,7 @@ button:disabled {
   right: 24px;
   bottom: 20px;
   z-index: 50;
-  width: 320px;
+  width: 360px;
   max-width: calc(100vw - 32px);
   border-radius: 8px;
   background: var(--ui-bg-elevated);
@@ -1122,19 +1122,20 @@ button:disabled {
   animation: pulse 1.5s ease-in-out infinite;
 }
 .task-body {
-  max-height: min(440px, calc(100dvh - 160px));
-  padding: 16px;
+  max-height: min(520px, calc(100dvh - 160px));
+  padding: 14px 16px 16px;
   overflow-y: auto;
 }
 .queue-settings {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+  padding-bottom: 14px;
 }
 .queue-settings [data-slot='container'] {
   margin-top: 0;
-  min-width: 72px;
+  min-width: 96px;
 }
 .queue-settings button {
   width: 100%;
@@ -1145,28 +1146,71 @@ button:disabled {
   text-align: center;
 }
 .task-item {
-  margin-top: 16px;
-  padding-top: 16px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--ui-border);
   border-radius: 7px;
 }
 .task-title {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
   font-size: 13px;
 }
-.task-title strong {
-  font-weight: 500;
+.task-title-main {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
 }
-.task-title span {
+.task-title strong {
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-title > span,
+.task-title-main > span {
   flex-shrink: 0;
   font-size: 12px;
 }
-.task-item .help {
-  margin: 4px 0 8px;
+.task-count {
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--ui-bg-muted);
+  color: var(--ui-text-muted);
+  font-size: 11px !important;
+  line-height: 1.5;
+}
+.task-project {
+  display: flex;
+  gap: 4px;
+  margin: 4px 0 0;
   overflow-wrap: anywhere;
 }
+.task-project span {
+  color: var(--ui-text-muted);
+}
+.task-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 9px;
+}
+.task-progress > :first-child {
+  min-width: 0;
+  flex: 1;
+}
+.task-progress > span {
+  width: 34px;
+  color: var(--ui-text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
 .job-message {
+  margin: 7px 0 0;
   font-size: 12px;
   line-height: 1.6;
   color: var(--ui-text-muted);
@@ -1174,7 +1218,7 @@ button:disabled {
   white-space: pre-wrap;
 }
 .task-item .row-actions {
-  margin-top: 8px;
+  margin-top: 9px;
 }
 .status-failed,
 .error-text {

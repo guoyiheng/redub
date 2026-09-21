@@ -346,7 +346,10 @@ onMounted(check)
               act(() => $fetch('/api/settings', { method: 'PATCH', body: queueDraft }), '任务设置已保存')
             "
           >
-            <UFormField label="并发任务数" description="同时执行的配音任务数量。数值越高越占用 CPU 和网络。">
+            <UFormField
+              label="全局并发任务数"
+              description="同时运行的任务总数；预处理、翻译、配音与合成共用此额度。数值越高越占用 CPU 和网络。"
+            >
               <USelect v-model="queueDraft.concurrency" class="w-full" :items="[1, 2, 3, 4, 5, 6, 7, 8]" />
             </UFormField>
             <UFormField
