@@ -76,6 +76,71 @@ export function runProcess(command: string, args: string[], timeoutMs = 60 * 60 
 }
 export const ffmpeg = (args: string[]) =>
   runProcess(binary('ffmpeg'), ['-hide_banner', '-loglevel', 'error', '-y', ...args])
+export async function audioPeaks(path: string, buckets = 600) {
+  const info = await probe(path)
+  const sampleRate = 4000
+  const totalSamples = Math.max(1, Math.ceil(info.duration * sampleRate))
+  const peaks = Array.from({ length: buckets }, () => 0)
+  return new Promise<number[]>((resolvePromise, reject) => {
+    const child = spawn(
+      binary('ffmpeg'),
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-i',
+        path,
+        '-vn',
+        '-ac',
+        '1',
+        '-ar',
+        String(sampleRate),
+        '-f',
+        's16le',
+        '-'
+      ],
+      { windowsHide: true, env: process.env }
+    )
+    children.add(child)
+    let remainder = Buffer.alloc(0)
+    let sampleIndex = 0
+    let stderr = ''
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      child.kill('SIGKILL')
+    }, 120000)
+    child.stdout.on('data', (data: Buffer) => {
+      const buffer = remainder.length ? Buffer.concat([remainder, data]) : data
+      const usable = buffer.length - (buffer.length % 2)
+      for (let offset = 0; offset < usable; offset += 2) {
+        const bucket = Math.min(buckets - 1, Math.floor((sampleIndex / totalSamples) * buckets))
+        const amplitude = Math.min(1, Math.pow(Math.abs(buffer.readInt16LE(offset)) / 32768, 0.65))
+        if (amplitude > peaks[bucket]!) peaks[bucket] = amplitude
+        sampleIndex++
+      }
+      remainder = Buffer.from(buffer.subarray(usable))
+    })
+    child.stderr.on('data', (data) => {
+      stderr = (stderr + data).slice(-4000)
+    })
+    child.on('error', (error) => {
+      children.delete(child)
+      clearTimeout(timer)
+      reject(new Error(`无法读取波形：${error.message}`))
+    })
+    child.on('close', (code) => {
+      children.delete(child)
+      clearTimeout(timer)
+      if (code === 0) resolvePromise(peaks)
+      else
+        reject(
+          new Error(timedOut ? '读取波形超时' : `读取波形失败：${stderr.slice(-1200) || `退出码 ${code}`}`)
+        )
+    })
+  })
+}
+
 export async function probe(path: string) {
   const result = JSON.parse(
     await runProcess(

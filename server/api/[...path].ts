@@ -13,6 +13,8 @@ import { enqueue, generateSegment, serializeEnqueue, tick } from '../services/qu
 import { mediaHealth, assetPath, cutAudio } from '../services/media'
 import { safeError } from '../services/providers'
 import { stageLabels } from '../../shared/types'
+import { exportProject } from '../services/export'
+import { getPreviewTracks } from '../services/preview-tracks'
 
 const channelSchema = z.object({
   name: z.string().trim().min(1).max(80),
@@ -170,6 +172,12 @@ export default defineEventHandler(async (event) => {
         if (action === 'batch' && method === 'POST') {
           const input = batchSchema.parse(await readBody(event))
           return await enqueue(id, undefined, undefined, input)
+        }
+        if (action === 'export' && method === 'POST') {
+          return await exportProject(id, await readBody(event))
+        }
+        if (action === 'preview-tracks' && method === 'GET') {
+          return await getPreviewTracks(id)
         }
         if (action === 'run' && method === 'POST') {
           const body = z
