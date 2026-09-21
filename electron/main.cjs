@@ -11,6 +11,15 @@ let mainWindow,
   localOrigin,
   quitting = false,
   updateReady = false,
+  desktopUpdateState = {
+    currentVersion: '',
+    state: 'idle',
+    availableVersion: null,
+    progress: null,
+    message: '',
+    packaged: false,
+    configured: false
+  },
   desktopDownload
 const devUrl = process.env.REDUB_DEV_URL
 const root = app.isPackaged ? process.resourcesPath : resolve(__dirname, '..')
@@ -37,6 +46,11 @@ function freePort() {
       socket.close(() => resolvePort(port))
     })
   })
+}
+function publishUpdateState(patch = {}) {
+  desktopUpdateState = { ...desktopUpdateState, ...patch }
+  mainWindow?.webContents.send('redub:update-status', desktopUpdateState)
+  return desktopUpdateState
 }
 async function start() {
   const userDir = app.getPath('userData')
@@ -121,17 +135,66 @@ async function start() {
     }
     if (!ready) throw new Error('本地服务启动超时，请检查本地 server.log')
   }
+  desktopUpdateState = {
+    ...desktopUpdateState,
+    currentVersion: app.getVersion(),
+    packaged: app.isPackaged,
+    configured: !!process.env.REDUB_UPDATE_URL
+  }
   createWindow()
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = false
-  autoUpdater.on('update-downloaded', () => {
-    updateReady = true
+  autoUpdater.on('checking-for-update', () =>
+    publishUpdateState({
+      state: 'checking',
+      availableVersion: null,
+      progress: null,
+      message: '正在检查更新…'
+    })
+  )
+  autoUpdater.on('update-available', (info) =>
+    publishUpdateState({
+      state: 'available',
+      availableVersion: info.version,
+      progress: null,
+      message: `发现新版本 ${info.version}，可以下载更新。`
+    })
+  )
+  autoUpdater.on('update-not-available', () =>
+    publishUpdateState({
+      state: 'current',
+      availableVersion: null,
+      progress: null,
+      message: '当前已是最新版本。'
+    })
+  )
+  autoUpdater.on('download-progress', (progress) => {
+    const percent = Math.round(progress.percent)
+    publishUpdateState({
+      state: 'downloading',
+      progress: percent,
+      message: `正在下载更新 ${percent}%`
+    })
   })
-  autoUpdater.on('error', () => {})
+  autoUpdater.on('update-downloaded', (info) => {
+    updateReady = true
+    publishUpdateState({
+      state: 'downloaded',
+      availableVersion: info.version,
+      progress: 100,
+      message: `版本 ${info.version} 已下载，可以重启安装。`
+    })
+  })
+  autoUpdater.on('error', () =>
+    publishUpdateState({
+      state: 'error',
+      progress: null,
+      message: '更新失败，请检查网络后重试。'
+    })
+  )
   if (process.env.REDUB_UPDATE_URL) {
     if (!process.env.REDUB_UPDATE_URL.startsWith('https://')) throw new Error('更新地址必须使用 HTTPS')
     autoUpdater.setFeedURL({ provider: 'generic', url: process.env.REDUB_UPDATE_URL })
-    if (app.isPackaged) autoUpdater.checkForUpdates().catch(() => {})
   }
 }
 function createWindow() {
@@ -168,10 +231,6 @@ function createWindow() {
 ipcMain.handle('redub:update', async (event, action) => {
   if (!event.senderFrame || new URL(event.senderFrame.url).origin !== localOrigin) throw new Error('无效来源')
   if (action === 'models') return installModels(app.getPath('userData'), root)
-  if (action === 'config') {
-    await shell.openPath(join(app.getPath('userData'), '.env'))
-    return '已打开本地配置。修改后请重启应用。'
-  }
   if (action === 'web') {
     const result = await installWebUpdate({
       url: process.env.REDUB_WEB_UPDATE_URL,
@@ -182,27 +241,69 @@ ipcMain.handle('redub:update', async (event, action) => {
     if (result.updated) mainWindow?.reload()
     return result.message
   }
-  if (!process.env.REDUB_UPDATE_URL) return '尚未配置桌面更新源。请在本地配置中填写 REDUB_UPDATE_URL。'
-  if (!app.isPackaged) return '开发模式不安装更新，请使用安装版验证。'
+  if (action === 'status') return desktopUpdateState
+  if (!process.env.REDUB_UPDATE_URL)
+    return publishUpdateState({
+      state: 'unsupported',
+      message: '当前安装包未配置桌面更新源，请联系发布者。'
+    })
+  if (!app.isPackaged)
+    return publishUpdateState({
+      state: 'unsupported',
+      message: '开发模式不执行桌面更新，请使用安装版验证。'
+    })
   if (action === 'check') {
-    const result = await autoUpdater.checkForUpdates()
-    return result?.updateInfo.version === app.getVersion()
-      ? '当前已是最新版本。'
-      : `发现版本 ${result?.updateInfo.version || ''}，可下载更新。`
+    try {
+      const result = await autoUpdater.checkForUpdates()
+      const version = result?.updateInfo?.version
+      if (version && version !== app.getVersion())
+        return publishUpdateState({
+          state: 'available',
+          availableVersion: version,
+          progress: null,
+          message: `发现新版本 ${version}，可以下载更新。`
+        })
+      return publishUpdateState({
+        state: 'current',
+        availableVersion: null,
+        progress: null,
+        message: '当前已是最新版本。'
+      })
+    } catch {
+      return publishUpdateState({
+        state: 'error',
+        progress: null,
+        message: '检查更新失败，请检查网络后重试。'
+      })
+    }
   }
   if (action === 'download') {
-    if (!desktopDownload)
-      desktopDownload = autoUpdater.downloadUpdate().finally(() => {
-        desktopDownload = undefined
+    if (desktopUpdateState.state === 'downloaded') return desktopUpdateState
+    if (desktopUpdateState.state !== 'available' || !desktopUpdateState.availableVersion)
+      return publishUpdateState({ state: 'error', message: '请先检查更新并确认有新版本。' })
+    try {
+      if (!desktopDownload)
+        desktopDownload = autoUpdater.downloadUpdate().finally(() => {
+          desktopDownload = undefined
+        })
+      await desktopDownload
+      return desktopUpdateState.state === 'downloaded'
+        ? desktopUpdateState
+        : publishUpdateState({ state: 'downloaded', progress: 100, message: '更新已下载，可以重启安装。' })
+    } catch {
+      return publishUpdateState({
+        state: 'error',
+        progress: null,
+        message: '下载更新失败，请检查网络后重试。'
       })
-    await desktopDownload
-    return '更新已下载，点击「重启并安装」完成升级。'
+    }
   }
   if (action === 'install') {
-    if (!updateReady) return '请先检查并下载更新。'
+    if (!updateReady || desktopUpdateState.state !== 'downloaded')
+      return publishUpdateState({ state: 'error', message: '请先下载更新，再重启安装。' })
     quitting = true
     autoUpdater.quitAndInstall()
-    return '正在安装更新…'
+    return publishUpdateState({ message: '正在重启并安装…' })
   }
   throw new Error('未知更新操作')
 })

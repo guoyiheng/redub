@@ -22,6 +22,17 @@ interface Health {
   }
 }
 
+interface DesktopUpdateState {
+  currentVersion: string
+  state:
+    'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'downloaded' | 'unsupported' | 'error'
+  availableVersion: string | null
+  progress: number | null
+  message: string
+  packaged: boolean
+  configured: boolean
+}
+
 type SettingsSection = 'channels' | 'local' | 'queue' | 'desktop'
 
 const { channels, settings, act } = useStudio()
@@ -35,10 +46,23 @@ const health = ref<Health>(),
 const queueDraft = ref({ ...settings.value }),
   desktopStatus = ref(''),
   desktopBusy = ref(false)
+const desktopUpdate = ref<DesktopUpdateState>({
+  currentVersion: '',
+  state: 'idle',
+  availableVersion: null,
+  progress: null,
+  message: '',
+  packaged: false,
+  configured: false
+})
+let stopUpdateListener: (() => void) | undefined
 const desktop = computed(() => import.meta.client && !!(window as any).redub)
 const channelTitle = computed(() => (selected.value ? '编辑渠道' : '添加渠道'))
 const engineReady = computed(() => !!health.value?.ffmpeg && !!health.value?.ffprobe)
 const modelReady = computed(() => !!health.value?.models)
+const updateBusy = computed(
+  () => desktopUpdate.value.state === 'checking' || desktopUpdate.value.state === 'downloading'
+)
 
 const sections: {
   id: SettingsSection
@@ -68,7 +92,7 @@ const sections: {
   {
     id: 'desktop',
     label: '桌面应用',
-    description: '更新与本地配置',
+    description: '版本与更新',
     icon: 'i-carbon-application',
     desktopOnly: true
   }
@@ -114,16 +138,36 @@ async function check() {
   })
   checking.value = false
 }
-async function updateDesktop(action: string) {
+async function updateDesktop(action: 'status' | 'check' | 'download' | 'install' | 'models') {
+  if (action === 'models') {
+    desktopBusy.value = true
+    try {
+      desktopStatus.value = await (window as any).redub.update(action)
+    } catch (e) {
+      desktopStatus.value = String(e)
+    }
+    desktopBusy.value = false
+    return
+  }
   desktopBusy.value = true
   try {
-    desktopStatus.value = await (window as any).redub.update(action)
+    const result = await (window as any).redub.update(action)
+    if (result && typeof result === 'object') desktopUpdate.value = result
+    else if (typeof result === 'string') desktopStatus.value = result
   } catch (e) {
     desktopStatus.value = String(e)
   }
   desktopBusy.value = false
 }
-onMounted(check)
+onMounted(async () => {
+  check()
+  if (!desktop.value) return
+  stopUpdateListener = (window as any).redub.onUpdateStatus?.((state: DesktopUpdateState) => {
+    desktopUpdate.value = state
+  })
+  await updateDesktop('status')
+})
+onBeforeUnmount(() => stopUpdateListener?.())
 </script>
 
 <template>
@@ -390,23 +434,59 @@ onMounted(check)
           <div class="settings-card-header">
             <div>
               <h2>桌面应用</h2>
-              <p class="help">检查更新、安装新版本或打开本地配置文件。</p>
+              <p class="help">检查版本并在确认后下载、重启安装。更新不会在后台自动安装。</p>
             </div>
           </div>
-          <div class="settings-form">
-            <UButton color="neutral" variant="outline" :loading="desktopBusy" @click="updateDesktop('check')"
-              >检查更新</UButton
-            >
-            <UButton
-              color="neutral"
-              variant="outline"
-              :loading="desktopBusy"
-              @click="updateDesktop('download')"
-              >下载更新</UButton
-            >
-            <UButton color="neutral" variant="outline" @click="updateDesktop('install')">重启并安装</UButton>
-            <UButton color="neutral" variant="ghost" @click="updateDesktop('config')">打开本地配置</UButton>
-            <p v-if="desktopStatus" role="status" class="help">{{ desktopStatus }}</p>
+          <div class="desktop-update-card">
+            <div class="desktop-version">
+              <span>当前版本</span>
+              <strong>v{{ desktopUpdate.currentVersion || '—' }}</strong>
+            </div>
+
+            <div v-if="desktopUpdate.state === 'available'" class="desktop-update-action">
+              <div>
+                <strong>发现新版本 v{{ desktopUpdate.availableVersion }}</strong>
+                <span>下载不会中断当前任务，完成后可自行选择重启安装。</span>
+              </div>
+              <UButton :loading="updateBusy" @click="updateDesktop('download')">下载更新</UButton>
+            </div>
+
+            <div v-else-if="desktopUpdate.state === 'downloading'" class="desktop-update-action">
+              <div class="desktop-download-copy">
+                <strong>正在下载 v{{ desktopUpdate.availableVersion }}</strong>
+                <span>{{ desktopUpdate.progress ?? 0 }}%</span>
+              </div>
+              <div class="desktop-progress" aria-label="更新下载进度">
+                <span :style="{ width: `${desktopUpdate.progress ?? 0}%` }" />
+              </div>
+            </div>
+
+            <div v-else-if="desktopUpdate.state === 'downloaded'" class="desktop-update-action">
+              <div>
+                <strong>新版本已准备好</strong>
+                <span>重启后会完成安装，未保存的操作请先处理。</span>
+              </div>
+              <UButton color="neutral" @click="updateDesktop('install')">重启并安装</UButton>
+            </div>
+
+            <div v-else class="desktop-update-action">
+              <div>
+                <strong>检查是否有新版本</strong>
+                <span>只有发现新版本后，才会显示下载按钮。</span>
+              </div>
+              <UButton
+                color="neutral"
+                variant="outline"
+                :loading="desktopUpdate.state === 'checking'"
+                :disabled="desktopUpdate.state === 'unsupported'"
+                @click="updateDesktop('check')"
+                >检查更新</UButton
+              >
+            </div>
+
+            <p v-if="desktopUpdate.message" role="status" class="desktop-update-message">
+              {{ desktopUpdate.message }}
+            </p>
           </div>
         </section>
       </div>

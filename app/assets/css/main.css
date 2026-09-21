@@ -304,6 +304,85 @@ button:disabled {
 .settings-form .settings-save {
   justify-self: start;
 }
+.desktop-update-card {
+  display: grid;
+  gap: 18px;
+  padding: 20px;
+  border: 1px solid var(--ui-border);
+  border-radius: 12px;
+  background: var(--ui-bg-muted);
+}
+.desktop-version {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--ui-border);
+}
+.desktop-version span {
+  color: var(--ui-text-muted);
+  font-size: 13px;
+}
+.desktop-version strong {
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+.desktop-update-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+.desktop-update-action > div:not(.desktop-progress) {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.desktop-update-action strong {
+  font-size: 14px;
+}
+.desktop-update-action span {
+  color: var(--ui-text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.desktop-update-action .desktop-download-copy {
+  display: flex;
+  grid-template-columns: none;
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: space-between;
+  width: 100%;
+}
+.desktop-download-copy span {
+  font-variant-numeric: tabular-nums;
+}
+.desktop-update-action:has(.desktop-progress) {
+  display: grid;
+  gap: 10px;
+}
+.desktop-progress {
+  overflow: hidden;
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ui-border) 72%, transparent);
+}
+.desktop-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ui-text);
+  transition: width 180ms ease;
+}
+.desktop-update-message {
+  margin: 0;
+  padding-top: 2px;
+  color: var(--ui-text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
 .settings-empty {
   display: flex;
   align-items: flex-start;
@@ -1337,6 +1416,13 @@ button:disabled {
   }
   .settings-section {
     padding: 20px;
+  }
+  .desktop-update-action {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .desktop-update-action > button {
+    align-self: flex-start;
   }
   .content-heading {
     flex-wrap: wrap;
