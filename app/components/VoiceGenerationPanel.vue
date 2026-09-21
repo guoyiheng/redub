@@ -17,7 +17,7 @@ const draft = ref(
 )
 const saving = ref(false)
 const lineText = computed(() => (props.segment.translation || props.segment.text || '').trim())
-const submitLabel = computed(() => (props.segment.enabled ? '生成并启用替换' : '生成本句配音'))
+const submitLabel = computed(() => (props.segment.enabled ? '生成本句配音' : '生成并启用替换'))
 const unavailableReason = computed(() => {
   if (saving.value) return '正在提交配音任务'
   if (!(props.segment.translation || props.segment.text).trim()) return '请先填写台词'
@@ -53,10 +53,12 @@ async function generate() {
         <p :title="lineText">{{ lineText || '当前台词为空' }}</p>
       </div>
       <UButton
+        type="button"
         icon="i-carbon-close"
         color="neutral"
         variant="ghost"
         square
+        :disabled="saving"
         aria-label="关闭配音弹窗"
         @click="emit('close')"
       />
@@ -66,7 +68,24 @@ async function generate() {
       :disabled="saving"
       :reference-path="segment.referencePath"
       :can-reference="canReference"
-    />
+    >
+      <template #actions>
+        <div class="generation-toolbar-actions">
+          <UTooltip :text="unavailableReason || submitLabel">
+            <UButton
+              class="generation-submit"
+              type="submit"
+              color="neutral"
+              icon="i-carbon-arrow-up"
+              square
+              :aria-label="submitLabel"
+              :disabled="!!unavailableReason"
+              :loading="saving"
+            />
+          </UTooltip>
+        </div>
+      </template>
+    </VoiceParameters>
     <div v-if="unavailableReason && !saving" class="generation-feedback" role="status">
       <span>{{ unavailableReason }}</span>
       <UButton
@@ -75,25 +94,12 @@ async function generate() {
           channels.every((c) => c.id !== detail?.project.channelId || !c.enabled || !c.configured)
         "
         size="xs"
+        type="button"
         color="neutral"
         variant="soft"
         @click="draft.synthesisMode = 'tts'"
         >改用免费 TTS</UButton
       >
-    </div>
-    <div class="generation-actions">
-      <span class="generation-action-note">{{
-        unavailableReason || '提交后加入配音队列，生成结果可继续试听和调整'
-      }}</span>
-      <StudioAction
-        class="generation-submit"
-        type="submit"
-        icon="i-carbon-arrow-up"
-        square
-        :aria-label="submitLabel"
-        :reason="unavailableReason"
-        :loading="saving"
-      />
     </div>
   </form>
 </template>

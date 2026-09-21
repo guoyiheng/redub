@@ -42,11 +42,25 @@ const ttsVoices = [
         aria-label="配音提示词"
         class="generation-prompt w-full"
         variant="none"
-        :rows="3"
+        :rows="2"
+        autoresize
+        :maxrows="6"
         :maxlength="3000"
         :disabled="disabled"
         placeholder="描述希望保留或调整的音色、语气和节奏"
       />
+
+      <div v-if="draft.aiUseReference" class="generation-reference-row">
+        <span>原声参考</span>
+        <audio
+          v-if="referencePath"
+          :src="mediaUrl(referencePath)"
+          aria-label="参考音频"
+          controls
+          preload="none"
+        />
+        <span v-else>使用当前台词对应的原声</span>
+      </div>
 
       <div class="generation-toolbar">
         <USelect
@@ -80,20 +94,10 @@ const ttsVoices = [
           :disabled="disabled"
           placeholder="音色 ID（可选）"
         />
+        <slot name="actions" />
       </div>
 
-      <div v-if="draft.aiUseReference" class="generation-reference-row">
-        <audio
-          v-if="referencePath"
-          :src="mediaUrl(referencePath)"
-          aria-label="参考音频"
-          controls
-          preload="none"
-        />
-        <span v-else>使用每句台词对应的原声作为参考</span>
-      </div>
-
-      <details class="advanced-options generation-advanced">
+      <details class="generation-advanced">
         <summary>更多参数</summary>
         <div class="generation-parameters">
           <UFormField label="音频格式"
@@ -158,9 +162,10 @@ const ttsVoices = [
           :items="ttsVoices"
           :disabled="disabled"
         />
+        <slot name="actions" />
       </div>
 
-      <details class="advanced-options generation-advanced">
+      <details class="generation-advanced">
         <summary>更多参数</summary>
         <div class="generation-parameters">
           <UFormField label="语速（%）" description="0 为默认，负值减慢"
