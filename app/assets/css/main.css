@@ -1689,10 +1689,6 @@ button:disabled {
   flex-shrink: 0;
   margin-top: 4px;
 }
-.generation-cost {
-  margin-right: auto;
-  align-self: center;
-}
 .generation-feedback {
   display: flex;
   gap: 12px;

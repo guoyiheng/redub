@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { voiceSettingsSchema, defaultVoicePrompt } from '../../shared/voice'
 import type { Segment } from '../../shared/types'
-const props = defineProps<{ segment: Segment; blockedReason?: string }>()
+const props = defineProps<{ segment: Segment }>()
 const emit = defineEmits<{ close: []; generated: [] }>()
 const { act, channels, detail } = useStudio()
 const canReference = computed(
@@ -18,7 +18,6 @@ const draft = ref(
 const saving = ref(false)
 const unavailableReason = computed(() => {
   if (saving.value) return '正在提交配音任务'
-  if (props.blockedReason) return props.blockedReason
   if (!(props.segment.translation || props.segment.text).trim()) return '请先填写台词'
   if (
     draft.value.synthesisMode === 'ai' &&
@@ -57,7 +56,6 @@ async function generate() {
       <UButton
         v-if="
           draft.synthesisMode === 'ai' &&
-          !blockedReason &&
           channels.every((c) => c.id !== detail?.project.channelId || !c.enabled || !c.configured)
         "
         size="xs"
@@ -68,9 +66,6 @@ async function generate() {
       >
     </div>
     <div class="generation-actions">
-      <span class="help generation-cost">{{
-        draft.synthesisMode === 'ai' ? '仅生成本句 · 使用 AI 接口额度' : '仅生成本句 · 微软免费 TTS'
-      }}</span>
       <StudioAction
         color="neutral"
         variant="ghost"

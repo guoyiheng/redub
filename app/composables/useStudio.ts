@@ -47,10 +47,16 @@ export function useStudio() {
     try {
       await fn()
       await refresh()
-      if (message) toast.add({ title: message, color: 'success' })
+      if (message) toast.add({ id: `success:${message}`, title: message, color: 'success' })
       return true
     } catch (error) {
-      toast.add({ title: '未能完成操作', description: errorMessage(error), color: 'error', duration: 9000 })
+      toast.add({
+        id: 'operation-error',
+        title: '未能完成操作',
+        description: errorMessage(error),
+        color: 'error',
+        duration: 9000
+      })
       return false
     }
   }

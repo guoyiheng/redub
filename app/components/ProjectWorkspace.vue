@@ -176,15 +176,6 @@ const addReason = computed(() =>
       ? '素材末尾没有空余时间，可编辑现有台词的时间范围'
       : ''
 )
-const generationBlock = computed(() => {
-  const active = detail.value?.jobs.filter((j) => ['queued', 'running'].includes(j.status)) || []
-  if (active.some((j) => j.stage !== 'synthesize' || !j.segmentId))
-    return '项目正在处理素材、翻译或合成，请完成后再生成本句'
-  if (active.some((j) => j.stage === 'synthesize' && j.dependsOn))
-    return '批量配音正在排队，请等待批量任务完成后再生成本句'
-  if (active.some((j) => j.segmentId === current.value)) return '本句已加入配音队列，请等待完成'
-  return ''
-})
 const lineJob = (id: string) =>
   detail.value?.jobs.find((j) => j.segmentId === id && ['queued', 'running'].includes(j.status))
 function openBatch(action: BatchInput['action']) {
@@ -281,7 +272,12 @@ function togglePlayback() {
   if (!clock) return
   if (clock.paused)
     void clock.play().catch(() => {
-      toast.add({ title: '暂时无法播放', description: '请先等待音轨准备完成', color: 'warning' })
+      toast.add({
+        id: 'playback-unavailable',
+        title: '暂时无法播放',
+        description: '请先等待音轨准备完成',
+        color: 'warning'
+      })
     })
   else clock.pause()
 }
@@ -360,9 +356,20 @@ async function exportFilm() {
     document.body.appendChild(link)
     link.click()
     link.remove()
-    toast.add({ title: '成片已导出', description: result.filename, color: 'success' })
+    toast.add({
+      id: 'project-export-success',
+      title: '成片已导出',
+      description: result.filename,
+      color: 'success'
+    })
   } catch (error) {
-    toast.add({ title: '导出失败', description: errorMessage(error), color: 'error', duration: 9000 })
+    toast.add({
+      id: 'project-export-error',
+      title: '导出失败',
+      description: errorMessage(error),
+      color: 'error',
+      duration: 9000
+    })
   } finally {
     exporting.value = false
   }
@@ -991,7 +998,6 @@ async function addLine() {
           <VoiceGenerationPanel
             v-if="selected"
             :segment="selected"
-            :blocked-reason="generationBlock"
             :key="selected.id"
             @close="showGeneration = false"
             @generated="showGeneration = false"
