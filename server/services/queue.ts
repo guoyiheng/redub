@@ -11,6 +11,10 @@ import { safeError } from './providers'
 import { assetPath } from './media'
 import type { VoiceSettings } from '../../shared/voice'
 import type { Job, MediaKind, Stage } from '../../shared/types'
+import { jobContext, interruptJobRequests, jobColumns } from './job-requests'
+import { exportSchema } from '../../shared/export'
+import { previewRevision } from './preview-tracks'
+import type { PreviewTracks } from '../../shared/preview'
 
 export function workflowStages(kind: MediaKind): Stage[] {
   if (kind === 'text') return []
@@ -163,6 +167,53 @@ export function generateSegment(segmentId: string, voice: VoiceSettings) {
     return { segmentId, jobs: [job!] }
   })
 }
+export function enqueueOutput(projectId: string, stage: 'export' | 'preview-tracks', input?: unknown) {
+  return serializeEnqueue(async () => {
+    await getProject(projectId)
+    const payload =
+      stage === 'export' ? exportSchema.parse(input) : { revision: await previewRevision(projectId) }
+    const active = await db
+      .select()
+      .from(jobs)
+      .where(and(eq(jobs.projectId, projectId), inArray(jobs.status, ['queued', 'running'])))
+      .orderBy(desc(jobs.createdAt))
+    const existing = active.find(
+      (job) => job.stage === stage && JSON.stringify(job.input) === JSON.stringify(payload)
+    )
+    if (existing) return { jobId: existing.id }
+    await assertIdle(projectId)
+    if (stage === 'preview-tracks') {
+      const completed = await db
+        .select({ id: jobs.id, input: jobs.input, result: jobs.result })
+        .from(jobs)
+        .where(and(eq(jobs.projectId, projectId), eq(jobs.stage, stage), eq(jobs.status, 'completed')))
+        .orderBy(desc(jobs.createdAt))
+        .limit(1)
+      const cached = completed[0]
+      if (cached && JSON.stringify(cached.input) === JSON.stringify(payload)) {
+        const result = cached.result as PreviewTracks | null
+        if (
+          result?.tracks &&
+          Object.values(result.tracks).every(
+            (track) =>
+              (!track.path || existsSync(assetPath(track.path))) &&
+              (!track.alternatePath || existsSync(assetPath(track.alternatePath)))
+          )
+        )
+          return { jobId: cached.id }
+      }
+    }
+    const id = randomUUID()
+    await db.transaction(async (tx) => {
+      await tx
+        .insert(jobs)
+        .values({ id, projectId, stage, input: payload, createdAt: Date.now(), updatedAt: Date.now() })
+      await tx.update(projects).set({ paused: false }).where(eq(projects.id, projectId))
+    })
+    void tick()
+    return { jobId: id }
+  })
+}
 async function execute(job: Job) {
   try {
     const claimed = await db
@@ -170,6 +221,7 @@ async function execute(job: Job) {
       .set({
         status: 'running',
         error: null,
+        result: null,
         progress: 0,
         message: '正在执行',
         attempts: job.attempts + 1,
@@ -178,15 +230,23 @@ async function execute(job: Job) {
       .where(and(eq(jobs.id, job.id), eq(jobs.status, 'queued')))
       .returning({ id: jobs.id })
     if (!claimed.length) return
-    await executeJob(job, async (progress, message) => {
-      await db
-        .update(jobs)
-        .set({ progress: Math.min(99, Math.max(0, progress)), message, updatedAt: Date.now() })
-        .where(eq(jobs.id, job.id))
-    })
+    const result = await jobContext.run({ id: job.id, attempt: job.attempts + 1 }, () =>
+      executeJob(job, async (progress, message) => {
+        await db
+          .update(jobs)
+          .set({ progress: Math.min(99, Math.max(0, progress)), message, updatedAt: Date.now() })
+          .where(eq(jobs.id, job.id))
+      })
+    )
     await db
       .update(jobs)
-      .set({ status: 'completed', progress: 100, message: '已完成', updatedAt: Date.now() })
+      .set({
+        status: 'completed',
+        progress: 100,
+        message: '已完成',
+        result: result ?? null,
+        updatedAt: Date.now()
+      })
       .where(eq(jobs.id, job.id))
   } catch (error) {
     await db
@@ -211,7 +271,7 @@ export async function tick() {
   try {
     const settings = await getSettings()
     if (running.size >= settings.concurrency) return
-    const all = await db.select().from(jobs).orderBy(asc(jobs.createdAt))
+    const all = await db.select(jobColumns).from(jobs).orderBy(asc(jobs.createdAt))
     const paused = new Set(
       (await db.select().from(projects).where(eq(projects.paused, true))).map((p) => p.id)
     )
@@ -225,6 +285,7 @@ export async function tick() {
 }
 export async function startQueue() {
   await initDb()
+  await interruptJobRequests()
   const interrupted = await db.select().from(jobs).where(eq(jobs.status, 'running'))
   if (interrupted.length) {
     await db

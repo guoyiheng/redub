@@ -40,7 +40,7 @@ export function useStudio() {
   async function select(id: string) {
     selected.value = id
     detail.value = null
-    await navigateTo({ path: '/', query: { project: id } })
+    await navigateTo({ path: '/', query: { ...useRoute().query, project: id } })
     await refresh()
   }
   async function act(fn: () => Promise<unknown>, message?: string) {

@@ -4,17 +4,16 @@ import { batchSchema } from '../../shared/batch'
 import { originalClip } from '../services/original-clip'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import { eq, and, desc, inArray } from 'drizzle-orm'
+import { eq, and, desc, inArray, notInArray } from 'drizzle-orm'
 import { db, initDb } from '../db'
 import { projects, segments, jobs, channels, settings } from '../db/schema'
 import { getProject, getSegments, getSettings, assertIdle, invalidateOutput } from '../services/store'
 import { importProject } from '../services/importer'
-import { enqueue, generateSegment, serializeEnqueue, tick } from '../services/queue'
+import { enqueue, enqueueOutput, generateSegment, serializeEnqueue, tick } from '../services/queue'
 import { mediaHealth, assetPath, cutAudio } from '../services/media'
 import { safeError } from '../services/providers'
 import { stageLabels } from '../../shared/types'
-import { exportProject } from '../services/export'
-import { getPreviewTracks } from '../services/preview-tracks'
+import { getJobDetail, getJobRequest, jobColumns } from '../services/job-requests'
 
 const channelSchema = z.object({
   name: z.string().trim().min(1).max(80),
@@ -126,7 +125,11 @@ export default defineEventHandler(async (event) => {
           return {
             project,
             segments: await getSegments(id),
-            jobs: await db.select().from(jobs).where(eq(jobs.projectId, id)).orderBy(desc(jobs.createdAt))
+            jobs: await db
+              .select(jobColumns)
+              .from(jobs)
+              .where(eq(jobs.projectId, id))
+              .orderBy(desc(jobs.createdAt))
           }
         if (!action && method === 'PATCH') {
           return await serializeEnqueue(async () => {
@@ -171,13 +174,18 @@ export default defineEventHandler(async (event) => {
         }
         if (action === 'batch' && method === 'POST') {
           const input = batchSchema.parse(await readBody(event))
+          setResponseStatus(event, 202)
           return await enqueue(id, undefined, undefined, input)
         }
         if (action === 'export' && method === 'POST') {
-          return await exportProject(id, await readBody(event))
+          const result = await enqueueOutput(id, 'export', await readBody(event))
+          setResponseStatus(event, 202)
+          return result
         }
-        if (action === 'preview-tracks' && method === 'GET') {
-          return await getPreviewTracks(id)
+        if (action === 'preview-tracks' && method === 'POST') {
+          const result = await enqueueOutput(id, 'preview-tracks')
+          setResponseStatus(event, 202)
+          return result
         }
         if (action === 'run' && method === 'POST') {
           const body = z
@@ -190,6 +198,9 @@ export default defineEventHandler(async (event) => {
               segmentId: z.string().optional()
             })
             .parse(await readBody(event))
+          if (body.stage === 'export' || body.stage === 'preview-tracks')
+            throw new Error('请使用对应的预览或导出入口')
+          setResponseStatus(event, 202)
           if (body.segmentId) {
             const [s] = await db
               .select()
@@ -234,6 +245,7 @@ export default defineEventHandler(async (event) => {
       return sendRedirect(event, `/api/media?path=${encodeURIComponent(path)}`)
     }
     if (resource === 'segments' && id && action === 'generate' && method === 'POST') {
+      setResponseStatus(event, 202)
       return await generateSegment(id, voiceSettingsSchema.parse(await readBody(event)))
     }
     if (resource === 'segments' && id && method === 'PATCH') {
@@ -269,7 +281,42 @@ export default defineEventHandler(async (event) => {
       })
     }
     if (resource === 'jobs') {
-      if (method === 'GET') return await db.select().from(jobs).orderBy(desc(jobs.createdAt)).limit(500)
+      if (id && method === 'GET') {
+        setHeader(event, 'Cache-Control', 'no-store')
+        if (!action) return await getJobDetail(id)
+        if (action === 'requests' && parts[3]) return await getJobRequest(id, parts[3])
+        throw createError({ statusCode: 404, statusMessage: '接口不存在' })
+      }
+      if (method === 'GET') {
+        const query = getQuery(event)
+        const active = ['queued', 'running', 'failed'] as const
+        if (query.history === '1') {
+          const offset = z.coerce
+            .number()
+            .int()
+            .min(0)
+            .parse(query.offset || 0)
+          return await db
+            .select(jobColumns)
+            .from(jobs)
+            .where(notInArray(jobs.status, [...active]))
+            .orderBy(desc(jobs.createdAt), desc(jobs.id))
+            .limit(100)
+            .offset(offset)
+        }
+        // A large batch must never hide an older active job from refresh recovery.
+        const pending = await db
+          .select(jobColumns)
+          .from(jobs)
+          .where(inArray(jobs.status, [...active]))
+        const recent = await db
+          .select(jobColumns)
+          .from(jobs)
+          .where(notInArray(jobs.status, [...active]))
+          .orderBy(desc(jobs.createdAt), desc(jobs.id))
+          .limit(100)
+        return [...pending, ...recent]
+      }
       if (id && method === 'POST') {
         return await serializeEnqueue(async () => {
           const [job] = await db.select().from(jobs).where(eq(jobs.id, id))

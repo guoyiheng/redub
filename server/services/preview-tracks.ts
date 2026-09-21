@@ -43,6 +43,10 @@ async function revisionFor(project: Project, lines: Segment[]) {
     .slice(0, 20)
 }
 
+export async function previewRevision(projectId: string) {
+  return revisionFor(await getProject(projectId), await getSegments(projectId))
+}
+
 async function publish(output: string, task: () => Promise<void>) {
   if (existsSync(assetPath(output))) return
   let running = pending.get(output)

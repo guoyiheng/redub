@@ -10,13 +10,14 @@ import { createClient } from '@libsql/client'
 import { pathToFileURL } from 'node:url'
 import { ffmpeg } from '../server/services/media'
 import { defaultVoiceSettings } from '../shared/voice'
-import type { ProjectDetail, Job } from '../shared/types'
+import type { ProjectDetail, Job, JobDetail, JobRequest } from '../shared/types'
 let server: ChildProcess,
   base: string,
   id: string,
   failTranslation = true
 let voice: Buffer
 let holdSynthesis: Promise<void> | undefined
+let holdTranslation: Promise<void> | undefined
 const synthesisRequests: { text_prompt: string; speaker?: string; audio_config: { speech_rate: number } }[] =
   []
 let translationRequests = 0
@@ -27,6 +28,7 @@ const mock = createServer(async (req, res) => {
   res.setHeader('Content-Type', 'application/json')
   if (req.url === '/v1/chat/completions') {
     translationRequests++
+    await holdTranslation
     if (failTranslation) {
       res.writeHead(503)
       res.end(JSON.stringify({ message: 'temporary fixture failure' }))
@@ -174,7 +176,7 @@ describe.sequential('production HTTP workflow', () => {
         body: JSON.stringify({ stage: 'translate' })
       })
     ])
-    expect(responses.map((r) => r.status).sort()).toEqual([200, 409])
+    expect(responses.map((r) => r.status).sort()).toEqual([202, 409])
     const detail = await until((d) => d.jobs.some((j) => j.status === 'failed'))
     expect(detail.project.paused).toBe(true)
     expect(detail.jobs).toHaveLength(1)
@@ -442,6 +444,105 @@ describe.sequential('production HTTP workflow', () => {
     await api(`segments/${original.id}`, 'PATCH', { ...original, translation: 'Kept translation' })
     await api(`projects/${id}`, 'PATCH', { ...before.project, targetLanguage: '英语' })
     expect((await api(`projects/${id}`)).segments[0].translation).toBe('Kept translation')
+  })
+  it('keeps synchronous translation and synthesis running after the submitting page disconnects', async () => {
+    const project = await api('projects', 'POST', { name: '刷新恢复', text: 'Keep this task running.' })
+    const line = (await api(`projects/${project.id}`)).segments[0]
+    for (const stage of ['translate', 'synthesize'] as const) {
+      let release!: () => void
+      const pending = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      if (stage === 'translate') holdTranslation = pending
+      else holdSynthesis = pending
+      const controller = new AbortController()
+      let jobId = ''
+      const count = stage === 'translate' ? translationRequests : synthesisRequests.length
+      try {
+        const response = await fetch(
+          `${base}/api/${stage === 'translate' ? `projects/${project.id}/batch` : `segments/${line.id}/generate`}`,
+          {
+            method: 'POST',
+            signal: controller.signal,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(
+              stage === 'translate'
+                ? { action: 'translate' }
+                : { ...defaultVoiceSettings(), aiUseReference: false }
+            )
+          }
+        )
+        expect(response.status).toBe(202)
+        const submitted = await response.json()
+        jobId = (Array.isArray(submitted) ? submitted[0] : submitted.jobs[0]).id
+        expect(jobId).toMatch(/^[a-f0-9-]{36}$/)
+        controller.abort()
+        let restored!: JobDetail
+        for (let i = 0; i < 100; i++) {
+          restored = await api(`jobs/${jobId}`)
+          if (restored.requests.length) break
+          await new Promise((resolve) => setTimeout(resolve, 30))
+        }
+        expect(restored.job.status).toBe('running')
+        expect(restored.requests).toHaveLength(1)
+        expect(restored.requests[0]!.finishedAt).toBeNull()
+        expect((await api('jobs')).some((job: Job) => job.id === jobId)).toBe(true)
+      } finally {
+        holdTranslation = undefined
+        holdSynthesis = undefined
+        release()
+      }
+      await until((d) => d.jobs.find((job) => job.id === jobId)?.status === 'completed', project.id)
+      const completed: JobDetail = await api(`jobs/${jobId}`)
+      const request: JobRequest = await api(`jobs/${jobId}/requests/${completed.requests[0]!.id}`)
+      expect(request.responseStatus).toBe(200)
+      expect(request.requestBody).toContain(stage === 'translate' ? line.text : '只朗读以下台词')
+      expect(request.responseBody).toContain(
+        stage === 'translate' ? 'translations' : voice.toString('base64')
+      )
+      expect(request.curl).toContain(
+        stage === 'translate' ? '${TRANSLATION_API_KEY}' : '${VOLCENGINE_API_KEY}'
+      )
+      expect(stage === 'translate' ? translationRequests : synthesisRequests.length).toBe(count + 1)
+      expect((await api('jobs?history=1')).some((job: Job) => job.id === jobId)).toBe(true)
+    }
+    const preview = await api(`projects/${project.id}/preview-tracks`, 'POST')
+    await until((d) => d.jobs.find((job) => job.id === preview.jobId)?.status === 'completed', project.id)
+    expect((await api(`jobs/${preview.jobId}`)).result.tracks.dubbed.path).toBeTruthy()
+    expect((await api(`projects/${project.id}/preview-tracks`, 'POST')).jobId).toBe(preview.jobId)
+    const exported = await api(`projects/${project.id}/export`, 'POST', {
+      optimized: true,
+      original: false,
+      background: false,
+      dubbed: false,
+      format: 'wav'
+    })
+    await until((d) => d.jobs.find((job) => job.id === exported.jobId)?.status === 'completed', project.id)
+    await stop()
+    await start()
+    const result: JobDetail = await api(`jobs/${exported.jobId}`)
+    expect(result.job.status).toBe('completed')
+    const file = result.result as { path: string; filename: string }
+    expect(file.filename).toMatch(/\.wav$/)
+    const download = await fetch(`${base}/api/media?path=${encodeURIComponent(file.path)}&download=1`)
+    expect(download.status).toBe(200)
+    expect(download.headers.get('content-disposition')).toContain(encodeURIComponent(file.filename))
+    const all: Job[] = await api(`jobs?history=1`)
+    const translation = all.find((job) => job.projectId === project.id && job.stage === 'translate')!
+    expect((await api(`jobs/${translation.id}`)).requests).toHaveLength(1)
+  })
+  it('retains separate failed and successful request attempts for the same task ID', async () => {
+    const history: Job[] = await api('jobs?history=1')
+    const retried = history.find((job) => job.stage === 'translate' && job.attempts === 2)!
+    expect(retried).toBeTruthy()
+    const detail: JobDetail = await api(`jobs/${retried.id}`)
+    expect(detail.requests.map((request) => [request.attempt, request.responseStatus])).toEqual([
+      [1, 503],
+      [2, 200]
+    ])
+    await expect(api('jobs/does-not-exist')).rejects.toThrow('404')
+    const first = detail.requests[0]!
+    await expect(api(`jobs/another-job/requests/${first.id}`)).rejects.toThrow('404')
   })
   it('serves signed web updates immediately without restarting the local API', async () => {
     const { installWebUpdate } = createRequire(import.meta.url)('../electron/web-update.cjs')

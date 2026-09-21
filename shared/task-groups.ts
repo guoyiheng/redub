@@ -3,7 +3,7 @@ import type { Job, JobStatus, Stage } from './types'
 const prepareStages = new Set<Stage>(['extract', 'separate', 'segment', 'transcribe'])
 const renderStages = new Set<Stage>(['mix', 'preview'])
 
-export type TaskGroupKind = 'prepare' | 'translate' | 'synthesize' | 'render'
+export type TaskGroupKind = 'prepare' | 'translate' | 'synthesize' | 'render' | 'export' | 'preview-tracks'
 
 export interface TaskGroup {
   id: string
@@ -22,6 +22,7 @@ function kindOf(stage: Stage): TaskGroupKind {
   if (prepareStages.has(stage)) return 'prepare'
   if (stage === 'translate') return 'translate'
   if (stage === 'synthesize') return 'synthesize'
+  if (stage === 'export' || stage === 'preview-tracks') return stage
   if (renderStages.has(stage)) return 'render'
   throw new Error(`未知任务阶段：${stage}`)
 }
@@ -30,6 +31,8 @@ function titleOf(kind: TaskGroupKind, size: number) {
   if (kind === 'prepare') return '素材预处理'
   if (kind === 'translate') return '台词翻译'
   if (kind === 'render') return '成片合成'
+  if (kind === 'export') return '导出成片'
+  if (kind === 'preview-tracks') return '准备预览音轨'
   return size > 1 ? '批量配音' : '单句配音'
 }
 

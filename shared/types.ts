@@ -6,7 +6,9 @@ export const stageLabels = {
   translate: '台词翻译',
   synthesize: '生成配音',
   mix: '音轨合并',
-  preview: '合成成片'
+  preview: '合成成片',
+  export: '导出成片',
+  'preview-tracks': '准备预览音轨'
 } as const
 export type Stage = keyof typeof stageLabels
 export type JobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'skipped'
@@ -70,6 +72,35 @@ export interface Job {
   attempts: number
   createdAt: number
   updatedAt: number
+}
+export interface JobRequestSummary {
+  id: string
+  jobId: string
+  attempt: number
+  label: string
+  method: string
+  url: string
+  startedAt: number
+  finishedAt: number | null
+  durationMs: number | null
+  responseStatus: number | null
+  error: string | null
+}
+export interface JobRequest extends JobRequestSummary {
+  requestHeaders: Record<string, string>
+  requestBody: string | null
+  responseHeaders: Record<string, string> | null
+  responseBody: string | null
+  responseEncoding: 'utf8' | 'base64'
+  responseStatusText: string | null
+  curl: string
+}
+export interface JobDetail {
+  job: Job
+  projectName: string
+  input: unknown
+  result: unknown
+  requests: JobRequestSummary[]
 }
 export interface Channel {
   id: string

@@ -4,7 +4,7 @@ import { copyFile, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { eq } from 'drizzle-orm'
 import { db } from '../db'
-import { projects, segments } from '../db/schema'
+import { jobs, projects, segments } from '../db/schema'
 import { getProject, getSegments, getChannel, getSettings, invalidateOutput } from './store'
 import {
   assetPath,
@@ -20,9 +20,24 @@ import {
 import { synthesizeSpeech, synthesisHash, translateLines } from './providers'
 import { subtitleText } from './text'
 import type { Job, Segment } from '../../shared/types'
+import { exportProject } from './export'
+import { getPreviewTracks } from './preview-tracks'
 
 export async function executeJob(job: Job, progress: (value: number, message: string) => Promise<void>) {
   const p = await getProject(job.projectId)
+  if (job.stage === 'export') {
+    const [row] = await db.select({ input: jobs.input }).from(jobs).where(eq(jobs.id, job.id))
+    await progress(10, '正在导出成片，完成后可在任务详情下载')
+    return exportProject(p.id, row?.input)
+  }
+  if (job.stage === 'preview-tracks') {
+    await progress(10, '正在准备预览音轨与波形')
+    return getPreviewTracks(p.id)
+  }
+  await db
+    .update(jobs)
+    .set({ input: { project: p, segments: await getSegments(p.id) } })
+    .where(eq(jobs.id, job.id))
   const dir = await projectDir(p.id)
   const rel = (name: string) => `${p.id}/${name}`
   const update = async (value: Partial<typeof p>) => {
@@ -374,5 +389,22 @@ export async function executeJob(job: Job, progress: (value: number, message: st
       await ffmpeg(['-i', assetPath(p.mixedPath), '-c:a', 'libmp3lame', '-b:a', '256k', assetPath(output)])
       await update({ outputPath: output })
     }
+  }
+  const resultProject = await getProject(p.id)
+  return {
+    audioPath: resultProject.audioPath,
+    vocalsPath: resultProject.vocalsPath,
+    backgroundPath: resultProject.backgroundPath,
+    mixedPath: resultProject.mixedPath,
+    outputPath: resultProject.outputPath,
+    segments: (await getSegments(p.id))
+      .filter((line) => !job.segmentId || line.id === job.segmentId)
+      .map((line) => ({
+        id: line.id,
+        text: line.text,
+        translation: line.translation,
+        generatedPath: line.generatedPath,
+        generatedDuration: line.generatedDuration
+      }))
   }
 }

@@ -19,8 +19,8 @@
     "test:integration": "npm run build && vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
-    "edge-tts": "^1.0.1",
-    "electron-updater": "^6.8.3"
+    "electron-updater": "^6.8.3",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@iconify-json/carbon": "^1.2.18",
@@ -28,6 +28,7 @@
     "@nuxt/ui": "^4.11.1",
     "@types/formidable": "^3.5.1",
     "@types/node": "^22.19.0",
+    "@types/ws": "^8.18.1",
     "drizzle-orm": "^0.45.1",
     "electron": "^41.0.0",
     "electron-builder": "^26.8.0",

@@ -11,6 +11,7 @@ const list = computed(() =>
 )
 let timer: ReturnType<typeof setInterval> | undefined
 let refreshing = false
+let lastRefresh = 0
 function show(next: 'home' | 'project' | 'settings', create = false) {
   view.value = next
   importing.value = create
@@ -48,10 +49,13 @@ onMounted(async () => {
   const id = useRoute().query.project
   if (typeof id === 'string' && projects.value.some((p) => p.id === id)) await choose(id)
   timer = setInterval(async () => {
-    if (refreshing || !jobs.value.some((j) => ['running', 'queued'].includes(j.status))) return
+    if (refreshing) return
+    if (!jobs.value.some((j) => ['running', 'queued'].includes(j.status)) && Date.now() - lastRefresh < 10000)
+      return
     refreshing = true
     try {
       await refresh()
+      lastRefresh = Date.now()
     } catch {
       /* A visible retry appears if the next requested operation fails. */
     } finally {

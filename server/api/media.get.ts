@@ -6,7 +6,7 @@ import { dataDir } from '../db'
 export default defineEventHandler(async (event) => {
   const query = getQuery(event),
     path = String(query.path || '')
-  if (!/^[a-f0-9-]{36}\/[a-zA-Z0-9_.-]+\.(mp4|mov|mkv|webm|avi|mp3|wav|m4a|flac|ogg|aac|srt)$/i.test(path))
+  if (!/^[a-f0-9-]{36}\/[\p{L}\p{N}_.-]+\.(mp4|mov|mkv|webm|avi|mp3|wav|m4a|flac|ogg|aac|srt)$/iu.test(path))
     throw createError({ statusCode: 400, statusMessage: '无效的媒体文件' })
   const file = await realpath(assetPath(path)).catch(() => null)
   if (!file || !file.startsWith((await realpath(dataDir)) + sep))
@@ -29,7 +29,12 @@ export default defineEventHandler(async (event) => {
     'Cache-Control': 'private, no-cache',
     'X-Content-Type-Options': 'nosniff'
   })
-  if (query.download) setHeader(event, 'Content-Disposition', `attachment; filename="${basename(file)}"`)
+  if (query.download)
+    setHeader(
+      event,
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(basename(file))}`
+    )
   const range = getRequestHeader(event, 'range')
   let start = 0,
     end = info.size - 1

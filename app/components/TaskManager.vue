@@ -4,9 +4,51 @@ import { stageLabels, type Job } from '../../shared/types'
 
 const { jobs, projects, settings, act } = useStudio()
 const open = ref(false)
+const route = useRoute()
+const router = useRouter()
+const selectedId = computed(() => (typeof route.query.task === 'string' ? route.query.task : ''))
+const detailOpen = computed({
+  get: () => !!selectedId.value,
+  set: (value: boolean) => {
+    if (!value) void showDetail('')
+  }
+})
+const history = ref<Job[]>([])
+const showHistory = ref(false)
+const historyLoading = ref(false)
+const historyError = ref('')
+const historyMore = ref(true)
+const historyOffset = ref(0)
+const { errorMessage } = useStudio()
+const allJobs = computed(() => [
+  ...new Map([...history.value, ...jobs.value].map((job) => [job.id, job])).values()
+])
+const allGroups = computed(() => groupJobs(allJobs.value, Number.MAX_SAFE_INTEGER))
+const siblings = computed(
+  () => allGroups.value.find((group) => group.jobs.some((job) => job.id === selectedId.value))?.jobs || []
+)
+function showDetail(id: string) {
+  return router.replace({ query: { ...route.query, task: id || undefined } })
+}
+async function loadHistory() {
+  if (historyLoading.value) return
+  showHistory.value = true
+  historyLoading.value = true
+  historyError.value = ''
+  try {
+    const rows = await $fetch<Job[]>('/api/jobs', { query: { history: '1', offset: historyOffset.value } })
+    history.value.push(...rows)
+    historyOffset.value += rows.length
+    historyMore.value = rows.length === 100
+  } catch (error) {
+    historyError.value = errorMessage(error)
+  } finally {
+    historyLoading.value = false
+  }
+}
 const pending = computed(() => jobs.value.filter((j) => ['running', 'queued', 'failed'].includes(j.status)))
 const running = computed(() => jobs.value.filter((j) => j.status === 'running'))
-const visible = computed(() => groupJobs(jobs.value, 8))
+const visible = computed(() => groupJobs(allJobs.value, showHistory.value ? Number.MAX_SAFE_INTEGER : 8))
 const labels = {
   queued: '排队中',
   running: '处理中',
@@ -131,10 +173,15 @@ async function concurrency(value: number) {
         >
           {{ groupMessage(group) }}
         </p>
-        <div
-          v-if="failedJobs(group).length || (group.jobs.length === 1 && queuedJobs(group).length)"
-          class="row-actions"
-        >
+        <div class="row-actions">
+          <UButton
+            size="sm"
+            color="neutral"
+            variant="ghost"
+            icon="i-carbon-document"
+            @click="showDetail(group.jobs[0]!.id)"
+            >查看详情</UButton
+          >
           <UButton
             v-if="failedJobs(group).length"
             size="sm"
@@ -167,6 +214,33 @@ async function concurrency(value: number) {
           >
         </div>
       </div>
+      <p v-if="historyError" class="error-text" role="alert">{{ historyError }}</p>
+      <UButton
+        v-if="!showHistory || historyMore || historyError"
+        class="mt-4"
+        block
+        size="sm"
+        color="neutral"
+        variant="ghost"
+        :loading="historyLoading"
+        @click="loadHistory"
+        >{{ showHistory ? '加载更多历史任务' : '查看全部历史任务' }}</UButton
+      >
     </div>
   </aside>
+  <USlideover
+    v-model:open="detailOpen"
+    title="任务详情"
+    description="查看执行状态、任务结果与完整网络请求"
+    :ui="{ content: 'sm:max-w-3xl ring-0', body: 'min-w-0' }"
+  >
+    <template #body
+      ><TaskDetail
+        v-if="selectedId"
+        :key="selectedId"
+        :job-id="selectedId"
+        :siblings="siblings"
+        @select="showDetail"
+    /></template>
+  </USlideover>
 </template>

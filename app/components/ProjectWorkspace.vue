@@ -20,7 +20,9 @@ const trackDescriptions: Record<PreviewTrackKey, string> = {
   background: '分离后保留的环境声与音乐',
   dubbed: '按时间轴对齐后的新配音'
 }
-const { detail, channels, settingsProject, workspacePanels, act, toast, errorMessage } = useStudio()
+const { detail, channels, settingsProject, workspacePanels, act, toast, errorMessage, refresh } = useStudio()
+const taskWait = new AbortController()
+onBeforeUnmount(() => taskWait.abort())
 const batchAction = ref<BatchInput['action']>('synthesize')
 const current = ref<string>()
 const time = ref(0)
@@ -363,7 +365,7 @@ async function exportFilm() {
   if (exportReason.value || exporting.value) return
   exporting.value = true
   try {
-    const result = await $fetch<ExportResult>(`/api/projects/${project.value.id}/export`, {
+    const task = await $fetch<{ jobId: string }>(`/api/projects/${project.value.id}/export`, {
       method: 'POST',
       body: {
         optimized: exportTracks.optimized,
@@ -374,6 +376,14 @@ async function exportFilm() {
         format: exportFormat.value
       }
     })
+    await refresh()
+    toast.add({
+      id: 'project-export-queued',
+      title: '导出任务已创建',
+      description: '刷新页面后可在任务详情中下载成片',
+      color: 'success'
+    })
+    const result = await waitForJobResult<ExportResult>(task.jobId, taskWait.signal)
     const link = document.createElement('a')
     link.href = mediaUrl(result.path, true)
     link.download = result.filename
@@ -387,6 +397,7 @@ async function exportFilm() {
       color: 'success'
     })
   } catch (error) {
+    if (taskWait.signal.aborted) return
     toast.add({
       id: 'project-export-error',
       title: '导出失败',
@@ -399,11 +410,23 @@ async function exportFilm() {
   }
 }
 async function loadPreviewTracks() {
+  if (
+    detail.value?.jobs.some(
+      (job) => ['queued', 'running'].includes(job.status) && job.stage !== 'preview-tracks'
+    )
+  ) {
+    previewError.value = '正在处理项目，任务完成后会自动准备预览音轨。'
+    return
+  }
   const request = ++previewRequest
   previewLoading.value = true
   previewError.value = ''
   try {
-    const result = await $fetch<PreviewTracks>(`/api/projects/${project.value.id}/preview-tracks`)
+    const task = await $fetch<{ jobId: string }>(`/api/projects/${project.value.id}/preview-tracks`, {
+      method: 'POST'
+    })
+    void refresh().catch(() => {})
+    const result = await waitForJobResult<PreviewTracks>(task.jobId, taskWait.signal)
     if (request !== previewRequest) return
     const changed = previewTracks.value?.revision !== result.revision
     previewTracks.value = result
@@ -463,7 +486,14 @@ watch(
   { immediate: true }
 )
 watch(
-  [panel, previewSignature],
+  [
+    panel,
+    previewSignature,
+    () =>
+      detail.value?.jobs.some(
+        (job) => ['queued', 'running'].includes(job.status) && job.stage !== 'preview-tracks'
+      )
+  ],
   ([currentPanel]) => {
     if (currentPanel === 'preview') void loadPreviewTracks()
   },
