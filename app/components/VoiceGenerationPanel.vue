@@ -16,6 +16,8 @@ const draft = ref(
   })
 )
 const saving = ref(false)
+const lineText = computed(() => (props.segment.translation || props.segment.text || '').trim())
+const submitLabel = computed(() => (props.segment.enabled ? '生成并启用替换' : '生成本句配音'))
 const unavailableReason = computed(() => {
   if (saving.value) return '正在提交配音任务'
   if (!(props.segment.translation || props.segment.text).trim()) return '请先填写台词'
@@ -45,6 +47,20 @@ async function generate() {
 </script>
 <template>
   <form class="generation-panel" @submit.prevent="generate">
+    <header class="generation-composer-header">
+      <div class="generation-composer-title">
+        <span>生成配音</span>
+        <p :title="lineText">{{ lineText || '当前台词为空' }}</p>
+      </div>
+      <UButton
+        icon="i-carbon-close"
+        color="neutral"
+        variant="ghost"
+        square
+        aria-label="关闭配音弹窗"
+        @click="emit('close')"
+      />
+    </header>
     <VoiceParameters
       v-model="draft"
       :disabled="saving"
@@ -66,16 +82,18 @@ async function generate() {
       >
     </div>
     <div class="generation-actions">
+      <span class="generation-action-note">{{
+        unavailableReason || '提交后加入配音队列，生成结果可继续试听和调整'
+      }}</span>
       <StudioAction
-        color="neutral"
-        variant="ghost"
-        :reason="saving ? '正在提交配音任务' : ''"
-        @click="emit('close')"
-        >取消</StudioAction
-      >
-      <StudioAction type="submit" icon="i-carbon-arrow-up" :reason="unavailableReason" :loading="saving">{{
-        segment.enabled ? '生成本句配音' : '生成并启用替换'
-      }}</StudioAction>
+        class="generation-submit"
+        type="submit"
+        icon="i-carbon-arrow-up"
+        square
+        :aria-label="submitLabel"
+        :reason="unavailableReason"
+        :loading="saving"
+      />
     </div>
   </form>
 </template>

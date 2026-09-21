@@ -35,60 +35,65 @@ const ttsVoices = [
 </script>
 <template>
   <div class="voice-parameters">
-    <div class="generation-intro">
-      <USelect
-        v-model="draft.synthesisMode"
-        aria-label="配音方式"
-        variant="ghost"
-        :items="[
-          { label: 'AI 配音 · Seed Audio', value: 'ai' },
-          { label: '微软 TTS', value: 'tts' }
-        ]"
-        :disabled="disabled"
-      />
-    </div>
     <template v-if="draft.synthesisMode === 'ai'">
-      <UFormField label="配音要求"
-        ><UTextarea
-          :model-value="draft.aiPrompt || ''"
-          @update:model-value="draft.aiPrompt = $event"
-          aria-label="配音提示词"
-          class="generation-prompt w-full"
-          variant="none"
-          :rows="2"
-          :maxlength="3000"
+      <UTextarea
+        :model-value="draft.aiPrompt || ''"
+        @update:model-value="draft.aiPrompt = $event"
+        aria-label="配音提示词"
+        class="generation-prompt w-full"
+        variant="none"
+        :rows="3"
+        :maxlength="3000"
+        :disabled="disabled"
+        placeholder="描述希望保留或调整的音色、语气和节奏"
+      />
+
+      <div class="generation-toolbar">
+        <USelect
+          v-model="draft.synthesisMode"
+          aria-label="配音方式"
+          class="generation-mode-select"
+          variant="ghost"
+          :items="[
+            { label: 'AI 配音 · Seed Audio', value: 'ai' },
+            { label: '微软 TTS', value: 'tts' }
+          ]"
           :disabled="disabled"
-          placeholder="描述希望保留或调整的音色、语气和节奏"
-      /></UFormField>
-      <div class="generation-voice-row">
+        />
         <USelect
           v-model="draft.aiUseReference"
           aria-label="音色来源"
+          class="generation-reference-select"
+          variant="ghost"
           :items="[
             { label: '原声参考', value: true, disabled: !canReference },
             { label: '指定音色', value: false }
           ]"
           :disabled="disabled"
         />
+        <UInput
+          v-if="!draft.aiUseReference"
+          :model-value="draft.aiSpeaker || ''"
+          @update:model-value="draft.aiSpeaker = $event"
+          aria-label="音色 ID"
+          class="generation-speaker-input"
+          :disabled="disabled"
+          placeholder="音色 ID（可选）"
+        />
+      </div>
+
+      <div v-if="draft.aiUseReference" class="generation-reference-row">
         <audio
-          v-if="draft.aiUseReference && referencePath"
+          v-if="referencePath"
           :src="mediaUrl(referencePath)"
           aria-label="参考音频"
           controls
           preload="none"
         />
-        <span v-else-if="draft.aiUseReference" class="help">使用每句台词对应的原声参考</span>
-        <UInput
-          v-else
-          :model-value="draft.aiSpeaker || ''"
-          @update:model-value="draft.aiSpeaker = $event"
-          aria-label="音色 ID"
-          class="grow"
-          :disabled="disabled"
-          placeholder="音色 ID（可选）"
-        />
+        <span v-else>使用每句台词对应的原声作为参考</span>
       </div>
-      <details class="advanced-options">
+
+      <details class="advanced-options generation-advanced">
         <summary>更多参数</summary>
         <div class="generation-parameters">
           <UFormField label="音频格式"
@@ -131,37 +136,60 @@ const ttsVoices = [
         </div>
       </details>
     </template>
-    <template v-else
-      ><UFormField label="微软声音"
-        ><USelect v-model="draft.ttsVoice" class="w-full" :items="ttsVoices" :disabled="disabled"
-      /></UFormField>
-      <div class="generation-parameters">
-        <UFormField label="语速（%）" description="0 为默认，负值减慢"
-          ><UInput
-            v-model.number="draft.ttsRate"
-            class="w-full"
-            type="number"
-            min="-50"
-            max="100"
-            :disabled="disabled" /></UFormField
-        ><UFormField label="音调（Hz）" description="0 为默认，范围 −50～50"
-          ><UInput
-            v-model.number="draft.ttsPitch"
-            class="w-full"
-            type="number"
-            min="-50"
-            max="50"
-            :disabled="disabled" /></UFormField
-        ><UFormField label="音量（%）" description="0 为默认，负值减小"
-          ><UInput
-            v-model.number="draft.ttsVolume"
-            class="w-full"
-            type="number"
-            min="-50"
-            max="100"
-            :disabled="disabled"
-        /></UFormField>
+
+    <template v-else>
+      <div class="generation-toolbar">
+        <USelect
+          v-model="draft.synthesisMode"
+          aria-label="配音方式"
+          class="generation-mode-select"
+          variant="ghost"
+          :items="[
+            { label: 'AI 配音 · Seed Audio', value: 'ai' },
+            { label: '微软 TTS', value: 'tts' }
+          ]"
+          :disabled="disabled"
+        />
+        <USelect
+          v-model="draft.ttsVoice"
+          aria-label="微软声音"
+          class="generation-voice-select"
+          variant="ghost"
+          :items="ttsVoices"
+          :disabled="disabled"
+        />
       </div>
+
+      <details class="advanced-options generation-advanced">
+        <summary>更多参数</summary>
+        <div class="generation-parameters">
+          <UFormField label="语速（%）" description="0 为默认，负值减慢"
+            ><UInput
+              v-model.number="draft.ttsRate"
+              class="w-full"
+              type="number"
+              min="-50"
+              max="100"
+              :disabled="disabled" /></UFormField
+          ><UFormField label="音调（Hz）" description="0 为默认，范围 −50～50"
+            ><UInput
+              v-model.number="draft.ttsPitch"
+              class="w-full"
+              type="number"
+              min="-50"
+              max="50"
+              :disabled="disabled" /></UFormField
+          ><UFormField label="音量（%）" description="0 为默认，负值减小"
+            ><UInput
+              v-model.number="draft.ttsVolume"
+              class="w-full"
+              type="number"
+              min="-50"
+              max="100"
+              :disabled="disabled"
+          /></UFormField>
+        </div>
+      </details>
     </template>
   </div>
 </template>
