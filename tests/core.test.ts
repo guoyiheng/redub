@@ -46,10 +46,10 @@ describe('文本与字幕', () => {
   })
 })
 describe('任务调度', () => {
-  it('遵循素材的流程起点', () => {
-    expect(workflowStages('video')[0]).toBe('extract')
-    expect(workflowStages('audio')[0]).toBe('separate')
-    expect(workflowStages('text')).toEqual(['translate', 'synthesize', 'mix', 'preview'])
+  it('默认流程仅包含本机处理，文本不自动启动付费任务', () => {
+    expect(workflowStages('video')).toEqual(['extract', 'separate', 'segment', 'transcribe'])
+    expect(workflowStages('audio')).toEqual(['separate', 'segment', 'transcribe'])
+    expect(workflowStages('text')).toEqual([])
   })
   it('限制并发并串行化同项目任务', () => {
     expect(

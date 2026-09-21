@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import type { Segment } from '../../shared/types'
+import type { BatchInput } from '../../shared/batch'
 import { languageOptions, normalizeLanguage } from '../../shared/languages'
 const { detail, channels, settingsProject, workspacePanels, act } = useStudio()
+const batchAction = ref<BatchInput['action']>('synthesize')
 const current = ref<string>()
 const mode = ref<'original' | 'dubbed'>('original')
 const time = ref(0)
@@ -34,14 +35,21 @@ const addReason = computed(() =>
       ? '素材末尾没有空余时间，可编辑现有台词的时间范围'
       : ''
 )
-const generateReason = (line: Segment) =>
-  locked.value
-    ? '请等待当前项目任务完成'
-    : !line.enabled
-      ? '请先在编辑台词中开启替换'
-      : !(line.translation || line.text).trim()
-        ? '请先编辑并填写台词'
-        : ''
+const generationBlock = computed(() => {
+  const active = detail.value?.jobs.filter((j) => ['queued', 'running'].includes(j.status)) || []
+  if (active.some((j) => j.stage !== 'synthesize' || !j.segmentId))
+    return '项目正在处理素材、翻译或合成，请完成后再生成本句'
+  if (active.some((j) => j.stage === 'synthesize' && j.dependsOn))
+    return '批量配音正在排队，请等待批量任务完成后再生成本句'
+  if (active.some((j) => j.segmentId === current.value)) return '本句已加入配音队列，请等待完成'
+  return ''
+})
+const lineJob = (id: string) =>
+  detail.value?.jobs.find((j) => j.segmentId === id && ['queued', 'running'].includes(j.status))
+function openBatch(action: BatchInput['action']) {
+  batchAction.value = action
+  showBatch.value = true
+}
 watch(
   () => project.value.id,
   () => {
@@ -133,8 +141,8 @@ function switchMode(value: 'original' | 'dubbed') {
   <section v-if="detail" class="workspace">
     <header class="workspace-header">
       <div class="workspace-title">
-        <h1>{{ panel === 'script' ? '台词 / 配音' : '预览成片' }}</h1>
-        <span class="help">{{ project.name }} · {{ normalizeLanguage(project.targetLanguage) }}</span>
+        <span class="workspace-project-name">{{ project.name }}</span>
+        <span class="help">{{ normalizeLanguage(project.targetLanguage) }} · {{ lines.length }} 句台词</span>
       </div>
       <div class="row-actions">
         <span v-if="lines.length" class="help">{{ completed }} / {{ enabledCount }} 句已配音</span>
@@ -156,10 +164,28 @@ function switchMode(value: 'original' | 'dubbed') {
           >添加台词</StudioAction
         >
         <StudioAction
+          v-if="panel === 'script' && lines.length"
+          color="neutral"
+          variant="ghost"
+          icon="i-carbon-language"
+          :reason="dirty ? '请先保存台词修改' : ''"
+          @click="openBatch('translate')"
+          >翻译台词</StudioAction
+        >
+        <StudioAction
+          v-if="panel === 'preview'"
+          color="neutral"
+          variant="soft"
+          icon="i-carbon-video"
+          @click="openBatch('render')"
+          >合成成片</StudioAction
+        >
+        <StudioAction
+          v-if="panel === 'script'"
           icon="i-carbon-batch-job"
           :reason="dirty ? '请先保存台词修改' : ''"
-          @click="showBatch = true"
-          >批量处理</StudioAction
+          @click="openBatch(lines.length ? 'synthesize' : 'prepare')"
+          >{{ lines.length ? '批量配音' : '处理素材' }}</StudioAction
         >
         <UButton
           v-if="project.outputPath"
@@ -172,17 +198,40 @@ function switchMode(value: 'original' | 'dubbed') {
       </div>
     </header>
     <section v-if="panel === 'script'" class="script-panel">
-      <div v-if="!lines.length" class="empty-state script-empty">
+      <div v-if="!lines.length" class="project-start">
         <UIcon name="i-carbon-script" class="empty-icon" />
-        <p>{{ project.kind === 'text' ? '添加台词后即可生成配音' : '还没有台词，先从素材中识别' }}</p>
+        <h2>{{ project.kind === 'text' ? '先添加需要配音的台词' : '先识别素材中的台词' }}</h2>
+        <p>
+          {{
+            project.kind === 'text'
+              ? '填写台词后，可以逐句选择 AI 配音或微软 TTS。'
+              : '在本机分离人声与背景音，再识别台词。中文识别结果使用简体中文。'
+          }}
+        </p>
         <StudioAction
-          :reason="locked ? '正在处理素材，请稍候' : ''"
-          @click="project.kind === 'text' ? addLine() : (showBatch = true)"
-          >{{ project.kind === 'text' ? '添加台词' : '识别台词' }}</StudioAction
+          :reason="locked ? '素材正在处理中，完成后即可校对台词' : ''"
+          @click="project.kind === 'text' ? addLine() : openBatch('prepare')"
+          >{{ project.kind === 'text' ? '添加台词' : '识别台词 · 本机处理' }}</StudioAction
         >
+        <div class="start-manual-note">
+          <UIcon name="i-carbon-information" />
+          <p>识别完成后先校对，再按需翻译或配音。翻译和 AI 配音消耗接口额度，只有手动发起才会执行。</p>
+        </div>
       </div>
       <template v-else>
-        <div class="comparison-heading"><span>时间 / 台词 / 原声</span><span>生成配音</span></div>
+        <details class="workspace-guide">
+          <summary>
+            <UIcon name="i-carbon-information" />处理指引<span>校对后逐句配音，翻译按需使用</span
+            ><UIcon name="i-carbon-chevron-down" />
+          </summary>
+          <div class="guide-content">
+            <p><strong>校对台词</strong>检查时间和原文，在右列填写希望说出的内容。</p>
+            <p><strong>按需翻译</strong>需要其他语言时，点击“翻译台词”。会使用翻译接口额度。</p>
+            <p><strong>生成配音</strong>每句可独立选择 AI 或免费 TTS；需要统一处理时使用“批量配音”。</p>
+            <p><strong>试听并合成</strong>左右对照试听，满意后到“预览成片”手动合成。</p>
+          </div>
+        </details>
+        <div class="comparison-heading"><span>原文与原声</span><span>配音台词与新声音</span></div>
         <div class="comparison-list">
           <article
             v-for="(line, i) in lines"
@@ -190,25 +239,34 @@ function switchMode(value: 'original' | 'dubbed') {
             class="comparison-row"
             :class="{ selected: current === line.id, 'not-replaced': !line.enabled }"
           >
-            <div class="comparison-source">
+            <header class="comparison-meta">
               <div class="line-meta">
                 <span class="line-number">{{ String(i + 1).padStart(2, '0') }}</span
                 ><time>{{ formatTime(line.start) }} – {{ formatTime(line.end) }}</time
-                ><span>{{ line.speaker }}</span
-                ><UButton
+                ><span>{{ line.speaker }}</span>
+              </div>
+              <div class="line-meta">
+                <span v-if="lineJob(line.id)" class="status-running">{{
+                  lineJob(line.id)?.status === 'running' ? '正在生成' : '等待生成'
+                }}</span
+                ><span v-else-if="!line.enabled">保留原声</span
+                ><span v-else-if="line.generatedPath" class="status-completed"
+                  >已生成 · {{ line.synthesisMode === 'tts' ? '微软 TTS' : 'AI 配音' }}</span
+                ><span v-else>待配音</span>
+              </div>
+            </header>
+            <div class="comparison-source">
+              <div class="dialogue-content">
+                <p class="dialogue-original">{{ line.text || '尚未填写原文' }}</p>
+                <UButton
                   color="neutral"
                   variant="ghost"
                   size="xs"
                   icon="i-carbon-edit"
-                  :aria-label="`编辑第 ${i + 1} 句台词`"
+                  :aria-label="`编辑第 ${i + 1} 句原文与时间`"
                   @click="selectLine(line.id)"
-                  >编辑</UButton
-                >
+                />
               </div>
-              <p class="dialogue-original">{{ line.text || '尚未填写原文' }}</p>
-              <p v-if="line.translation" class="dialogue-translation">
-                <span>配音台词</span>{{ line.translation }}
-              </p>
               <ClipAudio
                 :src="
                   project.kind !== 'text' && project.sourcePath
@@ -216,45 +274,54 @@ function switchMode(value: 'original' | 'dubbed') {
                     : undefined
                 "
                 :label="`第 ${i + 1} 句原声`"
-                :empty="project.kind === 'text' ? '文本台词 · 无原声' : '尚无可试听的原声素材'"
+                :empty="project.kind === 'text' ? '文本台词，无原声音频' : '尚无可试听的原声素材'"
               />
             </div>
             <div class="comparison-generated">
-              <div class="line-meta">
-                <span>{{ line.synthesisMode === 'tts' ? '微软 TTS' : 'AI 配音' }}</span
-                ><span v-if="!line.enabled">保留原声</span
-                ><span v-else-if="line.generatedPath" class="status-completed">已生成</span
-                ><StudioAction
+              <div class="dialogue-content">
+                <div>
+                  <p class="dialogue-translation">
+                    {{ line.translation || line.text || '填写要生成的配音台词' }}
+                  </p>
+                  <small v-if="!line.translation && line.text" class="help">使用原文配音</small>
+                </div>
+                <UButton
                   color="neutral"
                   variant="ghost"
                   size="xs"
-                  icon="i-carbon-microphone"
-                  :reason="generateReason(line)"
-                  @click="generateLine(line.id)"
-                  >{{ line.generatedPath ? '重新生成' : '生成配音' }}</StudioAction
-                >
+                  icon="i-carbon-edit"
+                  :aria-label="`编辑第 ${i + 1} 句配音台词`"
+                  @click="selectLine(line.id)"
+                />
               </div>
-              <ClipAudio
-                v-if="line.generatedPath"
-                :src="mediaUrl(line.generatedPath)"
-                :label="`第 ${i + 1} 句生成配音`"
-              />
-              <div v-else class="audio-placeholder">
-                <UIcon name="i-carbon-waveform" /><span>{{
-                  !line.enabled ? '本句保留原声，不参与配音' : '尚未生成配音'
-                }}</span
-                ><small v-if="line.enabled">点击“生成配音”选择 AI 或微软 TTS</small>
+              <div class="generated-output">
+                <ClipAudio
+                  v-if="line.generatedPath"
+                  :src="mediaUrl(line.generatedPath)"
+                  :label="`第 ${i + 1} 句生成配音`"
+                />
+                <div v-else class="audio-placeholder">
+                  <UIcon name="i-carbon-waveform" /><span>{{
+                    lineJob(line.id) ? '完成后可在此试听' : '生成后在此试听'
+                  }}</span>
+                </div>
+                <UButton
+                  variant="soft"
+                  size="sm"
+                  icon="i-carbon-microphone"
+                  :aria-label="`第 ${i + 1} 句${lineJob(line.id) ? '配音设置' : line.generatedPath ? '重新生成' : '生成配音'}`"
+                  @click="generateLine(line.id)"
+                  >{{ lineJob(line.id) ? '配音设置' : line.generatedPath ? '重新生成' : '生成配音' }}</UButton
+                >
               </div>
             </div>
           </article>
         </div>
       </template>
     </section>
+
     <section v-else class="preview-panel">
       <header class="content-heading">
-        <div>
-          <h2>预览成片</h2>
-        </div>
         <div class="row-actions" role="group" aria-label="预览音轨">
           <StudioAction
             color="neutral"
@@ -266,7 +333,7 @@ function switchMode(value: 'original' | 'dubbed') {
           <StudioAction
             color="neutral"
             :variant="mode === 'dubbed' ? 'soft' : 'ghost'"
-            :reason="!project.outputPath ? '请先在批量处理中合成成片' : ''"
+            :reason="!project.outputPath ? '请先点击“合成成片”' : ''"
             @click="switchMode('dubbed')"
             >配音成片</StudioAction
           >
@@ -292,7 +359,7 @@ function switchMode(value: 'original' | 'dubbed') {
             preload="metadata"
             @timeupdate="time = ($event.target as HTMLMediaElement).currentTime"
           />
-          <p v-else>尚未合成成片，请先生成配音，再从批量处理中选择“合成成片”</p></template
+          <p v-else>尚未合成成片。先完成配音，再点击“合成成片”。</p></template
         >
       </div>
       <div class="preview-audio-list">
@@ -384,7 +451,8 @@ function switchMode(value: 'original' | 'dubbed') {
           <VoiceGenerationPanel
             v-if="selected"
             :segment="selected"
-            :locked="locked"
+            :blocked-reason="generationBlock"
+            :key="selected.id"
             @close="showGeneration = false"
             @generated="showGeneration = false"
           />
@@ -452,6 +520,7 @@ function switchMode(value: 'original' | 'dubbed') {
       ><template #body
         ><BatchProcessing
           v-if="showBatch"
+          :initial-action="batchAction"
           @close="showBatch = false"
           @submitted="showBatch = false" /></template
     ></UModal>

@@ -16,12 +16,17 @@ let server: ChildProcess,
   id: string,
   failTranslation = true
 let voice: Buffer
+let holdSynthesis: Promise<void> | undefined
+const synthesisRequests: { text_prompt: string; speaker?: string; audio_config: { speech_rate: number } }[] =
+  []
+let translationRequests = 0
 const mock = createServer(async (req, res) => {
   const parts: Buffer[] = []
   for await (const part of req) parts.push(part)
   const body = JSON.parse(Buffer.concat(parts).toString())
   res.setHeader('Content-Type', 'application/json')
   if (req.url === '/v1/chat/completions') {
+    translationRequests++
     if (failTranslation) {
       res.writeHead(503)
       res.end(JSON.stringify({ message: 'temporary fixture failure' }))
@@ -41,10 +46,13 @@ const mock = createServer(async (req, res) => {
         ]
       })
     )
-  } else
+  } else {
+    synthesisRequests.push(body)
+    await holdSynthesis
     res.end(
       JSON.stringify({ audio: voice.toString('base64'), duration: 0.8, subtitle: { text: '配音测试' } })
     )
+  }
 })
 async function freePort() {
   const s = createServer()
@@ -65,6 +73,8 @@ async function start() {
       NITRO_HOST: '127.0.0.1',
       NITRO_PORT: String(port),
       REDUB_SESSION_TOKEN: '',
+      // Local processing should fail quickly in fixtures instead of downloading models.
+      REDUB_PYTHON: process.execPath,
       REDUB_WEB_DIR: join(process.env.REDUB_DATA_DIR!, 'web')
     },
     stdio: 'pipe'
@@ -98,9 +108,9 @@ async function api(path: string, method = 'GET', body?: unknown) {
   if (!res.ok) throw new Error(`${res.status} ${data.statusMessage}`)
   return data
 }
-async function until(check: (detail: ProjectDetail) => boolean) {
+async function until(check: (detail: ProjectDetail) => boolean, projectId = id) {
   for (let i = 0; i < 150; i++) {
-    const detail = await api(`projects/${id}`)
+    const detail = await api(`projects/${projectId}`)
     if (check(detail)) return detail
     await new Promise((r) => setTimeout(r, 100))
   }
@@ -127,36 +137,65 @@ afterAll(async () => {
   await new Promise<void>((r) => mock.close(() => r()))
 })
 describe.sequential('production HTTP workflow', () => {
-  it('imports text and starts once under duplicate concurrent requests', async () => {
+  it('imports text without tasks and requires a manual action for paid processing', async () => {
     id = (
       await api('projects', 'POST', { name: 'HTTP integration', text: 'Every story deserves to be heard.' })
     ).id
+    expect((await api(`projects/${id}`)).jobs).toEqual([])
+    await expect(api(`projects/${id}/run`, 'POST', {})).rejects.toThrow('请手动选择翻译或生成配音')
+    expect((await api(`projects/${id}`)).jobs).toEqual([])
+    expect(translationRequests).toBe(0)
+    expect(synthesisRequests).toHaveLength(0)
+  })
+  it('starts only local stages for imported audio', async () => {
+    const upload = new FormData()
+    upload.set('name', 'Local preparation')
+    upload.set('file', new Blob([new Uint8Array(voice)], { type: 'audio/mp3' }), 'source.mp3')
+    const response = await fetch(`${base}/api/projects`, { method: 'POST', body: upload })
+    expect(response.status).toBe(200)
+    const audioId = (await response.json()).id
+    expect((await api(`projects/${audioId}`)).jobs).toEqual([])
+    const tasks: Job[] = await api(`projects/${audioId}/run`, 'POST', {})
+    expect(tasks.map((item) => item.stage)).toEqual(['separate', 'segment', 'transcribe'])
+    await until((detail) => detail.jobs.some((item) => item.status === 'failed'), audioId)
+    expect(translationRequests).toBe(0)
+    expect(synthesisRequests).toHaveLength(0)
+  })
+  it('starts explicit translation once under duplicate concurrent requests', async () => {
     const responses = await Promise.all([
       fetch(`${base}/api/projects/${id}/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: '{}'
+        body: JSON.stringify({ stage: 'translate' })
       }),
       fetch(`${base}/api/projects/${id}/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: '{}'
+        body: JSON.stringify({ stage: 'translate' })
       })
     ])
     expect(responses.map((r) => r.status).sort()).toEqual([200, 409])
     const detail = await until((d) => d.jobs.some((j) => j.status === 'failed'))
     expect(detail.project.paused).toBe(true)
-    expect(detail.jobs).toHaveLength(4)
-    expect(detail.jobs.filter((j) => j.status === 'queued')).toHaveLength(3)
-    await expect(api(`segments/${detail.segments[0]!.id}`, 'PATCH', detail.segments[0])).rejects.toThrow(
-      '409'
-    )
+    expect(detail.jobs).toHaveLength(1)
+    expect(detail.jobs.filter((j) => j.status === 'queued')).toHaveLength(0)
   })
-  it('retries failed translation and exports the complete audio workflow', async () => {
+  it('retries translation, then manually generates and exports the audio', async () => {
     const failed = (await api(`projects/${id}`)).jobs.find((j: Job) => j.status === 'failed')
     failTranslation = false
     await api(`jobs/${failed.id}/retry`, 'POST')
-    const detail = await until((d) => d.jobs.every((j) => j.status === 'completed'))
+    let detail = await until((d) => d.jobs.every((j) => j.status === 'completed'))
+    expect(detail.project.outputPath).toBeNull()
+    expect(detail.segments[0]!.generatedPath).toBeNull()
+    await api(`segments/${detail.segments[0]!.id}/generate`, 'POST', {
+      ...defaultVoiceSettings(),
+      aiUseReference: false
+    })
+    detail = await until((d) => d.jobs.every((j) => j.status === 'completed'))
+    expect(detail.project.outputPath).toBeNull()
+    expect(detail.segments[0]!.generatedPath).toBeTruthy()
+    await api(`projects/${id}/batch`, 'POST', { action: 'render' })
+    detail = await until((d) => d.jobs.every((j) => j.status === 'completed'))
     expect(detail.project.outputPath).toMatch(/\.mp3$/)
     expect(detail.segments[0]!.translation).toBe('每个故事都值得被听见。')
     expect(detail.jobs.find((j) => j.id === failed.id)!.attempts).toBe(2)
@@ -204,12 +243,24 @@ describe.sequential('production HTTP workflow', () => {
     await expect(
       api(`projects/${id}/batch`, 'POST', { action: 'synthesize', voice: { ...voice, aiSpeechRate: 101 } })
     ).rejects.toThrow('400')
-    const created: Job[] = await api(`projects/${id}/batch`, 'POST', {
-      action: 'synthesize',
-      scope: 'missing',
-      finish: true,
-      voice
+    let release!: () => void
+    holdSynthesis = new Promise((resolve) => {
+      release = resolve
     })
+    let created: Job[]
+    try {
+      created = await api(`projects/${id}/batch`, 'POST', {
+        action: 'synthesize',
+        scope: 'missing',
+        finish: true,
+        voice
+      })
+      await expect(api(`segments/${original.id}/generate`, 'POST', voice)).rejects.toThrow('409')
+      expect((await api(`projects/${id}`)).segments[0].generatedPath).toBe(original.generatedPath)
+    } finally {
+      holdSynthesis = undefined
+      release()
+    }
     expect(created.map((j) => j.stage)).toEqual(['synthesize', 'mix', 'preview'])
     expect(created[0]!.segmentId).toBe(added.id)
     const result = await until((d) =>
@@ -220,6 +271,162 @@ describe.sequential('production HTTP workflow', () => {
     expect(result.segments[1]!.aiSpeechRate).toBe(10)
     expect(result.segments[1]!.generatedPath).toBeTruthy()
     expect(result.project.outputPath).toBeTruthy()
+  })
+  it('blocks a separate sentence while a voice-only batch is queued without finishing the movie', async () => {
+    const batchProject = await api('projects', 'POST', {
+      name: 'Voice-only batch isolation',
+      text: 'First batch sentence.\nSecond batch sentence.\nKeep this sentence outside the batch.'
+    })
+    const before: ProjectDetail = await api(`projects/${batchProject.id}`)
+    const untouched = before.segments[2]!
+    await api(`segments/${untouched.id}`, 'PATCH', { ...untouched, enabled: false })
+    const voiceSettings = { ...defaultVoiceSettings(), aiUseReference: false, aiPrompt: '自然地说' }
+    let release!: () => void
+    holdSynthesis = new Promise((resolve) => {
+      release = resolve
+    })
+    let created: Job[]
+    try {
+      created = await api(`projects/${batchProject.id}/batch`, 'POST', {
+        action: 'synthesize',
+        scope: 'all',
+        finish: false,
+        voice: voiceSettings
+      })
+      expect(created.map((job) => job.stage)).toEqual(['synthesize', 'synthesize'])
+      expect(created[1]!.dependsOn).toBe(created[0]!.id)
+      await until(
+        (detail) => detail.jobs.some((job) => job.id === created[0]!.id && job.status === 'running'),
+        batchProject.id
+      )
+      await expect(api(`segments/${untouched.id}/generate`, 'POST', voiceSettings)).rejects.toThrow('409')
+      const blocked: ProjectDetail = await api(`projects/${batchProject.id}`)
+      expect(blocked.jobs).toHaveLength(2)
+      expect(blocked.segments[2]).toEqual({ ...untouched, enabled: false })
+    } finally {
+      holdSynthesis = undefined
+      release()
+    }
+    const completed = await until(
+      (detail) =>
+        created.every((job) => detail.jobs.find((item) => item.id === job.id)?.status === 'completed'),
+      batchProject.id
+    )
+    expect(completed.project.outputPath).toBeNull()
+    expect(completed.segments[2]).toEqual({ ...untouched, enabled: false })
+  })
+  it('generates individual sentences independently and saves only the requested parameters atomically', async () => {
+    const before: ProjectDetail = await api(`projects/${id}`)
+    const [first, second] = before.segments
+    await api(`segments/${second!.id}`, 'PATCH', { ...second, enabled: false })
+    const voiceSettings = {
+      ...defaultVoiceSettings(),
+      aiUseReference: false,
+      aiPrompt: '第二句温柔自然',
+      aiSpeaker: 'fixture-speaker',
+      aiSpeechRate: 17
+    }
+    let release!: () => void
+    holdSynthesis = new Promise((resolve) => {
+      release = resolve
+    })
+    const requestOffset = synthesisRequests.length
+    try {
+      const created = await api(`segments/${second!.id}/generate`, 'POST', {
+        ...voiceSettings,
+        text: 'must not overwrite the original line',
+        projectId: 'another-project'
+      })
+      expect(created.segmentId).toBe(second!.id)
+      expect(created.jobs).toHaveLength(1)
+      expect(created.jobs[0]).toMatchObject({ stage: 'synthesize', segmentId: second!.id })
+      const inProgress = await until((d) =>
+        d.jobs.some((j) => j.id === created.jobs[0].id && j.status === 'running')
+      )
+      expect(inProgress.project.outputPath).toBeNull()
+      expect(inProgress.segments[0]).toEqual(first)
+      expect(inProgress.segments[1]).toMatchObject({
+        ...voiceSettings,
+        text: second!.text,
+        projectId: id,
+        enabled: true,
+        generatedPath: null,
+        generatedHash: null,
+        generatedDuration: null,
+        subtitle: null
+      })
+      const requests = await Promise.allSettled([
+        api(`segments/${first!.id}/generate`, 'POST', { ...voiceSettings, aiPrompt: '第一句坚定自然' }),
+        api(`segments/${first!.id}/generate`, 'POST', { ...voiceSettings, aiPrompt: '第一句坚定自然' })
+      ])
+      const successful = requests.filter((request) => request.status === 'fulfilled')
+      const rejected = requests.filter((request) => request.status === 'rejected')
+      expect(successful).toHaveLength(1)
+      expect(successful[0]!.value.jobs).toHaveLength(1)
+      expect(rejected).toHaveLength(1)
+      expect(rejected[0]!.reason.message).toContain('409')
+      await expect(api(`segments/${second!.id}/generate`, 'POST', voiceSettings)).rejects.toThrow('409')
+      await expect(api(`projects/${id}/run`, 'POST', { stage: 'translate' })).rejects.toThrow('409')
+      await expect(api(`segments/${first!.id}`, 'PATCH', first)).rejects.toThrow('409')
+      const queued: ProjectDetail = await api(`projects/${id}`)
+      expect(queued.jobs.filter((j) => j.status === 'running')).toHaveLength(1)
+      expect(queued.jobs.filter((j) => j.status === 'queued')).toHaveLength(1)
+    } finally {
+      holdSynthesis = undefined
+      release()
+    }
+    const done = await until((d) => d.jobs.every((j) => j.status === 'completed'))
+    expect(done.segments.every((s) => s.generatedPath)).toBe(true)
+    expect(done.segments[0]!.aiPrompt).toBe('第一句坚定自然')
+    expect(done.segments[1]!.aiPrompt).toBe('第二句温柔自然')
+    expect(synthesisRequests.slice(requestOffset)).toHaveLength(2)
+    expect(synthesisRequests[requestOffset]).toMatchObject({
+      text_prompt: expect.stringContaining('第二句温柔自然'),
+      speaker: 'fixture-speaker',
+      audio_config: { speech_rate: 17 }
+    })
+  })
+  it('rejects invalid generation inputs without changing the sentence or queuing tasks', async () => {
+    const before: ProjectDetail = await api(`projects/${id}`)
+    const first = before.segments[0]!
+    await expect(
+      api(`segments/${first.id}/generate`, 'POST', {
+        ...defaultVoiceSettings(),
+        aiUseReference: true
+      })
+    ).rejects.toThrow('没有可用原声')
+    await expect(
+      api(`segments/${first.id}/generate`, 'POST', {
+        ...defaultVoiceSettings(),
+        aiUseReference: false,
+        aiSpeechRate: 101
+      })
+    ).rejects.toThrow('400')
+    await expect(api('segments/missing-segment/generate', 'POST', defaultVoiceSettings())).rejects.toThrow(
+      '404'
+    )
+    const after: ProjectDetail = await api(`projects/${id}`)
+    expect(after.segments).toEqual(before.segments)
+    expect(after.jobs).toEqual(before.jobs)
+    const emptyProject = await api('projects', 'POST', {
+      name: 'Empty line validation',
+      text: 'Temporary text'
+    })
+    const empty: ProjectDetail = await api(`projects/${emptyProject.id}`)
+    await api(`segments/${empty.segments[0]!.id}`, 'PATCH', {
+      ...empty.segments[0],
+      text: '',
+      enabled: false
+    })
+    await expect(
+      api(`segments/${empty.segments[0]!.id}/generate`, 'POST', {
+        ...defaultVoiceSettings(),
+        aiUseReference: false
+      })
+    ).rejects.toThrow('请先填写这句台词')
+    const unchanged: ProjectDetail = await api(`projects/${emptyProject.id}`)
+    expect(unchanged.jobs).toEqual([])
+    expect(unchanged.segments[0]!.enabled).toBe(false)
   })
   it('keeps results when normalizing an existing target language label', async () => {
     const before: ProjectDetail = await api(`projects/${id}`)

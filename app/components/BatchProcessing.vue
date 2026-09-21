@@ -1,17 +1,19 @@
 <script setup lang="ts">
 import { batchPlan, type BatchInput } from '../../shared/batch'
 import { defaultVoiceSettings } from '../../shared/voice'
+const props = defineProps<{ initialAction?: BatchInput['action'] }>()
 const emit = defineEmits<{ close: []; submitted: [] }>()
 const { detail, channels, settings, act } = useStudio()
 const project = computed(() => detail.value!.project)
 const lines = computed(() => detail.value!.segments)
 const action = ref<BatchInput['action']>(
-  lines.value.length ? 'synthesize' : project.value.kind === 'text' ? 'synthesize' : 'prepare'
+  props.initialAction ||
+    (lines.value.length ? 'synthesize' : project.value.kind === 'text' ? 'synthesize' : 'prepare')
 )
 const scope = ref<'missing' | 'all'>('missing')
 const finish = ref(false)
 const saving = ref(false)
-const voice = ref({ ...defaultVoiceSettings(), aiUseReference: !!project.value.vocalsPath })
+const voice = ref(defaultVoiceSettings(!!project.value.vocalsPath))
 const input = computed<BatchInput>(() => ({
   action: action.value,
   scope: scope.value,
@@ -40,7 +42,11 @@ const reason = computed(() => {
 })
 const steps = computed(() => {
   if (action.value === 'prepare')
-    return ['在本机提取音轨并分离人声与背景音', '切分人声、识别台词，完成后回到工作区校对']
+    return [
+      '在本机提取音轨并分离人声与背景音',
+      '切分人声、识别台词；中文输出为简体中文',
+      '完成后停在台词校对，不自动翻译或生成配音'
+    ]
   if (action.value === 'translate')
     return [
       `将 ${lines.value.filter((s) => s.enabled).length} 句需替换台词翻译为${project.value.targetLanguage}`,
@@ -103,6 +109,17 @@ async function submit() {
       </section>
       <UCheckbox v-model="finish" :disabled="saving" label="配音完成后自动合成成片" />
     </template>
+    <p class="batch-cost help">
+      {{
+        action === 'prepare' || action === 'render'
+          ? '在本机处理，不调用付费 AI 接口。'
+          : action === 'translate'
+            ? '开始后会调用翻译接口，消耗已配置渠道的额度。'
+            : voice.synthesisMode === 'ai'
+              ? '开始后会调用 AI 配音接口，消耗已配置渠道的额度。'
+              : '微软 TTS 免费，需连接网络。'
+      }}
+    </p>
     <section class="batch-summary">
       <h3>本次会执行</h3>
       <ol>

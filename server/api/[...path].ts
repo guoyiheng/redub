@@ -9,7 +9,7 @@ import { db, initDb } from '../db'
 import { projects, segments, jobs, channels, settings } from '../db/schema'
 import { getProject, getSegments, getSettings, assertIdle, invalidateOutput } from '../services/store'
 import { importProject } from '../services/importer'
-import { enqueue, tick } from '../services/queue'
+import { enqueue, generateSegment, serializeEnqueue, tick } from '../services/queue'
 import { mediaHealth, assetPath, cutAudio } from '../services/media'
 import { safeError } from '../services/providers'
 import { stageLabels } from '../../shared/types'
@@ -84,32 +84,35 @@ export default defineEventHandler(async (event) => {
           configured: !!_apiKey || !!process.env[c.keyEnv]
         }))
       if (method === 'POST' || (method === 'PATCH' && id)) {
-        const input = channelSchema.parse(await readBody(event))
-        const { apiKey, ...data } = input
-        const active = await db
-          .select()
-          .from(jobs)
-          .where(inArray(jobs.status, ['running', 'queued']))
-        if (active.length) throw createError({ statusCode: 409, statusMessage: '请等待任务完成后再修改渠道' })
-        const channelId = id || randomUUID()
-        const existing = id ? (await db.select().from(channels).where(eq(channels.id, id)))[0] : undefined
-        const values = {
-          ...data,
-          ...(apiKey?.trim() ? { apiKey: apiKey.trim() } : existing ? {} : { apiKey: null })
-        }
-        await db
-          .insert(channels)
-          .values({ id: channelId, ...values })
-          .onConflictDoUpdate({ target: channels.id, set: values })
-        const affected = await db.select().from(projects).where(eq(projects.channelId, channelId))
-        for (const p of affected) {
+        return await serializeEnqueue(async () => {
+          const input = channelSchema.parse(await readBody(event))
+          const { apiKey, ...data } = input
+          const active = await db
+            .select()
+            .from(jobs)
+            .where(inArray(jobs.status, ['running', 'queued']))
+          if (active.length)
+            throw createError({ statusCode: 409, statusMessage: '请等待任务完成后再修改渠道' })
+          const channelId = id || randomUUID()
+          const existing = id ? (await db.select().from(channels).where(eq(channels.id, id)))[0] : undefined
+          const values = {
+            ...data,
+            ...(apiKey?.trim() ? { apiKey: apiKey.trim() } : existing ? {} : { apiKey: null })
+          }
           await db
-            .update(segments)
-            .set({ generatedPath: null, generatedHash: null })
-            .where(eq(segments.projectId, p.id))
-          await invalidateOutput(p.id)
-        }
-        return { id: channelId }
+            .insert(channels)
+            .values({ id: channelId, ...values })
+            .onConflictDoUpdate({ target: channels.id, set: values })
+          const affected = await db.select().from(projects).where(eq(projects.channelId, channelId))
+          for (const p of affected) {
+            await db
+              .update(segments)
+              .set({ generatedPath: null, generatedHash: null })
+              .where(eq(segments.projectId, p.id))
+            await invalidateOutput(p.id)
+          }
+          return { id: channelId }
+        })
       }
     }
     if (resource === 'projects') {
@@ -124,41 +127,45 @@ export default defineEventHandler(async (event) => {
             jobs: await db.select().from(jobs).where(eq(jobs.projectId, id)).orderBy(desc(jobs.createdAt))
           }
         if (!action && method === 'PATCH') {
-          await assertIdle(id)
-          const data = z
-            .object({
-              name: z.string().trim().min(1).max(120),
-              sourceLanguage: z.enum(['auto', 'zh', 'en', 'ja', 'ko', 'es', 'fr', 'de', 'ru']),
-              targetLanguage: z.string().trim().min(1).max(40),
-              channelId: z.string()
-            })
-            .parse(await readBody(event))
-          const [channel] = await db
-            .select()
-            .from(channels)
-            .where(and(eq(channels.id, data.channelId), eq(channels.type, 'volcengine')))
-          if (!channel) throw new Error('请选择有效的配音渠道')
-          await db
-            .update(projects)
-            .set({ ...data, updatedAt: Date.now() })
-            .where(eq(projects.id, id))
-          if (
-            normalizeLanguage(project.targetLanguage) !== normalizeLanguage(data.targetLanguage) ||
-            project.channelId !== data.channelId
-          ) {
-            await db
-              .update(segments)
-              .set({
-                generatedPath: null,
-                generatedHash: null,
-                ...(normalizeLanguage(project.targetLanguage) !== normalizeLanguage(data.targetLanguage)
-                  ? { translation: '' }
-                  : {})
+          return await serializeEnqueue(async () => {
+            await assertIdle(id)
+            const currentProject = await getProject(id)
+            const data = z
+              .object({
+                name: z.string().trim().min(1).max(120),
+                sourceLanguage: z.enum(['auto', 'zh', 'en', 'ja', 'ko', 'es', 'fr', 'de', 'ru']),
+                targetLanguage: z.string().trim().min(1).max(40),
+                channelId: z.string()
               })
-              .where(eq(segments.projectId, id))
-            await invalidateOutput(id)
-          }
-          return { ok: true }
+              .parse(await readBody(event))
+            const [channel] = await db
+              .select()
+              .from(channels)
+              .where(and(eq(channels.id, data.channelId), eq(channels.type, 'volcengine')))
+            if (!channel) throw new Error('请选择有效的配音渠道')
+            await db
+              .update(projects)
+              .set({ ...data, updatedAt: Date.now() })
+              .where(eq(projects.id, id))
+            if (
+              normalizeLanguage(currentProject.targetLanguage) !== normalizeLanguage(data.targetLanguage) ||
+              currentProject.channelId !== data.channelId
+            ) {
+              await db
+                .update(segments)
+                .set({
+                  generatedPath: null,
+                  generatedHash: null,
+                  ...(normalizeLanguage(currentProject.targetLanguage) !==
+                  normalizeLanguage(data.targetLanguage)
+                    ? { translation: '' }
+                    : {})
+                })
+                .where(eq(segments.projectId, id))
+              await invalidateOutput(id)
+            }
+            return { ok: true }
+          })
         }
         if (action === 'batch' && method === 'POST') {
           const input = batchSchema.parse(await readBody(event))
@@ -181,6 +188,7 @@ export default defineEventHandler(async (event) => {
               .from(segments)
               .where(and(eq(segments.id, body.segmentId), eq(segments.projectId, id)))
             if (!s || body.stage !== 'synthesize') throw new Error('请选择本项目的配音片段')
+            return (await generateSegment(s.id, voiceSettingsSchema.parse(s))).jobs
           }
           return await enqueue(id, body.stage ? [body.stage] : undefined, body.segmentId)
         }
@@ -191,23 +199,25 @@ export default defineEventHandler(async (event) => {
           return { ok: true }
         }
         if (action === 'segments' && method === 'POST') {
-          await assertIdle(id)
-          const data = segmentSchema.parse(await readBody(event))
-          await validateTimeline(id, data, project.duration, project.kind === 'text')
-          const segmentId = randomUUID()
-          let referencePath: string | null = null
-          if (project.vocalsPath) {
-            referencePath = `${id}/reference-${segmentId}.wav`
-            await cutAudio(
-              assetPath(project.vocalsPath),
-              assetPath(referencePath),
-              data.start,
-              data.end - data.start
-            )
-          }
-          await db.insert(segments).values({ id: segmentId, projectId: id, ...data, referencePath })
-          await invalidateOutput(id)
-          return { id: segmentId }
+          return await serializeEnqueue(async () => {
+            await assertIdle(id)
+            const data = segmentSchema.parse(await readBody(event))
+            await validateTimeline(id, data, project.duration, project.kind === 'text')
+            const segmentId = randomUUID()
+            let referencePath: string | null = null
+            if (project.vocalsPath) {
+              referencePath = `${id}/reference-${segmentId}.wav`
+              await cutAudio(
+                assetPath(project.vocalsPath),
+                assetPath(referencePath),
+                data.start,
+                data.end - data.start
+              )
+            }
+            await db.insert(segments).values({ id: segmentId, projectId: id, ...data, referencePath })
+            await invalidateOutput(id)
+            return { id: segmentId }
+          })
         }
       }
     }
@@ -215,74 +225,105 @@ export default defineEventHandler(async (event) => {
       const path = await originalClip(id)
       return sendRedirect(event, `/api/media?path=${encodeURIComponent(path)}`)
     }
+    if (resource === 'segments' && id && action === 'generate' && method === 'POST') {
+      return await generateSegment(id, voiceSettingsSchema.parse(await readBody(event)))
+    }
     if (resource === 'segments' && id && method === 'PATCH') {
-      const [old] = await db.select().from(segments).where(eq(segments.id, id))
-      if (!old) throw createError({ statusCode: 404, statusMessage: '片段不存在' })
-      await assertIdle(old.projectId)
-      const p = await getProject(old.projectId),
-        data = segmentSchema.parse(await readBody(event))
-      await validateTimeline(p.id, data, p.duration, p.kind === 'text', id)
-      const changed =
-        old.start !== data.start ||
-        old.end !== data.end ||
-        old.text !== data.text ||
-        old.translation !== data.translation
-      let referencePath = old.referencePath
-      if (p.vocalsPath && (old.start !== data.start || old.end !== data.end)) {
-        referencePath = `${p.id}/reference-${id}-${randomUUID()}.wav`
-        await cutAudio(assetPath(p.vocalsPath), assetPath(referencePath), data.start, data.end - data.start)
-      }
-      await db
-        .update(segments)
-        .set({
-          ...data,
-          referencePath,
-          ...(changed
-            ? { generatedPath: null, generatedHash: null, subtitle: null, generatedDuration: null }
-            : {})
-        })
-        .where(eq(segments.id, id))
-      await invalidateOutput(p.id)
-      return { ok: true }
+      return await serializeEnqueue(async () => {
+        const [old] = await db.select().from(segments).where(eq(segments.id, id))
+        if (!old) throw createError({ statusCode: 404, statusMessage: '片段不存在' })
+        await assertIdle(old.projectId)
+        const p = await getProject(old.projectId),
+          data = segmentSchema.parse(await readBody(event))
+        await validateTimeline(p.id, data, p.duration, p.kind === 'text', id)
+        const changed =
+          old.start !== data.start ||
+          old.end !== data.end ||
+          old.text !== data.text ||
+          old.translation !== data.translation
+        let referencePath = old.referencePath
+        if (p.vocalsPath && (old.start !== data.start || old.end !== data.end)) {
+          referencePath = `${p.id}/reference-${id}-${randomUUID()}.wav`
+          await cutAudio(assetPath(p.vocalsPath), assetPath(referencePath), data.start, data.end - data.start)
+        }
+        await db
+          .update(segments)
+          .set({
+            ...data,
+            referencePath,
+            ...(changed
+              ? { generatedPath: null, generatedHash: null, subtitle: null, generatedDuration: null }
+              : {})
+          })
+          .where(eq(segments.id, id))
+        await invalidateOutput(p.id)
+        return { ok: true }
+      })
     }
     if (resource === 'jobs') {
       if (method === 'GET') return await db.select().from(jobs).orderBy(desc(jobs.createdAt)).limit(500)
       if (id && method === 'POST') {
-        const [job] = await db.select().from(jobs).where(eq(jobs.id, id))
-        if (!job) throw createError({ statusCode: 404, statusMessage: '任务不存在' })
-        if (job.status === 'running')
-          throw createError({ statusCode: 409, statusMessage: '执行中的任务不能重复启动或跳过' })
-        if (!['retry', 'skip'].includes(action || '')) throw createError({ statusCode: 404 })
-        await db.transaction(async (tx) => {
-          const allowed = action === 'retry' ? (['failed'] as const) : (['queued', 'failed'] as const)
-          const changed = await tx
-            .update(jobs)
-            .set({
-              status: action === 'retry' ? 'queued' : 'skipped',
-              error: null,
-              progress: 0,
-              message: action === 'retry' ? '等待重试' : '已跳过，后续任务可继续',
-              updatedAt: Date.now()
-            })
-            .where(and(eq(jobs.id, id), inArray(jobs.status, [...allowed])))
-            .returning({ id: jobs.id })
-          if (!changed.length)
-            throw createError({ statusCode: 409, statusMessage: '任务状态已改变，请刷新后重试' })
-          if (action === 'skip' && job.stage === 'synthesize') {
-            const lines = await tx.select().from(segments).where(eq(segments.projectId, job.projectId))
-            for (const line of lines.filter(
-              (s) => (!job.segmentId || s.id === job.segmentId) && !s.generatedPath
-            ))
-              await tx.update(segments).set({ enabled: false }).where(eq(segments.id, line.id))
-            await tx
-              .update(projects)
-              .set({ mixedPath: null, outputPath: null })
-              .where(eq(projects.id, job.projectId))
-          }
-          await tx.update(projects).set({ paused: false }).where(eq(projects.id, job.projectId))
+        return await serializeEnqueue(async () => {
+          const [job] = await db.select().from(jobs).where(eq(jobs.id, id))
+          if (!job) throw createError({ statusCode: 404, statusMessage: '任务不存在' })
+          if (job.status === 'running')
+            throw createError({ statusCode: 409, statusMessage: '执行中的任务不能重复启动或跳过' })
+          if (!['retry', 'skip'].includes(action || '')) throw createError({ statusCode: 404 })
+          await db.transaction(async (tx) => {
+            if (action === 'retry') {
+              const projectJobs = await tx.select().from(jobs).where(eq(jobs.projectId, job.projectId))
+              const descendants = new Set([job.id])
+              let size = 0
+              while (size !== descendants.size) {
+                size = descendants.size
+                for (const item of projectJobs)
+                  if (item.dependsOn && descendants.has(item.dependsOn)) descendants.add(item.id)
+              }
+              const conflicts = projectJobs.filter(
+                (item) =>
+                  ['queued', 'running'].includes(item.status) &&
+                  !descendants.has(item.id) &&
+                  !(
+                    job.stage === 'synthesize' &&
+                    job.segmentId &&
+                    item.stage === 'synthesize' &&
+                    item.segmentId &&
+                    item.segmentId !== job.segmentId
+                  )
+              )
+              if (conflicts.length)
+                throw createError({ statusCode: 409, statusMessage: '项目有冲突的处理任务，请完成后再重试' })
+            }
+            const allowed = action === 'retry' ? (['failed'] as const) : (['queued', 'failed'] as const)
+            const changed = await tx
+              .update(jobs)
+              .set({
+                status: action === 'retry' ? 'queued' : 'skipped',
+                error: null,
+                progress: 0,
+                message: action === 'retry' ? '等待重试' : '已跳过，后续任务可继续',
+                updatedAt: Date.now()
+              })
+              .where(and(eq(jobs.id, id), inArray(jobs.status, [...allowed])))
+              .returning({ id: jobs.id })
+            if (!changed.length)
+              throw createError({ statusCode: 409, statusMessage: '任务状态已改变，请刷新后重试' })
+            if (action === 'skip' && job.stage === 'synthesize') {
+              const lines = await tx.select().from(segments).where(eq(segments.projectId, job.projectId))
+              for (const line of lines.filter(
+                (s) => (!job.segmentId || s.id === job.segmentId) && !s.generatedPath
+              ))
+                await tx.update(segments).set({ enabled: false }).where(eq(segments.id, line.id))
+              await tx
+                .update(projects)
+                .set({ mixedPath: null, outputPath: null })
+                .where(eq(projects.id, job.projectId))
+            }
+            await tx.update(projects).set({ paused: false }).where(eq(projects.id, job.projectId))
+          })
+          void tick()
+          return { ok: true }
         })
-        void tick()
-        return { ok: true }
       }
     }
     throw createError({ statusCode: 404, statusMessage: '接口不存在' })

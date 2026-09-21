@@ -156,7 +156,7 @@ export async function mediaHealth() {
   const [ffmpegReady, ffprobeReady, modelsReady] = await Promise.all([
     check(binary('ffmpeg'), ['-version']),
     check(binary('ffprobe'), ['-version']),
-    check(python(), ['-c', 'import demucs, faster_whisper'])
+    check(python(), ['-c', 'import demucs, faster_whisper, opencc'])
   ])
   return { ffmpeg: ffmpegReady, ffprobe: ffprobeReady, models: modelsReady }
 }

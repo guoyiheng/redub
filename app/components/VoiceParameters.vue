@@ -1,7 +1,22 @@
 <script setup lang="ts">
-import type { VoiceSettings } from '../../shared/voice'
+import {
+  defaultVoicePrompt,
+  referenceVoicePrompt,
+  naturalVoicePrompt,
+  type VoiceSettings
+} from '../../shared/voice'
 defineProps<{ disabled?: boolean; referencePath?: string | null; canReference: boolean }>()
 const draft = defineModel<VoiceSettings>({ required: true })
+watch(
+  () => draft.value.aiUseReference,
+  (value) => {
+    if (
+      !draft.value.aiPrompt?.trim() ||
+      [referenceVoicePrompt, naturalVoicePrompt].includes(draft.value.aiPrompt)
+    )
+      draft.value.aiPrompt = defaultVoicePrompt(value)
+  }
+)
 const ttsVoices = [
   { label: '晓晓（中文女声）', value: 'zh-CN-XiaoxiaoNeural' },
   { label: '云希（中文男声）', value: 'zh-CN-YunxiNeural' },
@@ -33,17 +48,18 @@ const ttsVoices = [
       />
     </div>
     <template v-if="draft.synthesisMode === 'ai'">
-      <UTextarea
-        :model-value="draft.aiPrompt || ''"
-        @update:model-value="draft.aiPrompt = $event"
-        aria-label="配音提示词"
-        class="generation-prompt w-full"
-        variant="none"
-        :rows="2"
-        :maxlength="3000"
-        :disabled="disabled"
-        placeholder="描述语气、情绪和说话方式（可选）"
-      />
+      <UFormField label="配音要求"
+        ><UTextarea
+          :model-value="draft.aiPrompt || ''"
+          @update:model-value="draft.aiPrompt = $event"
+          aria-label="配音提示词"
+          class="generation-prompt w-full"
+          variant="none"
+          :rows="2"
+          :maxlength="3000"
+          :disabled="disabled"
+          placeholder="描述希望保留或调整的音色、语气和节奏"
+      /></UFormField>
       <div class="generation-voice-row">
         <USelect
           v-model="draft.aiUseReference"

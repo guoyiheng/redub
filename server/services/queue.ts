@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
+import { createError } from 'h3'
 import { eq, and, asc, inArray } from 'drizzle-orm'
 import { db, initDb } from '../db'
 import { jobs, projects, segments } from '../db/schema'
@@ -6,20 +8,13 @@ import { batchPlan, type BatchInput } from '../../shared/batch'
 import { getSegments, getChannel, getSettings, getProject, assertIdle } from './store'
 import { executeJob } from './pipeline'
 import { safeError } from './providers'
+import { assetPath } from './media'
+import type { VoiceSettings } from '../../shared/voice'
 import type { Job, MediaKind, Stage } from '../../shared/types'
 
 export function workflowStages(kind: MediaKind): Stage[] {
-  if (kind === 'text') return ['translate', 'synthesize', 'mix', 'preview']
-  return [
-    ...(kind === 'video' ? ['extract' as const] : []),
-    'separate',
-    'segment',
-    'transcribe',
-    'translate',
-    'synthesize',
-    'mix',
-    'preview'
-  ]
+  if (kind === 'text') return []
+  return [...(kind === 'video' ? ['extract' as const] : []), 'separate', 'segment', 'transcribe']
 }
 export function eligibleJobs(all: Job[], paused: Set<string>, busy: Set<string>, capacity: number) {
   const byId = new Map(all.map((j) => [j.id, j]))
@@ -39,13 +34,24 @@ const running = new Map<string, string>()
 let ticking = false,
   timer: ReturnType<typeof setInterval> | undefined
 let enqueueChain = Promise.resolve()
+export function serializeEnqueue<T>(action: () => Promise<T>): Promise<T> {
+  const task = enqueueChain.then(action)
+  enqueueChain = task.then(
+    () => {},
+    () => {}
+  )
+  return task
+}
 export function enqueue(projectId: string, stages?: Stage[], segmentId?: string, batch?: BatchInput) {
-  const task = enqueueChain.then(async () => {
+  return serializeEnqueue(async () => {
     const p = await getProject(projectId)
     await assertIdle(projectId)
+    if (!stages && !batch && p.kind === 'text') throw new Error('文本已导入，请手动选择翻译或生成配音')
     const plan = batch
       ? batchPlan(p, await getSegments(projectId), batch)
-      : (stages || workflowStages(p.kind)).map((stage) => ({ stage, segmentId }))
+      : stages
+        ? stages.map((stage) => ({ stage, segmentId }))
+        : batchPlan(p, await getSegments(projectId), { action: 'prepare', scope: 'missing', finish: false })
     if (batch?.action === 'synthesize' && batch.voice?.synthesisMode === 'ai') await getChannel(p.channelId)
     if (batch?.action === 'translate') await getChannel((await getSettings()).translationChannelId)
     const order = plan.map((item) => item.stage)
@@ -94,11 +100,75 @@ export function enqueue(projectId: string, stages?: Stage[], segmentId?: string,
     void tick()
     return rows
   })
-  enqueueChain = task.then(
-    () => {},
-    () => {}
-  )
-  return task
+}
+
+export function generateSegment(segmentId: string, voice: VoiceSettings) {
+  return serializeEnqueue(async () => {
+    await initDb()
+    const [line] = await db.select().from(segments).where(eq(segments.id, segmentId))
+    if (!line) throw createError({ statusCode: 404, statusMessage: '片段不存在' })
+    const project = await getProject(line.projectId)
+    if (!(line.translation || line.text).trim()) throw new Error('请先填写这句台词或译文，再生成配音')
+    if (voice.synthesisMode === 'ai') {
+      const channel = await getChannel(project.channelId)
+      if (channel.type !== 'volcengine') throw new Error('请在项目设置中选择 AI 配音渠道')
+      if (
+        voice.aiUseReference &&
+        (project.kind === 'text' || !project.vocalsPath || !existsSync(assetPath(project.vocalsPath)))
+      )
+        throw new Error('没有可用原声，请先分离人声，或关闭原声参考并选择音色')
+    }
+    const job: Job = {
+      id: randomUUID(),
+      projectId: project.id,
+      stage: 'synthesize',
+      segmentId,
+      status: 'queued',
+      progress: 0,
+      message: '等待生成这句配音',
+      error: null,
+      dependsOn: null,
+      attempts: 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    }
+    await db.transaction(async (tx) => {
+      const active = await tx
+        .select()
+        .from(jobs)
+        .where(and(eq(jobs.projectId, project.id), inArray(jobs.status, ['running', 'queued'])))
+      if (active.some((item) => item.stage !== 'synthesize' || !item.segmentId))
+        throw createError({
+          statusCode: 409,
+          statusMessage: '项目正在处理素材、翻译或合成，请完成后再生成单句配音'
+        })
+      if (active.some((item) => item.stage === 'synthesize' && item.dependsOn))
+        throw createError({
+          statusCode: 409,
+          statusMessage: '批量配音正在排队，请等待批量任务完成后再生成单句配音'
+        })
+      if (active.some((item) => item.segmentId === segmentId))
+        throw createError({ statusCode: 409, statusMessage: '这句配音已在排队或生成中，请等待完成' })
+      await tx
+        .update(segments)
+        .set({
+          ...voice,
+          enabled: true,
+          generatedPath: null,
+          generatedHash: null,
+          generatedDuration: null,
+          subtitle: null
+        })
+        .where(eq(segments.id, segmentId))
+      await tx
+        .update(projects)
+        .set({ paused: false, mixedPath: null, outputPath: null, updatedAt: Date.now() })
+        .where(eq(projects.id, project.id))
+      await tx.insert(jobs).values(job)
+    })
+    void tick()
+    return { segmentId, jobs: [job] }
+  })
 }
 async function execute(job: Job) {
   try {

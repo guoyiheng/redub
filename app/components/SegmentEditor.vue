@@ -114,13 +114,11 @@ async function openGeneration() {
       >
       <StudioAction
         :reason="
-          locked
-            ? '任务执行中，完成后可生成'
-            : !draft.enabled
-              ? '请先开启用配音替换原声'
-              : !(draft.translation || draft.text).trim()
-                ? '请先填写台词'
-                : ''
+          locked && dirty
+            ? '请先等待当前任务完成，再保存这句的修改'
+            : !(draft.translation || draft.text).trim()
+              ? '请先填写台词'
+              : ''
         "
         :loading="saving"
         icon="i-carbon-microphone"

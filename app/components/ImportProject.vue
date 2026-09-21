@@ -145,7 +145,7 @@ async function submit() {
         <p class="help">{{ upload === 100 ? '文件已上传，正在读取素材…' : `正在导入 ${upload}%` }}</p>
       </div>
       <div class="form-footer">
-        <p class="help">AI 服务会接收台词及参考人声。</p>
+        <p class="help">创建后先校对台词；翻译和配音由你手动发起，不会自动调用 AI 接口。</p>
         <UButton type="submit" :loading="busy">创建项目</UButton>
       </div>
     </form>

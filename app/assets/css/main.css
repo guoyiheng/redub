@@ -1131,8 +1131,8 @@ button:disabled {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  min-height: 82px;
-  padding: 16px 0;
+  min-height: 62px;
+  padding: 12px 0;
   background: var(--ui-bg);
 }
 .workspace-title {
@@ -1142,9 +1142,10 @@ button:disabled {
 .workspace-header > .row-actions {
   flex-shrink: 0;
 }
-.workspace-title h1 {
-  font-size: 20px;
-  margin: 0 0 4px;
+.workspace-project-name {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 2px;
 }
 .workspace-title > span {
   display: block;
@@ -1184,14 +1185,15 @@ button:disabled {
 .comparison-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  column-gap: 32px;
+  column-gap: 40px;
 }
 .comparison-heading {
   position: sticky;
-  top: 82px;
+  top: 62px;
   z-index: 9;
   background: var(--ui-bg);
-  padding: 10px 14px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--ui-border);
   color: var(--ui-text-muted);
   font-size: 12px;
 }
@@ -1200,8 +1202,8 @@ button:disabled {
   gap: 4px;
 }
 .comparison-row {
-  padding: 16px 14px;
-  border-radius: 10px;
+  padding: 16px 14px 20px;
+  border-bottom: 1px solid var(--ui-border);
   transition: background 120ms ease;
 }
 .comparison-row:hover,
@@ -1259,25 +1261,15 @@ button:disabled {
   height: 36px;
 }
 .comparison-generated .clip-audio {
-  margin-block: auto;
+  min-width: 0;
+  width: 100%;
 }
 .audio-placeholder {
-  flex: 1;
   display: flex;
-  flex-wrap: wrap;
-  align-content: center;
   align-items: center;
-  justify-content: center;
   gap: 8px;
-  min-height: 82px;
-  border-radius: 8px;
-  background: #eeece370;
+  min-height: 36px;
   color: var(--ui-text-muted);
-  font-size: 13px;
-}
-.audio-placeholder small {
-  width: 100%;
-  text-align: center;
   font-size: 12px;
 }
 .audio-placeholder .iconify {
@@ -1335,4 +1327,139 @@ button:disabled {
 }
 .script-empty {
   background: transparent;
+}
+
+.comparison-meta {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+.comparison-generated {
+  position: relative;
+}
+.comparison-generated::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -20px;
+  width: 1px;
+  background: var(--ui-border);
+  opacity: 0.6;
+}
+.dialogue-content {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  flex: 1;
+  min-height: 52px;
+}
+.dialogue-content > div,
+.dialogue-content > p {
+  min-width: 0;
+}
+.dialogue-content > button {
+  flex-shrink: 0;
+  opacity: 0.5;
+}
+.comparison-row:hover .dialogue-content > button,
+.dialogue-content > button:focus-visible {
+  opacity: 1;
+}
+.dialogue-translation {
+  font-size: 14px;
+}
+.generated-output {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 36px;
+}
+.generated-output > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+.generated-output > button {
+  flex-shrink: 0;
+}
+.workspace-guide {
+  font-size: 12px;
+  color: var(--ui-text-muted);
+  padding: 4px 14px 10px;
+}
+.workspace-guide summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
+}
+.workspace-guide summary::-webkit-details-marker {
+  display: none;
+}
+.workspace-guide summary > span {
+  margin-left: 8px;
+}
+.workspace-guide summary > .iconify:last-child {
+  margin-left: auto;
+}
+.workspace-guide[open] summary > .iconify:last-child {
+  transform: rotate(180deg);
+}
+.guide-content {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 28px;
+  padding: 16px 0 6px;
+  line-height: 1.7;
+}
+.guide-content strong {
+  display: block;
+  color: var(--ui-text);
+  font-weight: 500;
+}
+.project-start {
+  max-width: 600px;
+  margin: max(36px, 8vh) auto;
+  display: grid;
+  justify-items: start;
+  gap: 18px;
+}
+.project-start h2 {
+  font-size: 22px;
+}
+.project-start p {
+  line-height: 1.8;
+  color: var(--ui-text-muted);
+}
+.start-manual-note {
+  display: flex;
+  gap: 10px;
+  padding-top: 18px;
+  margin-top: 12px;
+  border-top: 1px solid var(--ui-border);
+  font-size: 12px;
+}
+.start-manual-note > .iconify {
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+.generation-cost {
+  margin-right: auto;
+  align-self: center;
+}
+.generation-feedback {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--ui-text-muted);
+}
+.batch-cost {
+  background: var(--ui-bg-muted);
+  padding: 10px 12px;
+  border-radius: 6px;
 }

@@ -54,7 +54,7 @@ async function install(userDir, resources) {
   }
   await execute(target, ['-m', 'pip', 'install', '--upgrade', 'pip'])
   await execute(target, ['-m', 'pip', 'install', '-r', join(resources, 'scripts', 'requirements.txt')])
-  await execute(target, ['-c', 'import demucs, faster_whisper, soundfile'])
+  await execute(target, ['-c', 'import demucs, faster_whisper, soundfile, opencc'])
   return '本地模型环境已安装。请重启应用后开始处理，首次运行会下载模型。'
 }
 module.exports = { installModels, modelPython }

@@ -127,7 +127,7 @@ onBeforeUnmount(() => clearInterval(timer))
               }"
               @click="choose(p.id, 'script')"
             >
-              <UIcon name="i-carbon-script" />台词 / 配音
+              <UIcon name="i-carbon-script" />配音
             </button>
             <button
               :class="{
