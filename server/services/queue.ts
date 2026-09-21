@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { eq, and, asc, inArray } from 'drizzle-orm'
 import { db, initDb } from '../db'
 import { jobs, projects, segments } from '../db/schema'
-import { getSettings, getProject, assertIdle } from './store'
+import { batchPlan, type BatchInput } from '../../shared/batch'
+import { getSegments, getChannel, getSettings, getProject, assertIdle } from './store'
 import { executeJob } from './pipeline'
 import { safeError } from './providers'
 import type { Job, MediaKind, Stage } from '../../shared/types'
@@ -38,18 +39,23 @@ const running = new Map<string, string>()
 let ticking = false,
   timer: ReturnType<typeof setInterval> | undefined
 let enqueueChain = Promise.resolve()
-export function enqueue(projectId: string, stages?: Stage[], segmentId?: string) {
+export function enqueue(projectId: string, stages?: Stage[], segmentId?: string, batch?: BatchInput) {
   const task = enqueueChain.then(async () => {
     const p = await getProject(projectId)
     await assertIdle(projectId)
-    const order = stages || workflowStages(p.kind)
+    const plan = batch
+      ? batchPlan(p, await getSegments(projectId), batch)
+      : (stages || workflowStages(p.kind)).map((stage) => ({ stage, segmentId }))
+    if (batch?.action === 'synthesize' && batch.voice?.synthesisMode === 'ai') await getChannel(p.channelId)
+    if (batch?.action === 'translate') await getChannel((await getSettings()).translationChannelId)
+    const order = plan.map((item) => item.stage)
     const rows: Job[] = []
-    for (const stage of order)
+    for (const item of plan)
       rows.push({
         id: randomUUID(),
         projectId,
-        stage,
-        segmentId: segmentId || null,
+        stage: item.stage,
+        segmentId: item.segmentId || null,
         status: 'queued',
         progress: 0,
         message: '等待执行',
@@ -60,6 +66,23 @@ export function enqueue(projectId: string, stages?: Stage[], segmentId?: string)
         updatedAt: Date.now()
       })
     await db.transaction(async (tx) => {
+      if (batch?.action === 'synthesize' && batch.voice) {
+        const ids = plan.flatMap((item) => (item.segmentId ? [item.segmentId] : []))
+        await tx
+          .update(segments)
+          .set({
+            ...batch.voice,
+            generatedPath: null,
+            generatedHash: null,
+            generatedDuration: null,
+            subtitle: null
+          })
+          .where(and(eq(segments.projectId, projectId), inArray(segments.id, ids)))
+        await tx
+          .update(projects)
+          .set({ mixedPath: null, outputPath: null, updatedAt: Date.now() })
+          .where(eq(projects.id, projectId))
+      }
       for (const row of rows) await tx.insert(jobs).values(row)
       if (segmentId && order.includes('synthesize'))
         await tx

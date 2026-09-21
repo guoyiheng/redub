@@ -14,6 +14,7 @@ export function useStudio() {
     translationChannelId: 'translation-default'
   }))
   const selected = useState<string | null>('selected', () => null)
+  const workspacePanels = useState<Record<string, 'script' | 'preview'>>('workspacePanels', () => ({}))
   const settingsProject = useState<string | null>('settingsProject', () => null)
   const detail = useState<ProjectDetail | null>('detail', () => null)
   const toast = useToast()
@@ -59,6 +60,7 @@ export function useStudio() {
     channels,
     settings,
     selected,
+    workspacePanels,
     settingsProject,
     detail,
     refresh,

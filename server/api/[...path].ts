@@ -1,3 +1,7 @@
+import { normalizeLanguage } from '../../shared/languages'
+import { voiceSettingsSchema } from '../../shared/voice'
+import { batchSchema } from '../../shared/batch'
+import { originalClip } from '../services/original-clip'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { eq, and, desc, inArray } from 'drizzle-orm'
@@ -32,29 +36,7 @@ const segmentSchema = z
     translation: z.string().max(2800),
     speaker: z.string().max(80),
     enabled: z.boolean(),
-    synthesisMode: z.enum(['ai', 'tts']).default('ai'),
-    aiSpeaker: z.string().max(160).nullable().optional(),
-    aiUseReference: z.boolean().default(true),
-    aiPrompt: z.string().max(3000).nullable().optional(),
-    aiFormat: z.enum(['mp3', 'wav']).default('mp3'),
-    aiSampleRate: z
-      .union([
-        z.literal(8000),
-        z.literal(16000),
-        z.literal(24000),
-        z.literal(32000),
-        z.literal(40000),
-        z.literal(44100),
-        z.literal(48000)
-      ])
-      .default(48000),
-    aiPitchRate: z.number().int().min(-12).max(12).default(0),
-    aiSpeechRate: z.number().int().min(-50).max(100).default(0),
-    aiLoudnessRate: z.number().int().min(-50).max(100).default(0),
-    ttsVoice: z.string().min(1).max(160).default('zh-CN-XiaoxiaoNeural'),
-    ttsRate: z.number().int().min(-50).max(100).default(0),
-    ttsPitch: z.number().int().min(-50).max(50).default(0),
-    ttsVolume: z.number().int().min(-50).max(100).default(0)
+    ...voiceSettingsSchema.shape
   })
   .refine((s) => s.end > s.start && s.end - s.start <= 120, '片段时长需大于 0 且不超过 120 秒')
 export default defineEventHandler(async (event) => {
@@ -160,18 +142,27 @@ export default defineEventHandler(async (event) => {
             .update(projects)
             .set({ ...data, updatedAt: Date.now() })
             .where(eq(projects.id, id))
-          if (project.targetLanguage !== data.targetLanguage || project.channelId !== data.channelId) {
+          if (
+            normalizeLanguage(project.targetLanguage) !== normalizeLanguage(data.targetLanguage) ||
+            project.channelId !== data.channelId
+          ) {
             await db
               .update(segments)
               .set({
                 generatedPath: null,
                 generatedHash: null,
-                ...(project.targetLanguage !== data.targetLanguage ? { translation: '' } : {})
+                ...(normalizeLanguage(project.targetLanguage) !== normalizeLanguage(data.targetLanguage)
+                  ? { translation: '' }
+                  : {})
               })
               .where(eq(segments.projectId, id))
             await invalidateOutput(id)
           }
           return { ok: true }
+        }
+        if (action === 'batch' && method === 'POST') {
+          const input = batchSchema.parse(await readBody(event))
+          return await enqueue(id, undefined, undefined, input)
         }
         if (action === 'run' && method === 'POST') {
           const body = z
@@ -219,6 +210,10 @@ export default defineEventHandler(async (event) => {
           return { id: segmentId }
         }
       }
+    }
+    if (resource === 'segments' && id && action === 'original' && method === 'GET') {
+      const path = await originalClip(id)
+      return sendRedirect(event, `/api/media?path=${encodeURIComponent(path)}`)
     }
     if (resource === 'segments' && id && method === 'PATCH') {
       const [old] = await db.select().from(segments).where(eq(segments.id, id))

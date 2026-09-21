@@ -1,5 +1,6 @@
 <script setup lang="ts">
-const { projects, selected, detail, jobs, refresh, select, settingsProject, errorMessage } = useStudio()
+const { projects, selected, detail, jobs, refresh, select, settingsProject, workspacePanels, errorMessage } =
+  useStudio()
 const view = ref<'home' | 'project' | 'settings'>('home'),
   importing = ref(false),
   loading = ref(true),
@@ -14,11 +15,12 @@ function show(next: 'home' | 'project' | 'settings', create = false) {
   view.value = next
   importing.value = create
 }
-async function choose(id: string) {
+async function choose(id: string, panel?: 'script' | 'preview') {
+  if (panel) workspacePanels.value[id] = panel
   importing.value = false
   view.value = 'project'
   try {
-    await select(id)
+    if (selected.value !== id || !detail.value) await select(id)
   } catch (e) {
     error.value = errorMessage(e)
   }
@@ -80,41 +82,62 @@ onBeforeUnmount(() => clearInterval(timer))
       <div v-if="projects.length" class="sidebar-projects">
         <p class="nav-label">最近项目</p>
         <div
-          v-for="p in projects.slice(0, 8)"
+          v-for="p in projects"
           :key="p.id"
-          class="sidebar-project-item"
+          class="sidebar-project-group"
           :class="{ active: selected === p.id && view === 'project' }"
         >
-          <button class="sidebar-project-main" @click="choose(p.id)">
-            <UIcon
-              :name="
-                p.kind === 'video'
-                  ? 'i-carbon-video'
-                  : p.kind === 'audio'
-                    ? 'i-carbon-music'
-                    : 'i-carbon-document'
-              "
-            /><span>{{ p.name }}</span>
-          </button>
-          <UDropdownMenu
-            :items="[
-              [
-                {
-                  label: '项目设置',
-                  icon: 'i-carbon-settings-adjust',
-                  onSelect: () => openProjectSettings(p.id)
-                }
-              ]
-            ]"
-          >
-            <UButton
-              color="neutral"
-              variant="ghost"
-              icon="i-carbon-overflow-menu-horizontal"
-              :aria-label="`${p.name} 的更多操作`"
-              size="xs"
-            />
-          </UDropdownMenu>
+          <div class="sidebar-project-item">
+            <button class="sidebar-project-main" @click="choose(p.id)">
+              <UIcon
+                :name="
+                  p.kind === 'video'
+                    ? 'i-carbon-video'
+                    : p.kind === 'audio'
+                      ? 'i-carbon-music'
+                      : 'i-carbon-document'
+                "
+              /><span>{{ p.name }}</span>
+            </button>
+            <UDropdownMenu
+              :items="[
+                [
+                  {
+                    label: '项目设置',
+                    icon: 'i-carbon-settings-adjust',
+                    onSelect: () => openProjectSettings(p.id)
+                  }
+                ]
+              ]"
+            >
+              <UButton
+                color="neutral"
+                variant="ghost"
+                icon="i-carbon-overflow-menu-horizontal"
+                :aria-label="`${p.name} 的更多操作`"
+                size="xs"
+              />
+            </UDropdownMenu>
+          </div>
+          <nav class="project-children" :aria-label="`${p.name} 的工作区`">
+            <button
+              :class="{
+                active:
+                  selected === p.id && view === 'project' && (workspacePanels[p.id] || 'script') === 'script'
+              }"
+              @click="choose(p.id, 'script')"
+            >
+              <UIcon name="i-carbon-script" />台词 / 配音
+            </button>
+            <button
+              :class="{
+                active: selected === p.id && view === 'project' && workspacePanels[p.id] === 'preview'
+              }"
+              @click="choose(p.id, 'preview')"
+            >
+              <UIcon name="i-carbon-play-outline" />预览成片
+            </button>
+          </nav>
         </div>
       </div>
       <div class="sidebar-footer">
@@ -123,7 +146,7 @@ onBeforeUnmount(() => clearInterval(timer))
         </button>
       </div>
     </aside>
-    <main class="main-content">
+    <main class="main-content" :class="{ 'project-main': view === 'project' && !importing }">
       <div v-if="error" class="page-error">
         <UAlert color="error" title="连接遇到问题" :description="error" /><UButton
           color="neutral"

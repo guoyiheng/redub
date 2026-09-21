@@ -4,9 +4,9 @@ export const stageLabels = {
   segment: '人声分段',
   transcribe: '台词识别',
   translate: '台词翻译',
-  synthesize: 'AI 配音',
+  synthesize: '生成配音',
   mix: '音轨合并',
-  preview: '视频预览'
+  preview: '合成成片'
 } as const
 export type Stage = keyof typeof stageLabels
 export type JobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'skipped'

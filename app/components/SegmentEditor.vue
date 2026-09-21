@@ -29,7 +29,7 @@ async function save() {
   if (
     await act(
       () => $fetch(`/api/segments/${draft.value.id}`, { method: 'PATCH', body: draft.value }),
-      '片段已保存'
+      '台词已保存'
     )
   )
     dirty.value = false
@@ -47,12 +47,12 @@ async function openGeneration() {
   <div class="segment-editor">
     <div class="editor-top">
       <div>
-        <h3>片段编辑</h3>
+        <h3>台词内容</h3>
         <span v-if="dirty" class="help">未保存</span>
       </div>
       <UCheckbox
         v-model="draft.enabled"
-        label="替换此片段"
+        label="用配音替换原声"
         :disabled="locked"
         @update:model-value="changed"
       />
@@ -89,7 +89,7 @@ async function openGeneration() {
         placeholder="输入原文"
         @update:model-value="changed"
     /></UFormField>
-    <UFormField label="译文 / 替换台词"
+    <UFormField label="配音台词" description="生成时优先使用此内容，留空则使用原文。"
       ><UTextarea
         v-model="draft.translation"
         class="w-full"
@@ -103,21 +103,29 @@ async function openGeneration() {
       <audio :src="mediaUrl(segment.generatedPath)" controls preload="none" />
     </div>
     <div class="editor-actions">
-      <UButton
+      <StudioAction
         color="neutral"
-        variant="outline"
-        :disabled="!dirty || locked || saving"
-        :title="locked ? '任务执行中，完成后可保存' : !dirty ? '当前没有未保存的修改' : undefined"
+        variant="ghost"
+        :reason="locked ? '任务执行中，完成后可保存' : !dirty ? '没有未保存的修改' : ''"
         :loading="saving"
         icon="i-carbon-save"
         @click="save"
-        >保存台词</UButton
-      ><UButton
-        :disabled="locked || !draft.enabled || saving"
-        :title="locked ? '任务执行中，完成后可生成' : !draft.enabled ? '请先开启替换此片段' : undefined"
+        >保存台词</StudioAction
+      >
+      <StudioAction
+        :reason="
+          locked
+            ? '任务执行中，完成后可生成'
+            : !draft.enabled
+              ? '请先开启用配音替换原声'
+              : !(draft.translation || draft.text).trim()
+                ? '请先填写台词'
+                : ''
+        "
+        :loading="saving"
         icon="i-carbon-microphone"
         @click="openGeneration"
-        >打开生成设置</UButton
+        >配音设置</StudioAction
       >
     </div>
   </div>

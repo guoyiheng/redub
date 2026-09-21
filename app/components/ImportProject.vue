@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { targetLanguages } from '../../shared/languages'
 const emit = defineEmits<{ created: [id: string]; cancel: [] }>()
 const { errorMessage } = useStudio()
 const type = ref<'file' | 'text'>('file'),
@@ -135,21 +136,7 @@ async function submit() {
         <UFormField label="项目名称" required
           ><UInput v-model="name" class="w-full" placeholder="输入项目名称" :disabled="busy" /></UFormField
         ><UFormField label="目标语言"
-          ><USelect
-            v-model="language"
-            class="w-full"
-            :items="[
-              '中文',
-              'English',
-              '日本語',
-              '한국어',
-              'Español',
-              'Français',
-              'Deutsch',
-              'Italiano',
-              'Русский'
-            ]"
-            :disabled="busy"
+          ><USelect v-model="language" class="w-full" :items="targetLanguages" :disabled="busy"
         /></UFormField>
       </div>
       <UAlert v-if="error" color="error" variant="soft" :title="error" />

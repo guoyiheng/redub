@@ -9,6 +9,7 @@ import { join, resolve } from 'node:path'
 import { createClient } from '@libsql/client'
 import { pathToFileURL } from 'node:url'
 import { ffmpeg } from '../server/services/media'
+import { defaultVoiceSettings } from '../shared/voice'
 import type { ProjectDetail, Job } from '../shared/types'
 let server: ChildProcess,
   base: string,
@@ -187,6 +188,46 @@ describe.sequential('production HTTP workflow', () => {
     expect(restored.project.paused).toBe(true)
     await api(`jobs/${job.id}/retry`, 'POST')
     await until((d) => d.jobs.every((j) => j.status === 'completed'))
+  })
+  it('batches only missing voices with shared parameters and finishes the movie', async () => {
+    const before: ProjectDetail = await api(`projects/${id}`)
+    const original = before.segments[0]!
+    const added = await api(`projects/${id}/segments`, 'POST', {
+      start: original.end,
+      end: original.end + 2,
+      text: 'Another sentence.',
+      translation: '',
+      speaker: '角色 1',
+      enabled: true
+    })
+    const voice = { ...defaultVoiceSettings(), aiUseReference: false, aiPrompt: '自然地说', aiSpeechRate: 10 }
+    await expect(
+      api(`projects/${id}/batch`, 'POST', { action: 'synthesize', voice: { ...voice, aiSpeechRate: 101 } })
+    ).rejects.toThrow('400')
+    const created: Job[] = await api(`projects/${id}/batch`, 'POST', {
+      action: 'synthesize',
+      scope: 'missing',
+      finish: true,
+      voice
+    })
+    expect(created.map((j) => j.stage)).toEqual(['synthesize', 'mix', 'preview'])
+    expect(created[0]!.segmentId).toBe(added.id)
+    const result = await until((d) =>
+      created.every((j) => d.jobs.find((k) => k.id === j.id)?.status === 'completed')
+    )
+    expect(result.segments[0]!.generatedPath).toBe(original.generatedPath)
+    expect(result.segments[1]!.aiPrompt).toBe('自然地说')
+    expect(result.segments[1]!.aiSpeechRate).toBe(10)
+    expect(result.segments[1]!.generatedPath).toBeTruthy()
+    expect(result.project.outputPath).toBeTruthy()
+  })
+  it('keeps results when normalizing an existing target language label', async () => {
+    const before: ProjectDetail = await api(`projects/${id}`)
+    await api(`projects/${id}`, 'PATCH', { ...before.project, targetLanguage: 'English' })
+    const original = (await api(`projects/${id}`)).segments[0]
+    await api(`segments/${original.id}`, 'PATCH', { ...original, translation: 'Kept translation' })
+    await api(`projects/${id}`, 'PATCH', { ...before.project, targetLanguage: '英语' })
+    expect((await api(`projects/${id}`)).segments[0].translation).toBe('Kept translation')
   })
   it('serves signed web updates immediately without restarting the local API', async () => {
     const { installWebUpdate } = createRequire(import.meta.url)('../electron/web-update.cjs')
