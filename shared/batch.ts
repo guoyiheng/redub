@@ -34,9 +34,10 @@ export function batchPlan(
   }
   if (input.action === 'render') {
     if (!lines.length) throw new Error('请先添加台词')
-    if (enabled.some((s) => !s.generatedPath))
-      throw new Error('请先生成所有需要替换的配音，或关闭对应替换开关')
-    if (project.kind !== 'text' && (!project.audioPath || (enabled.length && !project.backgroundPath)))
+    if (project.kind === 'text' && enabled.some((s) => !s.generatedPath))
+      throw new Error('文本项目没有原声，请先生成所有需要替换的配音')
+    const generated = enabled.filter((s) => s.generatedPath)
+    if (project.kind !== 'text' && (!project.audioPath || (generated.length && !project.backgroundPath)))
       throw new Error('请先分离人声与背景音')
     return [{ stage: 'mix' }, { stage: 'preview' }]
   }

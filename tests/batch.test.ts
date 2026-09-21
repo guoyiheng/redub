@@ -91,7 +91,7 @@ describe('批量处理范围与事务', () => {
     expect((await getSegments(id))[0]!.generatedPath).toBe('ready.mp3')
     expect(await db.select().from(jobs).where(eq(jobs.projectId, id))).toHaveLength(0)
   })
-  it('已有台词不会重新分段；缺少配音不会直接合成', async () => {
+  it('已有台词不会重新分段；文本项目缺少配音不会直接合成', async () => {
     const id = await fixture()
     const project = await getProject(id),
       lines = await getSegments(id)
@@ -99,6 +99,18 @@ describe('批量处理范围与事务', () => {
       batchPlan({ ...project, kind: 'audio' }, lines, { action: 'prepare', scope: 'all', finish: false })
     ).toThrow('覆盖')
     expect(() => batchPlan(project, lines, { action: 'render', scope: 'all', finish: false })).toThrow('所有')
+  })
+  it('媒体项目允许部分配音成片，未生成片段保留原声', async () => {
+    const id = await fixture()
+    const project = {
+      ...(await getProject(id)),
+      kind: 'audio' as const,
+      audioPath: 'original.wav',
+      backgroundPath: 'background.wav'
+    }
+    expect(
+      batchPlan(project, await getSegments(id), { action: 'render', scope: 'all', finish: false })
+    ).toEqual([{ stage: 'mix' }, { stage: 'preview' }])
   })
 })
 describe('原始音频试听', () => {

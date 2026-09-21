@@ -10,6 +10,8 @@ import { getProject, getSegments, getChannel } from '../server/services/store'
 import { executeJob } from '../server/services/pipeline'
 import { synthesizeSpeech, translateLines } from '../server/services/providers'
 import type { Job, Stage } from '../shared/types'
+import { getPreviewTracks } from '../server/services/preview-tracks'
+import { exportProject } from '../server/services/export'
 
 let id: string, dir: string, voice: Buffer
 const progress = async () => {}
@@ -188,5 +190,49 @@ describe.sequential('媒体处理与服务协议', () => {
         join(dir, 'invalid.mp3')
       )
     ).rejects.toThrow('invalid reference')
+  })
+  it('部分配音保留未生成和关闭替换的原声，预览与成片混音一致', async () => {
+    const lines = await getSegments(id)
+    await db.update(segments).set({ generatedPath: lines[0]!.generatedPath }).where(eq(segments.id, 'line-2'))
+    await db.insert(segments).values({
+      id: `${id}-missing`,
+      projectId: id,
+      start: 3,
+      end: 3.5,
+      text: '未配音原文',
+      translation: '不应使用的译文',
+      enabled: true
+    })
+    await run('mix')
+    const project = await getProject(id)
+    const tracks = await getPreviewTracks(id)
+    expect(tracks.missingDubs).toBe(1)
+    expect(tracks.replacementRanges).toEqual([{ start: 1, end: 2 }])
+    for (const [name, path] of [
+      ['partial', project.mixedPath!],
+      ['optimized', tracks.tracks.optimized.path!]
+    ])
+      await ffmpeg(['-i', assetPath(path), '-f', 's16le', '-acodec', 'pcm_s16le', join(dir, `${name}.pcm`)])
+    const original = await readFile(join(dir, 'original.pcm'))
+    const partial = await readFile(join(dir, 'partial.pcm'))
+    const optimized = await readFile(join(dir, 'optimized.pcm'))
+    const bytesPerSecond = 48000 * 2 * 2
+    expect(partial.equals(optimized)).toBe(true)
+    expect(
+      partial
+        .subarray(2 * bytesPerSecond, 4 * bytesPerSecond)
+        .equals(original.subarray(2 * bytesPerSecond, 4 * bytesPerSecond))
+    ).toBe(true)
+    const subtitles = await readFile(join(dir, 'subtitles.srt'), 'utf8')
+    expect(subtitles).toContain('未配音原文')
+    expect(subtitles).not.toContain('不应使用的译文')
+    const output = await exportProject(id, {
+      optimized: true,
+      original: false,
+      background: false,
+      dubbed: false,
+      format: 'mkv'
+    })
+    expect((await probe(assetPath(output.path))).duration).toBeCloseTo(4, 2)
   })
 })

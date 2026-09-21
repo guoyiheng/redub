@@ -256,9 +256,9 @@ export async function executeJob(job: Job, progress: (value: number, message: st
     const lines = await getSegments(p.id)
     const duration = p.kind === 'text' ? Math.max(0, ...lines.map((s) => s.end)) : p.duration
     if (duration <= 0) throw new Error('没有可合并的音轨')
-    const enabled = lines.filter((s) => s.enabled)
-    if (enabled.some((s) => !s.generatedPath))
-      throw new Error('部分启用片段尚未生成配音，请完成配音或关闭这些片段的替换开关')
+    if (p.kind === 'text' && lines.some((s) => s.enabled && !s.generatedPath))
+      throw new Error('文本项目没有原声，请先生成所有需要替换的配音')
+    const enabled = lines.filter((s) => s.enabled && s.generatedPath)
     if (p.kind !== 'text' && (!p.audioPath || (enabled.length && !p.backgroundPath)))
       throw new Error('缺少原始或背景音轨，请完成人声与背景分离')
     const chunks: string[] = []
@@ -346,7 +346,7 @@ export async function executeJob(job: Job, progress: (value: number, message: st
       subtitleText(
         lines
           .filter((s) => p.kind !== 'text' || s.enabled)
-          .map((s) => ({ ...s, text: s.enabled ? s.translation || s.text : s.text }))
+          .map((s) => ({ ...s, text: s.enabled && s.generatedPath ? s.translation || s.text : s.text }))
       )
     )
     await update({ mixedPath: mixed, duration })

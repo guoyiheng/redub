@@ -128,8 +128,11 @@ describe('预览音轨与无损导出', () => {
       return Math.hypot(re, im) / samples
     }
     expect(amplitude(0.1, 0.5, 330)).toBeGreaterThan(0.02)
+    expect(amplitude(0.1, 0.5, 110)).toBeLessThan(0.001)
+    expect(amplitude(0.1, 0.5, 880)).toBeLessThan(0.001)
     expect(amplitude(1.1, 0.5, 110)).toBeGreaterThan(0.02)
     expect(amplitude(1.1, 0.5, 880)).toBeGreaterThan(0.02)
+    expect(amplitude(1.1, 0.5, 330)).toBeLessThan(0.001)
   })
 
   it('按勾选音轨合并并复制原视频流导出 MKV', async () => {

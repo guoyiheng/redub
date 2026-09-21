@@ -408,7 +408,9 @@ export async function getPreviewTracks(projectId: string): Promise<PreviewTracks
     reason: optimizedAvailable
       ? dubbedAvailable
         ? missingDubs
-          ? `还有 ${missingDubs} 句未生成，这些片段会保留原声`
+          ? originalAvailable
+            ? `还有 ${missingDubs} 句未生成，这些片段会保留原声`
+            : `还有 ${missingDubs} 句未生成，这些片段保持静音`
           : undefined
         : '尚未生成配音，当前等同原始音轨'
       : '还没有可合成的音轨'
