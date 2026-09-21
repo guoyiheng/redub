@@ -25,7 +25,15 @@ interface Health {
 interface DesktopUpdateState {
   currentVersion: string
   state:
-    'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'downloaded' | 'unsupported' | 'error'
+    | 'idle'
+    | 'checking'
+    | 'current'
+    | 'available'
+    | 'downloading'
+    | 'downloaded'
+    | 'installing'
+    | 'unsupported'
+    | 'error'
   availableVersion: string | null
   progress: number | null
   message: string
@@ -56,12 +64,14 @@ const desktopUpdate = ref<DesktopUpdateState>({
   configured: false
 })
 let stopUpdateListener: (() => void) | undefined
+const updateRequestBusy = ref(false)
 const desktop = computed(() => import.meta.client && !!(window as any).redub)
 const channelTitle = computed(() => (selected.value ? '编辑渠道' : '添加渠道'))
 const engineReady = computed(() => !!health.value?.ffmpeg && !!health.value?.ffprobe)
 const modelReady = computed(() => !!health.value?.models)
 const updateBusy = computed(
-  () => desktopUpdate.value.state === 'checking' || desktopUpdate.value.state === 'downloading'
+  () =>
+    updateRequestBusy.value || ['checking', 'downloading', 'installing'].includes(desktopUpdate.value.state)
 )
 
 const sections: {
@@ -149,15 +159,16 @@ async function updateDesktop(action: 'status' | 'check' | 'download' | 'install'
     desktopBusy.value = false
     return
   }
-  desktopBusy.value = true
+  if (updateBusy.value) return
+  updateRequestBusy.value = true
   try {
     const result = await (window as any).redub.update(action)
     if (result && typeof result === 'object') desktopUpdate.value = result
-    else if (typeof result === 'string') desktopStatus.value = result
   } catch (e) {
-    desktopStatus.value = String(e)
+    desktopUpdate.value = { ...desktopUpdate.value, message: `更新操作失败：${String(e)}` }
+  } finally {
+    updateRequestBusy.value = false
   }
-  desktopBusy.value = false
 }
 onMounted(async () => {
   check()
@@ -434,7 +445,7 @@ onBeforeUnmount(() => stopUpdateListener?.())
           <div class="settings-card-header">
             <div>
               <h2>桌面应用</h2>
-              <p class="help">检查版本并在确认后下载、重启安装。更新不会在后台自动安装。</p>
+              <p class="help">检查新版本，下载后重启安装。</p>
             </div>
           </div>
           <div class="desktop-update-card">
@@ -456,28 +467,36 @@ onBeforeUnmount(() => stopUpdateListener?.())
                 <strong>正在下载 v{{ desktopUpdate.availableVersion }}</strong>
                 <span>{{ desktopUpdate.progress ?? 0 }}%</span>
               </div>
-              <div class="desktop-progress" aria-label="更新下载进度">
+              <div
+                class="desktop-progress"
+                role="progressbar"
+                aria-label="更新下载进度"
+                :aria-valuenow="desktopUpdate.progress ?? 0"
+                :aria-valuemin="0"
+                :aria-valuemax="100"
+              >
                 <span :style="{ width: `${desktopUpdate.progress ?? 0}%` }" />
               </div>
             </div>
 
-            <div v-else-if="desktopUpdate.state === 'downloaded'" class="desktop-update-action">
+            <div
+              v-else-if="['downloaded', 'installing'].includes(desktopUpdate.state)"
+              class="desktop-update-action"
+            >
               <div>
                 <strong>新版本已准备好</strong>
                 <span>重启后会完成安装，未保存的操作请先处理。</span>
               </div>
-              <UButton color="neutral" @click="updateDesktop('install')">重启并安装</UButton>
+              <UButton color="neutral" :loading="updateBusy" @click="updateDesktop('install')"
+                >重启并安装</UButton
+              >
             </div>
 
             <div v-else class="desktop-update-action">
-              <div>
-                <strong>检查是否有新版本</strong>
-                <span>只有发现新版本后，才会显示下载按钮。</span>
-              </div>
               <UButton
                 color="neutral"
                 variant="outline"
-                :loading="desktopUpdate.state === 'checking'"
+                :loading="updateBusy"
                 :disabled="desktopUpdate.state === 'unsupported'"
                 @click="updateDesktop('check')"
                 >检查更新</UButton

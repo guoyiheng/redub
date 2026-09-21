@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, utilityProcess, session, dialog, shell } = require('electron')
 const { autoUpdater } = require('electron-updater')
+const { createDesktopUpdater } = require('./desktop-update.cjs')
 const { randomBytes } = require('node:crypto')
 const { mkdirSync, existsSync, writeFileSync, appendFileSync } = require('node:fs')
 const { join, resolve } = require('node:path')
@@ -10,17 +11,7 @@ let mainWindow,
   server,
   localOrigin,
   quitting = false,
-  updateReady = false,
-  desktopUpdateState = {
-    currentVersion: '',
-    state: 'idle',
-    availableVersion: null,
-    progress: null,
-    message: '',
-    packaged: false,
-    configured: false
-  },
-  desktopDownload
+  desktopUpdater
 const devUrl = process.env.REDUB_DEV_URL
 const root = app.isPackaged ? process.resourcesPath : resolve(__dirname, '..')
 if (!app.requestSingleInstanceLock()) app.quit()
@@ -46,11 +37,6 @@ function freePort() {
       socket.close(() => resolvePort(port))
     })
   })
-}
-function publishUpdateState(patch = {}) {
-  desktopUpdateState = { ...desktopUpdateState, ...patch }
-  mainWindow?.webContents.send('redub:update-status', desktopUpdateState)
-  return desktopUpdateState
 }
 async function start() {
   const userDir = app.getPath('userData')
@@ -135,67 +121,14 @@ async function start() {
     }
     if (!ready) throw new Error('本地服务启动超时，请检查本地 server.log')
   }
-  desktopUpdateState = {
-    ...desktopUpdateState,
+  desktopUpdater = createDesktopUpdater({
+    autoUpdater,
     currentVersion: app.getVersion(),
     packaged: app.isPackaged,
-    configured: !!process.env.REDUB_UPDATE_URL
-  }
+    updateUrl: process.env.REDUB_UPDATE_URL,
+    onState: (state) => mainWindow?.webContents.send('redub:update-status', state)
+  })
   createWindow()
-  autoUpdater.autoDownload = false
-  autoUpdater.autoInstallOnAppQuit = false
-  autoUpdater.on('checking-for-update', () =>
-    publishUpdateState({
-      state: 'checking',
-      availableVersion: null,
-      progress: null,
-      message: '正在检查更新…'
-    })
-  )
-  autoUpdater.on('update-available', (info) =>
-    publishUpdateState({
-      state: 'available',
-      availableVersion: info.version,
-      progress: null,
-      message: `发现新版本 ${info.version}，可以下载更新。`
-    })
-  )
-  autoUpdater.on('update-not-available', () =>
-    publishUpdateState({
-      state: 'current',
-      availableVersion: null,
-      progress: null,
-      message: '当前已是最新版本。'
-    })
-  )
-  autoUpdater.on('download-progress', (progress) => {
-    const percent = Math.round(progress.percent)
-    publishUpdateState({
-      state: 'downloading',
-      progress: percent,
-      message: `正在下载更新 ${percent}%`
-    })
-  })
-  autoUpdater.on('update-downloaded', (info) => {
-    updateReady = true
-    publishUpdateState({
-      state: 'downloaded',
-      availableVersion: info.version,
-      progress: 100,
-      message: `版本 ${info.version} 已下载，可以重启安装。`
-    })
-  })
-  autoUpdater.on('error', () =>
-    publishUpdateState({
-      state: 'error',
-      progress: null,
-      message: '更新失败，请检查网络后重试。'
-    })
-  )
-  if (process.env.REDUB_UPDATE_URL) {
-    if (!process.env.REDUB_UPDATE_URL.startsWith('https://')) throw new Error('更新地址必须使用 HTTPS')
-    autoUpdater.setFeedURL({ provider: 'generic', url: process.env.REDUB_UPDATE_URL })
-  }
 }
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -241,71 +174,7 @@ ipcMain.handle('redub:update', async (event, action) => {
     if (result.updated) mainWindow?.reload()
     return result.message
   }
-  if (action === 'status') return desktopUpdateState
-  if (!process.env.REDUB_UPDATE_URL)
-    return publishUpdateState({
-      state: 'unsupported',
-      message: '当前安装包未配置桌面更新源，请联系发布者。'
-    })
-  if (!app.isPackaged)
-    return publishUpdateState({
-      state: 'unsupported',
-      message: '开发模式不执行桌面更新，请使用安装版验证。'
-    })
-  if (action === 'check') {
-    try {
-      const result = await autoUpdater.checkForUpdates()
-      const version = result?.updateInfo?.version
-      if (version && version !== app.getVersion())
-        return publishUpdateState({
-          state: 'available',
-          availableVersion: version,
-          progress: null,
-          message: `发现新版本 ${version}，可以下载更新。`
-        })
-      return publishUpdateState({
-        state: 'current',
-        availableVersion: null,
-        progress: null,
-        message: '当前已是最新版本。'
-      })
-    } catch {
-      return publishUpdateState({
-        state: 'error',
-        progress: null,
-        message: '检查更新失败，请检查网络后重试。'
-      })
-    }
-  }
-  if (action === 'download') {
-    if (desktopUpdateState.state === 'downloaded') return desktopUpdateState
-    if (desktopUpdateState.state !== 'available' || !desktopUpdateState.availableVersion)
-      return publishUpdateState({ state: 'error', message: '请先检查更新并确认有新版本。' })
-    try {
-      if (!desktopDownload)
-        desktopDownload = autoUpdater.downloadUpdate().finally(() => {
-          desktopDownload = undefined
-        })
-      await desktopDownload
-      return desktopUpdateState.state === 'downloaded'
-        ? desktopUpdateState
-        : publishUpdateState({ state: 'downloaded', progress: 100, message: '更新已下载，可以重启安装。' })
-    } catch {
-      return publishUpdateState({
-        state: 'error',
-        progress: null,
-        message: '下载更新失败，请检查网络后重试。'
-      })
-    }
-  }
-  if (action === 'install') {
-    if (!updateReady || desktopUpdateState.state !== 'downloaded')
-      return publishUpdateState({ state: 'error', message: '请先下载更新，再重启安装。' })
-    quitting = true
-    autoUpdater.quitAndInstall()
-    return publishUpdateState({ message: '正在重启并安装…' })
-  }
-  throw new Error('未知更新操作')
+  return desktopUpdater.update(action)
 })
 app.on('activate', () => {
   if (!mainWindow && localOrigin) createWindow()
