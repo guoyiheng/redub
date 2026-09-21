@@ -147,16 +147,39 @@ export async function localModel(action: 'segment' | 'transcribe', input: object
 export async function mediaHealth() {
   const check = async (command: string, args: string[]) => {
     try {
-      await runProcess(command, args, 15000)
-      return true
+      const output = await runProcess(command, args, 15000)
+      return { ready: true, output: output.trim().split(/\r?\n/)[0] || '' }
     } catch {
-      return false
+      return { ready: false, output: '' }
     }
   }
-  const [ffmpegReady, ffprobeReady, modelsReady] = await Promise.all([
+  const [ffmpegCheck, ffprobeCheck, pythonCheck, demucsCheck, whisperCheck, openccCheck] = await Promise.all([
     check(binary('ffmpeg'), ['-version']),
     check(binary('ffprobe'), ['-version']),
-    check(python(), ['-c', 'import demucs, faster_whisper, opencc'])
+    check(python(), ['-c', 'import platform; print(platform.python_version())']),
+    check(python(), ['-c', 'import demucs']),
+    check(python(), ['-c', 'import faster_whisper']),
+    check(python(), ['-c', 'import opencc'])
   ])
-  return { ffmpeg: ffmpegReady, ffprobe: ffprobeReady, models: modelsReady }
+  const modelStatus = {
+    demucs: demucsCheck.ready,
+    fasterWhisper: whisperCheck.ready,
+    opencc: openccCheck.ready
+  }
+  return {
+    ffmpeg: ffmpegCheck.ready,
+    ffprobe: ffprobeCheck.ready,
+    models: Object.values(modelStatus).every(Boolean),
+    versions: {
+      ffmpeg: ffmpegCheck.output,
+      ffprobe: ffprobeCheck.output,
+      python: pythonCheck.output ? `Python ${pythonCheck.output}` : ''
+    },
+    modelStatus,
+    paths: {
+      ffmpeg: binary('ffmpeg'),
+      ffprobe: binary('ffprobe'),
+      python: python()
+    }
+  }
 }
