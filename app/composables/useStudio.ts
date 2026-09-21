@@ -66,6 +66,7 @@ export function useStudio() {
     refresh,
     select,
     act,
+    toast,
     errorMessage
   }
 }

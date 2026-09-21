@@ -1,14 +1,50 @@
 <script setup lang="ts">
 import type { BatchInput } from '../../shared/batch'
+import type { ExportResult } from '../../shared/export'
+import type { PreviewTracks } from '../../shared/preview'
 import { languageOptions, normalizeLanguage } from '../../shared/languages'
-const { detail, channels, settingsProject, workspacePanels, act } = useStudio()
+
+type PreviewTrackKey = 'original' | 'background' | 'dubbed'
+type ExportFormat = 'mkv' | 'mp4' | 'wav'
+const trackKeys: PreviewTrackKey[] = ['original', 'background', 'dubbed']
+const trackLabels: Record<PreviewTrackKey, string> = {
+  original: '原始音轨',
+  background: '背景音',
+  dubbed: '配音'
+}
+const trackDescriptions: Record<PreviewTrackKey, string> = {
+  original: '原素材中的人声与环境声',
+  background: '分离后保留的环境声与音乐',
+  dubbed: '按时间轴对齐后的新配音'
+}
+const { detail, channels, settingsProject, workspacePanels, act, toast, errorMessage } = useStudio()
 const batchAction = ref<BatchInput['action']>('synthesize')
 const current = ref<string>()
-const mode = ref<'original' | 'dubbed'>('original')
 const time = ref(0)
-const player = ref<HTMLMediaElement>()
+const playing = ref(false)
+const clockPlayer = ref<HTMLMediaElement>()
+const originalAudio = ref<HTMLAudioElement>()
+const backgroundAudio = ref<HTMLAudioElement>()
+const dubbedAudio = ref<HTMLAudioElement>()
+const previewTracks = ref<PreviewTracks>()
+const previewLoading = ref(false)
+const previewError = ref('')
+const exporting = ref(false)
+const trackEnabled = reactive<Record<PreviewTrackKey, boolean>>({
+  original: false,
+  background: true,
+  dubbed: true
+})
+const exportTracks = reactive<Record<PreviewTrackKey, boolean>>({
+  original: false,
+  background: true,
+  dubbed: true
+})
+const exportOriginalMode = ref<'preserve-gaps' | 'full'>('preserve-gaps')
+const exportFormat = ref<ExportFormat>('mkv')
+let pendingSeek: number | undefined
+let previewRequest = 0
 const showOptions = ref(false),
-  showTimeline = ref(false),
   showEditor = ref(false),
   showGeneration = ref(false),
   showBatch = ref(false),
@@ -25,9 +61,114 @@ const locked = computed(
 const completed = computed(() => lines.value.filter((s) => s.enabled && s.generatedPath).length)
 const enabledCount = computed(() => lines.value.filter((s) => s.enabled).length)
 const totalDuration = computed(() => Math.max(project.value.duration, ...lines.value.map((s) => s.end), 1))
-const previewSource = computed(() =>
-  mediaUrl(mode.value === 'original' ? project.value.sourcePath : project.value.outputPath)
+const previewDuration = computed(() => previewTracks.value?.duration || totalDuration.value)
+const progress = computed(() =>
+  Math.min(100, Math.max(0, (time.value / Math.max(previewDuration.value, 0.001)) * 100))
 )
+const previewSignature = computed(() =>
+  JSON.stringify({
+    id: project.value.id,
+    sourcePath: project.value.sourcePath,
+    audioPath: project.value.audioPath,
+    backgroundPath: project.value.backgroundPath,
+    duration: project.value.duration,
+    segments: lines.value.map((line) => ({
+      id: line.id,
+      start: line.start,
+      end: line.end,
+      enabled: line.enabled,
+      generatedPath: line.generatedPath
+    }))
+  })
+)
+const clockSource = computed(() => {
+  if (project.value.kind === 'video' || project.value.kind === 'audio')
+    return project.value.sourcePath || project.value.audioPath
+  return (
+    previewTracks.value?.tracks.background.path ||
+    previewTracks.value?.tracks.dubbed.path ||
+    previewTracks.value?.tracks.original.path ||
+    null
+  )
+})
+const playbackPaths = computed<Record<PreviewTrackKey, string | null>>(() => {
+  const tracks = previewTracks.value?.tracks
+  if (!tracks) return { original: null, background: null, dubbed: null }
+  const useOriginalGaps =
+    trackEnabled.dubbed && !!previewTracks.value?.replacementRanges.length && !!tracks.original.alternatePath
+  return {
+    original: useOriginalGaps ? tracks.original.alternatePath! : tracks.original.path,
+    background: tracks.background.path,
+    dubbed: tracks.dubbed.path
+  }
+})
+const audioElements = computed<Record<PreviewTrackKey, HTMLAudioElement | undefined>>(() => ({
+  original: originalAudio.value,
+  background: backgroundAudio.value,
+  dubbed: dubbedAudio.value
+}))
+function downsample(values: number[], count = 96) {
+  if (!values.length) return Array.from({ length: count }, () => 0.06)
+  const result = Array.from({ length: count }, () => 0)
+  for (let index = 0; index < count; index++) {
+    const start = Math.floor((index * values.length) / count)
+    const end = Math.max(start + 1, Math.floor(((index + 1) * values.length) / count))
+    let peak = 0
+    for (let cursor = start; cursor < end && cursor < values.length; cursor++)
+      peak = Math.max(peak, values[cursor] || 0)
+    result[index] = Math.max(0.04, peak)
+  }
+  return result
+}
+const waveforms = computed<Record<PreviewTrackKey, number[]>>(() => {
+  const tracks = previewTracks.value?.tracks
+  const originalPeaks =
+    trackEnabled.dubbed && tracks?.original.alternatePeaks?.length
+      ? tracks.original.alternatePeaks
+      : tracks?.original.peaks
+  return {
+    original: downsample(originalPeaks || []),
+    background: downsample(tracks?.background.peaks || []),
+    dubbed: downsample(tracks?.dubbed.peaks || [])
+  }
+})
+const exportFormatItems = computed(() =>
+  project.value.kind === 'video'
+    ? [
+        { label: 'MKV · FLAC 无损音频（推荐）', value: 'mkv' },
+        { label: 'MP4 · AAC 320k（兼容播放器）', value: 'mp4' }
+      ]
+    : [{ label: 'WAV · PCM 16 位无损', value: 'wav' }]
+)
+const exportOriginalModeItems = [
+  { label: '保留未替换原声（推荐）', value: 'preserve-gaps' },
+  { label: '完整原声（可能与新配音重叠）', value: 'full' }
+]
+const selectedExportCount = computed(() => trackKeys.filter((key) => exportTracks[key]).length)
+const exportSummary = computed(() => {
+  const names = trackKeys.filter((key) => exportTracks[key]).map((key) => trackLabels[key])
+  const format = { mkv: 'MKV / FLAC 无损', mp4: 'MP4 / AAC 320k', wav: 'WAV / PCM 无损' }[exportFormat.value]
+  return names.length ? `${names.join(' + ')} → ${format}` : '尚未选择音轨'
+})
+const exportWarning = computed(() => {
+  if (exportTracks.original && exportTracks.background && exportTracks.dubbed)
+    return '原声与背景音同时合并会叠加未替换区间的环境声；正式导出推荐“背景音 + 配音”。'
+  if (exportTracks.original && exportTracks.dubbed && exportOriginalMode.value === 'full')
+    return '完整原声会在替换区间保留旧人声，可能和新配音重叠。'
+  return ''
+})
+const exportReason = computed(() => {
+  if (exporting.value) return '正在导出，请稍候'
+  if (locked.value) return '请等待当前项目任务完成'
+  if (!previewTracks.value) return '预览音轨尚未准备好'
+  if (!selectedExportCount.value) return '至少选择一条音轨'
+  if (exportTracks.dubbed && previewTracks.value.missingDubs > 0)
+    return `还有 ${previewTracks.value.missingDubs} 句配音未生成，暂时不能导出配音音轨`
+  for (const key of trackKeys)
+    if (exportTracks[key] && !previewTracks.value.tracks[key].path)
+      return `所选音轨「${trackLabels[key]}」尚未准备好`
+  return ''
+})
 const addReason = computed(() =>
   locked.value
     ? '请等待当前项目任务完成'
@@ -50,11 +191,225 @@ function openBatch(action: BatchInput['action']) {
   batchAction.value = action
   showBatch.value = true
 }
+function audioFor(key: PreviewTrackKey) {
+  return audioElements.value[key]
+}
+function trackAvailable(key: PreviewTrackKey) {
+  return !!previewTracks.value?.tracks[key].path
+}
+function hasSource(element: HTMLAudioElement | undefined) {
+  return !!element?.getAttribute('src')
+}
+function syncAudios(target = clockPlayer.value?.currentTime || 0) {
+  for (const key of trackKeys) {
+    const element = audioFor(key)
+    if (!hasSource(element) || element!.readyState === 0) continue
+    if (Math.abs(element!.currentTime - target) > 0.12) element!.currentTime = target
+  }
+}
+async function playAudios() {
+  const clock = clockPlayer.value
+  if (!clock) return
+  syncAudios(clock.currentTime)
+  await Promise.all(
+    trackKeys.map(async (key) => {
+      if (!trackEnabled[key]) return
+      const element = audioFor(key)
+      if (!hasSource(element)) return
+      try {
+        await element!.play()
+      } catch {
+        /* The browser may require the next explicit user interaction. */
+      }
+    })
+  )
+}
+function onClockLoaded() {
+  const clock = clockPlayer.value
+  if (!clock) return
+  if (pendingSeek !== undefined) {
+    clock.currentTime = Math.min(pendingSeek, previewDuration.value)
+    pendingSeek = undefined
+  }
+  syncAudios(clock.currentTime)
+}
+function onClockPlay() {
+  playing.value = true
+  syncAudios()
+  void playAudios()
+}
+function onClockPause() {
+  playing.value = false
+  for (const key of trackKeys) audioFor(key)?.pause()
+}
+function onClockEnded() {
+  playing.value = false
+  time.value = previewDuration.value
+  for (const key of trackKeys) audioFor(key)?.pause()
+}
+function onClockTimeUpdate() {
+  const clock = clockPlayer.value
+  if (!clock) return
+  time.value = clock.currentTime
+  if (!playing.value) return
+  syncAudios(clock.currentTime)
+  for (const key of trackKeys) {
+    if (!trackEnabled[key]) continue
+    const element = audioFor(key)
+    if (hasSource(element) && element!.paused) void element!.play().catch(() => {})
+  }
+}
+function onClockSeeking() {
+  const clock = clockPlayer.value
+  if (!clock) return
+  time.value = clock.currentTime
+  syncAudios(clock.currentTime)
+}
+function seekTo(value: number) {
+  const target = Math.max(0, Math.min(previewDuration.value, value))
+  time.value = target
+  const clock = clockPlayer.value
+  if (!clock || clock.readyState === 0) {
+    pendingSeek = target
+    return
+  }
+  clock.currentTime = target
+  syncAudios(target)
+}
+function togglePlayback() {
+  const clock = clockPlayer.value
+  if (!clock) return
+  if (clock.paused)
+    void clock.play().catch(() => {
+      toast.add({ title: '暂时无法播放', description: '请先等待音轨准备完成', color: 'warning' })
+    })
+  else clock.pause()
+}
+function pauseAll() {
+  clockPlayer.value?.pause()
+  for (const key of trackKeys) audioFor(key)?.pause()
+  playing.value = false
+}
+function seekFromLane(event: MouseEvent) {
+  const lane = event.currentTarget as HTMLElement
+  const rect = lane.getBoundingClientRect()
+  if (!rect.width) return
+  seekTo(((event.clientX - rect.left) / rect.width) * previewDuration.value)
+}
+function setTrackEnabled(key: PreviewTrackKey, value: boolean | 'indeterminate') {
+  const enabled = value === true
+  trackEnabled[key] = enabled
+  const element = audioFor(key)
+  if (!enabled) element?.pause()
+  else
+    void nextTick(() => {
+      syncAudios()
+      if (playing.value) void playAudios()
+    })
+}
+function setExportTrack(key: PreviewTrackKey, value: boolean | 'indeterminate') {
+  exportTracks[key] = value === true
+}
+function trackState(key: PreviewTrackKey) {
+  const track = previewTracks.value?.tracks[key]
+  if (!track?.path) return track?.reason || '尚未准备'
+  if (!trackEnabled[key]) return '已关闭'
+  if (key === 'original')
+    return trackEnabled.dubbed && previewTracks.value?.replacementRanges.length
+      ? '替换区间已静音'
+      : '完整原声'
+  if (key === 'dubbed' && previewTracks.value?.missingDubs)
+    return `${previewTracks.value.missingDubs} 句未生成`
+  return '参与试听'
+}
+function applyRecommendedExport() {
+  exportTracks.original = false
+  exportTracks.background = !!previewTracks.value?.tracks.background.path
+  exportTracks.dubbed = !!previewTracks.value?.tracks.dubbed.path
+  exportOriginalMode.value = 'preserve-gaps'
+  exportFormat.value = project.value.kind === 'video' ? 'mkv' : 'wav'
+}
+function applyDubbedOnlyExport() {
+  exportTracks.original = false
+  exportTracks.background = false
+  exportTracks.dubbed = !!previewTracks.value?.tracks.dubbed.path
+}
+function applyOriginalGapsExport() {
+  exportTracks.original = !!previewTracks.value?.tracks.original.path
+  exportTracks.background = false
+  exportTracks.dubbed = !!previewTracks.value?.tracks.dubbed.path
+  exportOriginalMode.value = 'preserve-gaps'
+}
+async function exportFilm() {
+  if (exportReason.value || exporting.value) return
+  exporting.value = true
+  try {
+    const result = await $fetch<ExportResult>(`/api/projects/${project.value.id}/export`, {
+      method: 'POST',
+      body: {
+        original: exportTracks.original,
+        background: exportTracks.background,
+        dubbed: exportTracks.dubbed,
+        originalMode: exportOriginalMode.value,
+        format: exportFormat.value
+      }
+    })
+    const link = document.createElement('a')
+    link.href = mediaUrl(result.path, true)
+    link.download = result.filename
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    toast.add({ title: '成片已导出', description: result.filename, color: 'success' })
+  } catch (error) {
+    toast.add({ title: '导出失败', description: errorMessage(error), color: 'error', duration: 9000 })
+  } finally {
+    exporting.value = false
+  }
+}
+async function loadPreviewTracks() {
+  const request = ++previewRequest
+  previewLoading.value = true
+  previewError.value = ''
+  try {
+    const result = await $fetch<PreviewTracks>(`/api/projects/${project.value.id}/preview-tracks`)
+    if (request !== previewRequest) return
+    const changed = previewTracks.value?.revision !== result.revision
+    previewTracks.value = result
+    if (changed) {
+      const hasOriginal = !!result.tracks.original.path
+      const hasBackground = !!result.tracks.background.path
+      const hasDubbed = !!result.tracks.dubbed.path
+      trackEnabled.original = !hasBackground && !hasDubbed && hasOriginal
+      trackEnabled.background = hasBackground
+      trackEnabled.dubbed = hasDubbed
+      exportTracks.original = false
+      exportTracks.background = hasBackground
+      exportTracks.dubbed = hasDubbed
+      exportOriginalMode.value = 'preserve-gaps'
+      exportFormat.value = project.value.kind === 'video' ? 'mkv' : 'wav'
+    } else {
+      for (const key of trackKeys) {
+        if (!result.tracks[key].path) {
+          trackEnabled[key] = false
+          exportTracks[key] = false
+        }
+      }
+    }
+    await nextTick()
+    syncAudios()
+  } catch (error) {
+    if (request === previewRequest) previewError.value = errorMessage(error)
+  } finally {
+    if (request === previewRequest) previewLoading.value = false
+  }
+}
 watch(
   () => project.value.id,
   () => {
     current.value = undefined
-    mode.value = project.value.kind === 'text' ? 'dubbed' : 'original'
+    previewTracks.value = undefined
+    pauseAll()
   },
   { immediate: true }
 )
@@ -72,6 +427,27 @@ watch(
     settingsProject.value = null
   },
   { immediate: true }
+)
+watch(
+  [panel, previewSignature],
+  ([currentPanel]) => {
+    if (currentPanel === 'preview') void loadPreviewTracks()
+  },
+  { immediate: true }
+)
+watch(clockSource, () => {
+  pendingSeek = undefined
+  time.value = 0
+  playing.value = false
+})
+watch(
+  playbackPaths,
+  async () => {
+    await nextTick()
+    syncAudios()
+    if (playing.value) await playAudios()
+  },
+  { deep: true }
 )
 function selectLine(id: string) {
   if (dirty.value && !window.confirm('放弃未保存的台词修改？')) return
@@ -124,17 +500,6 @@ async function addLine() {
     current.value = line.id
     showEditor.value = true
   }, '台词已添加')
-}
-function switchMode(value: 'original' | 'dubbed') {
-  const position = player.value?.currentTime || 0
-  player.value?.pause()
-  mode.value = value
-  nextTick(() => {
-    if (player.value)
-      player.value.onloadedmetadata = () => {
-        if (player.value) player.value.currentTime = Math.min(position, player.value.duration || 0)
-      }
-  })
 }
 </script>
 <template>
@@ -321,106 +686,281 @@ function switchMode(value: 'original' | 'dubbed') {
     </section>
 
     <section v-else class="preview-panel">
-      <header class="content-heading">
-        <div class="row-actions" role="group" aria-label="预览音轨">
-          <StudioAction
+      <header class="content-heading preview-heading">
+        <div>
+          <h2>预览成片</h2>
+          <p class="help">
+            上方画面始终无声；声音由三条音轨按开关实时混合。拖动主进度条或点击任意音轨可跳转核对。
+          </p>
+        </div>
+        <div class="row-actions">
+          <UBadge color="neutral" variant="soft">{{
+            previewTracks ? `${previewTracks.replacementRanges.length} 个替换区间` : '等待音轨'
+          }}</UBadge>
+          <UButton
             color="neutral"
-            :variant="mode === 'original' ? 'soft' : 'ghost'"
-            :reason="project.kind === 'text' ? '文本项目没有原始音轨' : ''"
-            @click="switchMode('original')"
-            >原始素材</StudioAction
-          >
-          <StudioAction
-            color="neutral"
-            :variant="mode === 'dubbed' ? 'soft' : 'ghost'"
-            :reason="!project.outputPath ? '请先点击“合成成片”' : ''"
-            @click="switchMode('dubbed')"
-            >配音成片</StudioAction
+            variant="ghost"
+            icon="i-carbon-renew"
+            :loading="previewLoading"
+            @click="loadPreviewTracks"
+            >刷新音轨</UButton
           >
         </div>
       </header>
-      <div class="preview-stage preview-stage-large" :class="{ 'audio-stage': project.kind !== 'video' }">
-        <video
-          v-if="project.kind === 'video' && previewSource"
-          ref="player"
-          :src="previewSource"
-          controls
-          preload="metadata"
-          @timeupdate="time = ($event.target as HTMLMediaElement).currentTime"
-        /><template v-else
-          ><UIcon
-            :name="project.kind === 'text' ? 'i-carbon-quotes' : 'i-carbon-waveform'"
-            class="preview-icon"
-          /><audio
-            v-if="previewSource && (project.kind !== 'text' || mode === 'dubbed')"
-            ref="player"
-            :src="previewSource"
-            controls
-            preload="metadata"
-            @timeupdate="time = ($event.target as HTMLMediaElement).currentTime"
-          />
-          <p v-else>尚未合成成片。先完成配音，再点击“合成成片”。</p></template
-        >
+      <div v-if="previewError" class="preview-alert" role="alert">
+        <UIcon name="i-carbon-warning-alt" />
+        <span>{{ previewError }}</span>
+        <UButton color="neutral" variant="ghost" size="xs" @click="loadPreviewTracks">重试</UButton>
       </div>
-      <div class="preview-audio-list">
-        <div v-if="project.sourcePath" class="audio-track-card">
-          <div><strong>原始音轨</strong><small>原始素材中的声音</small></div>
-          <audio :src="mediaUrl(project.sourcePath)" controls preload="none" />
-        </div>
-        <div v-if="project.backgroundPath" class="audio-track-card">
-          <div><strong>背景音</strong><small>保留的环境声与音乐</small></div>
-          <audio :src="mediaUrl(project.backgroundPath)" controls preload="none" />
-        </div>
-        <div v-if="project.mixedPath" class="audio-track-card">
-          <div><strong>合并音轨</strong><small>替换配音后的最终声音</small></div>
-          <audio :src="mediaUrl(project.mixedPath)" controls preload="none" />
-        </div>
-      </div>
-      <div class="preview-actions">
-        <UButton
-          v-if="project.mixedPath"
-          :href="mediaUrl(`${project.id}/subtitles.srt`, true)"
-          color="neutral"
-          variant="ghost"
-          icon="i-carbon-closed-caption"
-          >下载字幕 SRT</UButton
-        ><span class="help">{{ formatTime(time) }} / {{ formatTime(totalDuration) }}</span>
-      </div>
-      <details
-        class="preview-details"
-        :open="showTimeline"
-        @toggle="showTimeline = ($event.target as HTMLDetailsElement).open"
-      >
-        <summary>显示时间轴</summary>
-        <div class="timeline timeline-inline">
-          <div class="timeline-ruler">
-            <span v-for="n in 6" :key="n">{{ formatTime((totalDuration * (n - 1)) / 5) }}</span>
-          </div>
-          <div class="timeline-track">
-            <span class="track-label">原始音轨</span>
-            <div class="original-track" />
-          </div>
-          <div class="timeline-track">
-            <span class="track-label">配音片段</span>
-            <div class="dub-track">
-              <button
-                v-for="(line, i) in lines"
-                :key="line.id"
-                :title="`片段 ${i + 1}：${line.translation || line.text}`"
-                :aria-label="`选择片段 ${i + 1}`"
-                :style="{
-                  left: `${(line.start / totalDuration) * 100}%`,
-                  width: `${((line.end - line.start) / totalDuration) * 100}%`
-                }"
-                :class="{ ready: line.generatedPath, muted: !line.enabled, active: line.id === current }"
-                @click="selectLine(line.id)"
-              >
-                {{ i + 1 }}</button
-              ><span v-if="!lines.length" class="help">等待分段</span>
+      <div class="preview-editor">
+        <section class="preview-monitor">
+          <div class="preview-stage preview-stage-large" :class="{ 'audio-stage': project.kind !== 'video' }">
+            <video
+              v-if="project.kind === 'video'"
+              ref="clockPlayer"
+              :src="mediaUrl(clockSource)"
+              muted
+              playsinline
+              preload="metadata"
+              @loadedmetadata="onClockLoaded"
+              @play="onClockPlay"
+              @pause="onClockPause"
+              @ended="onClockEnded"
+              @timeupdate="onClockTimeUpdate"
+              @seeking="onClockSeeking"
+            />
+            <template v-else>
+              <UIcon
+                :name="project.kind === 'text' ? 'i-carbon-quotes' : 'i-carbon-waveform'"
+                class="preview-icon"
+              />
+              <div class="audio-monitor-copy">
+                <strong>{{ project.kind === 'text' ? '配音时间轴' : '音频项目' }}</strong>
+                <span>此区域不播放原声；使用下方音轨开关试听最终混合效果。</span>
+              </div>
+            </template>
+            <div v-if="previewLoading" class="preview-loading">
+              <UIcon name="i-carbon-loading animate-spin" />
+              <span>正在准备波形与试听缓存…</span>
             </div>
           </div>
-        </div>
-      </details>
+          <audio
+            v-if="project.kind !== 'video' && clockSource"
+            ref="clockPlayer"
+            class="mixer-hidden-audio"
+            :src="mediaUrl(clockSource)"
+            preload="auto"
+            @loadedmetadata="onClockLoaded"
+            @play="onClockPlay"
+            @pause="onClockPause"
+            @ended="onClockEnded"
+            @timeupdate="onClockTimeUpdate"
+            @seeking="onClockSeeking"
+          />
+          <div class="preview-transport">
+            <UButton
+              color="neutral"
+              variant="soft"
+              square
+              :icon="playing ? 'i-carbon-pause' : 'i-carbon-play'"
+              :aria-label="playing ? '暂停' : '播放'"
+              :disabled="!clockSource || previewLoading"
+              @click="togglePlayback"
+            />
+            <span class="preview-time">{{ formatTime(time) }}</span>
+            <input
+              class="preview-scrubber"
+              type="range"
+              min="0"
+              :max="previewDuration"
+              step="0.01"
+              :value="time"
+              :disabled="!clockSource || previewLoading"
+              aria-label="播放进度"
+              @input="seekTo(Number(($event.target as HTMLInputElement).value))"
+            />
+            <span class="preview-time">{{ formatTime(previewDuration) }}</span>
+          </div>
+          <div class="preview-status">
+            <span><UIcon name="i-carbon-volume-mute" />视频画面始终静音，声音只来自已开启的音轨</span>
+            <span v-if="previewTracks">
+              {{ previewTracks.replacementRanges.length }} 个替换区间
+              <template v-if="previewTracks.missingDubs">
+                · {{ previewTracks.missingDubs }} 句待配音
+              </template>
+            </span>
+          </div>
+        </section>
+
+        <section class="preview-mixer">
+          <header class="mixer-heading">
+            <div>
+              <h3>音轨混音器</h3>
+              <p class="help">三条音轨已对齐到同一时间轴。开启开关参与试听；关闭后不影响其他音轨。</p>
+            </div>
+            <div class="mixer-legend"><span class="playhead-mark" />播放头</div>
+          </header>
+          <div class="mixer-ruler">
+            <span class="mixer-ruler-spacer" />
+            <div class="mixer-ruler-scale">
+              <span v-for="n in 6" :key="n">{{ formatTime((previewDuration * (n - 1)) / 5) }}</span>
+            </div>
+          </div>
+          <div
+            v-for="key in trackKeys"
+            :key="key"
+            class="mixer-track"
+            :class="[`track-${key}`, { disabled: !trackEnabled[key], unavailable: !trackAvailable(key) }]"
+          >
+            <div class="mixer-track-header">
+              <UCheckbox
+                :model-value="trackEnabled[key]"
+                :disabled="!trackAvailable(key)"
+                :aria-label="`${trackEnabled[key] ? '关闭' : '开启'}${trackLabels[key]}试听`"
+                @update:model-value="setTrackEnabled(key, $event)"
+              />
+              <div class="mixer-track-copy">
+                <strong>{{ trackLabels[key] }}</strong>
+                <span>{{ trackDescriptions[key] }}</span>
+              </div>
+              <span class="mixer-track-state">{{ trackState(key) }}</span>
+            </div>
+            <div
+              class="mixer-lane"
+              role="slider"
+              tabindex="0"
+              :aria-label="`${trackLabels[key]}轨道进度`"
+              :aria-valuemin="0"
+              :aria-valuemax="previewDuration"
+              :aria-valuenow="time"
+              :aria-valuetext="`${formatTime(time)} / ${formatTime(previewDuration)}`"
+              @click="seekFromLane"
+              @keydown.left.prevent="seekTo(time - 1)"
+              @keydown.right.prevent="seekTo(time + 1)"
+              @keydown.space.prevent="togglePlayback"
+            >
+              <div class="mixer-waveform" aria-hidden="true">
+                <span
+                  v-for="(peak, index) in waveforms[key]"
+                  :key="index"
+                  class="mixer-bar"
+                  :style="{ height: `${Math.max(8, peak * 100)}%` }"
+                />
+              </div>
+              <span class="mixer-progress" :style="{ width: `${progress}%` }" aria-hidden="true" />
+              <span class="playhead" :style="{ left: `${progress}%` }" aria-hidden="true" />
+              <span v-if="!trackAvailable(key)" class="mixer-empty">{{ trackState(key) }}</span>
+            </div>
+          </div>
+          <p v-if="!previewTracks && !previewLoading && !previewError" class="help mixer-hint">
+            音轨会在切换到本页时自动准备。
+          </p>
+        </section>
+
+        <section class="export-panel">
+          <header class="export-heading">
+            <div>
+              <h3>合并导出</h3>
+              <p class="help">
+                选择要写入成片的音轨。视频流会直接复制，不会重新编码画质；音频按所选格式合并。
+              </p>
+            </div>
+            <UBadge color="success" variant="soft">{{
+              project.kind === 'video' ? '画面流复制' : 'PCM 无损'
+            }}</UBadge>
+          </header>
+          <div class="export-presets">
+            <button type="button" class="export-preset recommended" @click="applyRecommendedExport">
+              <strong>推荐：背景音 + 配音</strong>
+              <span>保留环境声与音乐，用新配音替换人声，适合大多数成片。</span>
+            </button>
+            <button type="button" class="export-preset" @click="applyDubbedOnlyExport">
+              <strong>仅配音</strong>
+              <span>只导出新配音，适合外部后期继续处理。</span>
+            </button>
+            <button type="button" class="export-preset" @click="applyOriginalGapsExport">
+              <strong>未替换原声 + 配音</strong>
+              <span>保留没有被新配音覆盖的原声区间，适合部分替换。</span>
+            </button>
+          </div>
+          <div class="export-options">
+            <div
+              v-for="key in trackKeys"
+              :key="`export-${key}`"
+              class="export-option"
+              :class="{ unavailable: !trackAvailable(key) }"
+            >
+              <UCheckbox
+                :model-value="exportTracks[key]"
+                :disabled="!trackAvailable(key)"
+                @update:model-value="setExportTrack(key, $event)"
+              />
+              <div class="export-option-copy">
+                <strong>{{ trackLabels[key] }}</strong>
+                <span>{{ trackDescriptions[key] }}</span>
+                <small v-if="!trackAvailable(key)">{{ trackState(key) }}</small>
+              </div>
+            </div>
+          </div>
+          <div class="export-settings">
+            <UFormField
+              v-if="exportTracks.original"
+              label="原声处理方式"
+              description="推荐保留未替换原声，避免旧人声与新配音重叠。"
+            >
+              <USelect v-model="exportOriginalMode" class="w-full" :items="exportOriginalModeItems" />
+            </UFormField>
+            <UFormField
+              label="导出格式"
+              description="MKV 使用 FLAC 无损音频；MP4 兼容性更好，音频为 AAC 320k。"
+            >
+              <USelect v-model="exportFormat" class="w-full" :items="exportFormatItems" />
+            </UFormField>
+          </div>
+          <div class="export-summary">
+            <div>
+              <strong>{{ exportSummary }}</strong>
+              <p v-if="exportWarning">{{ exportWarning }}</p>
+              <p v-if="exportReason" class="export-reason">{{ exportReason }}</p>
+            </div>
+            <div class="export-actions">
+              <UButton
+                v-if="project.mixedPath"
+                :href="mediaUrl(`${project.id}/subtitles.srt`, true)"
+                color="neutral"
+                variant="ghost"
+                icon="i-carbon-closed-caption"
+                >下载字幕 SRT</UButton
+              >
+              <StudioAction
+                icon="i-carbon-download"
+                :reason="exportReason"
+                :loading="exporting"
+                @click="exportFilm"
+                >{{ project.kind === 'video' ? '导出视频成片' : '导出音频成片' }}</StudioAction
+              >
+            </div>
+          </div>
+        </section>
+      </div>
+      <audio
+        ref="originalAudio"
+        class="mixer-hidden-audio"
+        :src="mediaUrl(playbackPaths.original)"
+        preload="auto"
+      />
+      <audio
+        ref="backgroundAudio"
+        class="mixer-hidden-audio"
+        :src="mediaUrl(playbackPaths.background)"
+        preload="auto"
+      />
+      <audio
+        ref="dubbedAudio"
+        class="mixer-hidden-audio"
+        :src="mediaUrl(playbackPaths.dubbed)"
+        preload="auto"
+      />
     </section>
     <USlideover
       :open="showEditor"
