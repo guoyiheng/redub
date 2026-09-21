@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { createError } from 'h3'
-import { eq, and, asc, inArray } from 'drizzle-orm'
+import { eq, and, asc, desc, inArray } from 'drizzle-orm'
 import { db, initDb } from '../db'
 import { jobs, projects, segments } from '../db/schema'
 import { batchPlan, type BatchInput } from '../../shared/batch'
@@ -16,21 +16,21 @@ export function workflowStages(kind: MediaKind): Stage[] {
   if (kind === 'text') return []
   return [...(kind === 'video' ? ['extract' as const] : []), 'separate', 'segment', 'transcribe']
 }
-export function eligibleJobs(all: Job[], paused: Set<string>, busy: Set<string>, capacity: number) {
+export function eligibleJobs(all: Job[], paused: Set<string>, runningJobIds: Set<string>, capacity: number) {
   const byId = new Map(all.map((j) => [j.id, j]))
   const picked: Job[] = []
-  const used = new Set(busy)
+  const used = new Set(runningJobIds)
   for (const job of all) {
     if (picked.length >= capacity) break
-    if (job.status !== 'queued' || paused.has(job.projectId) || used.has(job.projectId)) continue
+    if (job.status !== 'queued' || paused.has(job.projectId) || used.has(job.id)) continue
     const parent = job.dependsOn && byId.get(job.dependsOn)
     if (job.dependsOn && (!parent || !['completed', 'skipped'].includes(parent.status))) continue
     picked.push(job)
-    used.add(job.projectId)
+    used.add(job.id)
   }
   return picked
 }
-const running = new Map<string, string>()
+const running = new Set<string>()
 let ticking = false,
   timer: ReturnType<typeof setInterval> | undefined
 let enqueueChain = Promise.resolve()
@@ -118,37 +118,30 @@ export function generateSegment(segmentId: string, voice: VoiceSettings) {
       )
         throw new Error('没有可用原声，请先分离人声，或关闭原声参考并选择音色')
     }
-    const job: Job = {
-      id: randomUUID(),
-      projectId: project.id,
-      stage: 'synthesize',
-      segmentId,
-      status: 'queued',
-      progress: 0,
-      message: '等待生成这句配音',
-      error: null,
-      dependsOn: null,
-      attempts: 0,
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    }
+    let job: Job | undefined
     await db.transaction(async (tx) => {
       const active = await tx
         .select()
         .from(jobs)
         .where(and(eq(jobs.projectId, project.id), inArray(jobs.status, ['running', 'queued'])))
-      if (active.some((item) => item.stage !== 'synthesize' || !item.segmentId))
-        throw createError({
-          statusCode: 409,
-          statusMessage: '项目正在处理素材、翻译或合成，请完成后再生成单句配音'
-        })
-      if (active.some((item) => item.stage === 'synthesize' && item.dependsOn))
-        throw createError({
-          statusCode: 409,
-          statusMessage: '批量配音正在排队，请等待批量任务完成后再生成单句配音'
-        })
-      if (active.some((item) => item.segmentId === segmentId))
+        .orderBy(desc(jobs.createdAt))
+      if (active.some((item) => item.stage === 'synthesize' && item.segmentId === segmentId))
         throw createError({ statusCode: 409, statusMessage: '这句配音已在排队或生成中，请等待完成' })
+      const blocker = active.find((item) => item.stage !== 'synthesize')
+      job = {
+        id: randomUUID(),
+        projectId: project.id,
+        stage: 'synthesize',
+        segmentId,
+        status: 'queued',
+        progress: 0,
+        message: blocker ? '等待前置任务完成' : '等待生成这句配音',
+        error: null,
+        dependsOn: blocker?.id || null,
+        attempts: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      }
       await tx
         .update(segments)
         .set({
@@ -167,7 +160,7 @@ export function generateSegment(segmentId: string, voice: VoiceSettings) {
       await tx.insert(jobs).values(job)
     })
     void tick()
-    return { segmentId, jobs: [job] }
+    return { segmentId, jobs: [job!] }
   })
 }
 async function execute(job: Job) {
@@ -222,13 +215,8 @@ export async function tick() {
     const paused = new Set(
       (await db.select().from(projects).where(eq(projects.paused, true))).map((p) => p.id)
     )
-    for (const job of eligibleJobs(
-      all,
-      paused,
-      new Set(running.values()),
-      settings.concurrency - running.size
-    )) {
-      running.set(job.id, job.projectId)
+    for (const job of eligibleJobs(all, paused, running, settings.concurrency - running.size)) {
+      running.add(job.id)
       void execute(job)
     }
   } finally {

@@ -51,7 +51,7 @@ describe('任务调度', () => {
     expect(workflowStages('audio')).toEqual(['separate', 'segment', 'transcribe'])
     expect(workflowStages('text')).toEqual([])
   })
-  it('限制并发并串行化同项目任务', () => {
+  it('全局限制并发，不再串行化同项目任务', () => {
     expect(
       eligibleJobs(
         [job('a', 'p1'), job('b', 'p1'), job('c', 'p2'), job('d', 'p3')],
@@ -59,11 +59,11 @@ describe('任务调度', () => {
         new Set(),
         2
       ).map((j) => j.id)
-    ).toEqual(['a', 'c'])
+    ).toEqual(['a', 'b'])
   })
   it('暂停、运行中的项目和失败依赖不启动', () => {
     const tasks = [job('a', 'p1', null, 'failed'), job('b', 'p1', 'a'), job('c', 'p2'), job('d', 'p3')]
-    expect(eligibleJobs(tasks, new Set(['p2']), new Set(['p3']), 4)).toEqual([])
+    expect(eligibleJobs(tasks, new Set(['p2']), new Set(['d']), 4)).toEqual([])
   })
   it('跳过和成功后解锁依赖，缺失依赖仍阻塞', () => {
     const tasks = [job('a', 'p1', null, 'skipped'), job('b', 'p1', 'a'), job('c', 'p2', 'missing')]

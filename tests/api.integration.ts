@@ -255,8 +255,6 @@ describe.sequential('production HTTP workflow', () => {
         finish: true,
         voice
       })
-      await expect(api(`segments/${original.id}/generate`, 'POST', voice)).rejects.toThrow('409')
-      expect((await api(`projects/${id}`)).segments[0].generatedPath).toBe(original.generatedPath)
     } finally {
       holdSynthesis = undefined
       release()
@@ -272,7 +270,7 @@ describe.sequential('production HTTP workflow', () => {
     expect(result.segments[1]!.generatedPath).toBeTruthy()
     expect(result.project.outputPath).toBeTruthy()
   })
-  it('blocks a separate sentence while a voice-only batch is queued without finishing the movie', async () => {
+  it('queues a separate sentence alongside a voice-only batch without finishing the movie', async () => {
     const batchProject = await api('projects', 'POST', {
       name: 'Voice-only batch isolation',
       text: 'First batch sentence.\nSecond batch sentence.\nKeep this sentence outside the batch.'
@@ -286,6 +284,7 @@ describe.sequential('production HTTP workflow', () => {
       release = resolve
     })
     let created: Job[]
+    let individual: { segmentId: string; jobs: Job[] }
     try {
       created = await api(`projects/${batchProject.id}/batch`, 'POST', {
         action: 'synthesize',
@@ -299,21 +298,28 @@ describe.sequential('production HTTP workflow', () => {
         (detail) => detail.jobs.some((job) => job.id === created[0]!.id && job.status === 'running'),
         batchProject.id
       )
-      await expect(api(`segments/${untouched.id}/generate`, 'POST', voiceSettings)).rejects.toThrow('409')
-      const blocked: ProjectDetail = await api(`projects/${batchProject.id}`)
-      expect(blocked.jobs).toHaveLength(2)
-      expect(blocked.segments[2]).toEqual({ ...untouched, enabled: false })
+      individual = await api(`segments/${untouched.id}/generate`, 'POST', voiceSettings)
+      expect(individual.jobs[0]).toMatchObject({
+        stage: 'synthesize',
+        segmentId: untouched.id,
+        dependsOn: null
+      })
+      const active: ProjectDetail = await until(
+        (detail) => detail.jobs.some((job) => job.id === individual.jobs[0]!.id && job.status === 'running'),
+        batchProject.id
+      )
+      expect(active.jobs).toHaveLength(3)
+      expect(active.segments[2]!.enabled).toBe(true)
     } finally {
       holdSynthesis = undefined
       release()
     }
     const completed = await until(
-      (detail) =>
-        created.every((job) => detail.jobs.find((item) => item.id === job.id)?.status === 'completed'),
+      (detail) => detail.jobs.every((job) => job.status === 'completed'),
       batchProject.id
     )
     expect(completed.project.outputPath).toBeNull()
-    expect(completed.segments[2]).toEqual({ ...untouched, enabled: false })
+    expect(completed.segments[2]!.generatedPath).toBeTruthy()
   })
   it('generates individual sentences independently and saves only the requested parameters atomically', async () => {
     const before: ProjectDetail = await api(`projects/${id}`)
@@ -368,9 +374,10 @@ describe.sequential('production HTTP workflow', () => {
       await expect(api(`segments/${second!.id}/generate`, 'POST', voiceSettings)).rejects.toThrow('409')
       await expect(api(`projects/${id}/run`, 'POST', { stage: 'translate' })).rejects.toThrow('409')
       await expect(api(`segments/${first!.id}`, 'PATCH', first)).rejects.toThrow('409')
-      const queued: ProjectDetail = await api(`projects/${id}`)
-      expect(queued.jobs.filter((j) => j.status === 'running')).toHaveLength(1)
-      expect(queued.jobs.filter((j) => j.status === 'queued')).toHaveLength(1)
+      const queued: ProjectDetail = await until(
+        (d) => d.jobs.filter((j) => j.status === 'running').length === 2
+      )
+      expect(queued.jobs.filter((j) => j.status === 'queued')).toHaveLength(0)
     } finally {
       holdSynthesis = undefined
       release()
