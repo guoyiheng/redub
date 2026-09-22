@@ -89,7 +89,7 @@ onBeforeUnmount(() => clearInterval(timer))
           v-for="p in projects"
           :key="p.id"
           class="sidebar-project-group"
-          :class="{ active: selected === p.id && view === 'project' }"
+          :class="{ 'is-selected': selected === p.id && view === 'project' }"
         >
           <div class="sidebar-project-item">
             <button class="sidebar-project-main" @click="choose(p.id)">
@@ -139,7 +139,7 @@ onBeforeUnmount(() => clearInterval(timer))
               }"
               @click="choose(p.id, 'preview')"
             >
-              <UIcon name="i-carbon-play-outline" />预览成片
+              <UIcon name="i-carbon-play-outline" />预览
             </button>
           </nav>
         </div>

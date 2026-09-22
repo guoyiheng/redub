@@ -906,7 +906,7 @@ async function renderFilm() {
     <section v-else class="preview-panel">
       <header class="content-heading preview-heading">
         <div>
-          <h2>预览成片</h2>
+          <h2>预览</h2>
           <p class="help">
             上方画面始终无声；默认试听优化合成，也可开启三条源音轨对比。拖动主进度条或点击任意音轨可跳转核对。
           </p>

@@ -117,12 +117,13 @@ button:disabled {
   font-size: 18px;
   flex-shrink: 0;
 }
-.sidebar-nav .active,
-.sidebar-projects .active {
+.sidebar-nav button.active,
+.sidebar-projects button.active {
   background: var(--ui-bg-elevated);
   color: var(--ui-text);
   font-weight: 600;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  box-shadow: none;
+  border: none;
 }
 .sidebar-nav button:hover,
 .sidebar-projects button:hover {
@@ -150,11 +151,12 @@ button:disabled {
 .sidebar-footer button:hover {
   background: color-mix(in srgb, var(--ui-bg-elevated) 60%, var(--ui-bg-muted));
 }
-.sidebar-footer .active {
+.sidebar-footer button.active {
   background: var(--ui-bg-elevated);
   color: var(--ui-text);
   font-weight: 600;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  box-shadow: none;
+  border: none;
 }
 .nav-label {
   margin: 0 12px 8px;
@@ -1865,6 +1867,8 @@ textarea.generation-prompt::placeholder {
 }
 .sidebar-projects .sidebar-project-group {
   background: transparent;
+  box-shadow: none;
+  border: none;
   margin-bottom: 12px;
 }
 .sidebar-projects .sidebar-project-item {
@@ -1879,6 +1883,15 @@ textarea.generation-prompt::placeholder {
   min-height: 34px;
   font-size: 13px;
   padding: 6px 10px;
+  border: none;
+  box-shadow: none;
+}
+.sidebar-projects .project-children button.active {
+  background: var(--ui-bg-elevated);
+  color: var(--ui-text);
+  font-weight: 600;
+  box-shadow: none;
+  border: none;
 }
 .sidebar-projects .project-children .iconify {
   width: 16px;
