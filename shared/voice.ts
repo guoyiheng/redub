@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { Segment } from './types'
+import { normalizeLanguage } from './languages'
 
 export const voiceSettingsSchema = z.object({
   synthesisMode: z.enum(['ai', 'tts']).default('ai'),
@@ -65,3 +66,6 @@ export const defaultVoiceSettings = (useReference = true) =>
     aiSpeaker: '',
     aiUseReference: useReference
   })
+
+export const voiceLanguageInstruction = (language: string) =>
+  `配音语言：${normalizeLanguage(language.trim() || '中文')}。请使用该语言朗读台词，参考音频仅用于音色、语气和情绪，不沿用参考音频的语言。`

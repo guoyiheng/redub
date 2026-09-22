@@ -8,7 +8,7 @@ import { projects, segments } from '../server/db/schema'
 import { projectDir, ffmpeg, probe, assetPath } from '../server/services/media'
 import { getProject, getSegments, getChannel } from '../server/services/store'
 import { executeJob } from '../server/services/pipeline'
-import { synthesizeSpeech, translateLines } from '../server/services/providers'
+import { synthesizeSpeech, synthesisHash, translateLines } from '../server/services/providers'
 import type { Job, Stage } from '../shared/types'
 import { getPreviewTracks } from '../server/services/preview-tracks'
 import { exportProject } from '../server/services/export'
@@ -92,6 +92,7 @@ describe.sequential('媒体处理与服务协议', () => {
       expect(options.headers['X-Api-Key']).toBe('test-key-not-a-real-secret')
       expect(body.model).toBe('seed-audio-1.0')
       expect(body.text_prompt).toContain('@音频1')
+      expect(body.text_prompt).toContain('配音语言：中文')
       expect(body.references[0].audio_data).toBeTruthy()
       expect(body.audio_config.sample_rate).toBe(48000)
       return new Response(
@@ -118,13 +119,15 @@ describe.sequential('媒体处理与服务协议', () => {
       expect(body).not.toHaveProperty('speaker')
       expect(body.text_prompt).not.toContain('@音频1')
       expect(body.text_prompt).toContain(line.translation)
+      expect(body.text_prompt).toContain('配音语言：日语')
       return new Response(JSON.stringify({ audio: voice.toString('base64') }))
     })
     vi.stubGlobal('fetch', fetcher)
     const result = await synthesizeSpeech(
       { ...line, aiUseReference: false, aiSpeaker: ' fixture-voice ' },
       await getChannel('volcengine-default'),
-      join(dir, 'specified-voice.mp3')
+      join(dir, 'specified-voice.mp3'),
+      '日语'
     )
     expect(result.duration).toBeGreaterThan(0)
     expect(fetcher).toHaveBeenCalledOnce()
@@ -139,6 +142,7 @@ describe.sequential('媒体处理与服务协议', () => {
     const fetcher = vi.fn(async (_url, options) => {
       const body = JSON.parse(options.body)
       expect(body.text_prompt).toContain(line.generationPrompt)
+      expect(body.text_prompt).toContain('配音语言：中文')
       expect(body.text_prompt).not.toContain(line.translation)
       expect(body.text_prompt).not.toContain(line.aiPrompt)
       expect(body.audio_config.enable_subtitle).toBe(true)
@@ -162,6 +166,11 @@ describe.sequential('媒体处理与服务协议', () => {
     const request = JSON.parse(fetcher.mock.calls[1]![1].body)
     expect(request.references).toBeUndefined()
     expect(request.text_prompt).not.toContain('@音频1')
+  })
+  it('语言变化使 AI 配音缓存失效', async () => {
+    const line = (await getSegments(id))[0]!
+    const channel = await getChannel('volcengine-default')
+    expect(synthesisHash(line, channel, '中文')).not.toBe(synthesisHash(line, channel, '日语'))
   })
   it('微软 TTS 只朗读输入文字，不发送 AI 提示词或参考音频', async () => {
     const line = {

@@ -283,7 +283,7 @@ export async function executeJob(job: Job, progress: (value: number, message: st
         s.generatedHash = null
         s.audioHistory = audioHist
       }
-      const hash = synthesisHash(s, channel)
+      const hash = synthesisHash(s, channel, p.targetLanguage)
       if (s.generatedPath && s.generatedHash === hash && existsSync(assetPath(s.generatedPath))) continue
       await progress(
         Math.round((i / lines.length) * 100),
@@ -292,7 +292,7 @@ export async function executeJob(job: Job, progress: (value: number, message: st
       const output = rel(
         `voice-${s.id}-${randomUUID()}.${s.synthesisMode === 'ai' ? (s.aiFormat === 'wav' ? 'wav' : 'mp3') : 'mp3'}`
       )
-      const result = await synthesizeSpeech(s, channel!, assetPath(output))
+      const result = await synthesizeSpeech(s, channel!, assetPath(output), p.targetLanguage)
       const audioHistory: AudioVersion[] = [...(s.audioHistory || [])]
       if (s.generatedPath && audioHistory.length === 0) {
         audioHistory.push({

@@ -1,5 +1,11 @@
 <script setup lang="ts">
-import { voiceSettingsSchema, naturalVoicePrompt, referenceVoicePrompt, dubbedText } from '../../shared/voice'
+import {
+  voiceSettingsSchema,
+  naturalVoicePrompt,
+  referenceVoicePrompt,
+  dubbedText,
+  voiceLanguageInstruction
+} from '../../shared/voice'
 import type { Segment } from '../../shared/types'
 const props = defineProps<{ segment: Segment }>()
 const emit = defineEmits<{ close: []; generated: [] }>()
@@ -24,7 +30,11 @@ const direction = props.segment.aiPrompt?.trim()
   : hasReference
     ? referenceVoicePrompt
     : naturalVoicePrompt
-const aiContent = ref(props.segment.generationPrompt || `${direction}\n朗读：「${originalText}」`)
+const languageInstruction = voiceLanguageInstruction(detail.value?.project.targetLanguage || '中文')
+const savedPrompt = props.segment.generationPrompt || `${direction}\n朗读：「${originalText}」`
+const aiContent = ref(
+  savedPrompt.startsWith(languageInstruction) ? savedPrompt : `${languageInstruction}\n${savedPrompt}`
+)
 const ttsContent = ref(dubbedText(props.segment) || originalText)
 const content = computed({
   get: () => (draft.value.synthesisMode === 'ai' ? aiContent.value : ttsContent.value),

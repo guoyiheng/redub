@@ -1,15 +1,20 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Channel, Segment } from '../../shared/types'
-import { speakerName } from '../../shared/voice'
+import { speakerName, voiceLanguageInstruction } from '../../shared/voice'
 import { assetPath, cutAudio, probe } from './media'
 import { edgeSpeech } from './edge-speech'
 import { jobFetch, requestRedactor } from './job-requests'
 
-export function synthesisHash(segment: Segment, channel: Channel | null | undefined) {
+export function synthesisHash(
+  segment: Segment,
+  channel: Channel | null | undefined,
+  targetLanguage = '中文'
+) {
   return createHash('sha256')
     .update(
       JSON.stringify({
+        language: segment.synthesisMode === 'ai' ? targetLanguage : undefined,
         text: segment.translation || segment.text,
         start: segment.start,
         end: segment.end,
@@ -155,7 +160,12 @@ export async function translateLines(
   }
   return map
 }
-export async function synthesizeSpeech(segment: Segment, channel: Channel, output: string) {
+export async function synthesizeSpeech(
+  segment: Segment,
+  channel: Channel,
+  output: string,
+  targetLanguage = '中文'
+) {
   const text = segment.translation || segment.text
   if (!(segment.synthesisMode === 'ai' ? segment.generationPrompt || text : text).trim())
     throw new Error('请先填写译文或台词')
@@ -192,9 +202,11 @@ export async function synthesizeSpeech(segment: Segment, channel: Channel, outpu
   const referenceHint = hasAudioRef
     ? '【原声复刻指令】：必须以@音频1作为音色与说话风格的绝对基准，深度复刻发音人的音色质感、说话语气、情绪饱满度、音调起伏与呼吸节奏，听起来必须与原配音保持完全一致的感觉。\n'
     : ''
-  const prompt = segment.generationPrompt?.trim()
+  const content = segment.generationPrompt?.trim()
     ? `${referenceHint}目标时长约${duration.toFixed(2)}秒。\n${segment.generationPrompt.trim()}`
     : `${segment.aiPrompt?.trim() ? `${segment.aiPrompt.trim()}\n` : ''}${referenceHint}${hasAudioRef ? '请严格以@音频1相同的音色、语气与情感感觉，朗读以下台词' : '只朗读以下台词，保持自然语气'}（目标时长约${duration.toFixed(2)}秒）：\n${text}`
+  const languageInstruction = voiceLanguageInstruction(targetLanguage)
+  const prompt = `${languageInstruction}\n${content.replace(languageInstruction, '').trim()}`
   if (prompt.length > 3000) throw new Error('配音文本超过 3000 字限制')
   const result = await responseJson(
     await jobFetch(
