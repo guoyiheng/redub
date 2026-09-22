@@ -97,6 +97,7 @@ const project = computed(() => detail.value!.project)
 const panel = computed(() => workspacePanels.value[project.value.id] || 'script')
 const lines = computed(() => detail.value?.segments || [])
 const selected = computed(() => lines.value.find((s) => s.id === current.value))
+const referenceLibraryOpen = ref(false)
 const currentPage = ref(1)
 const pageSize = ref(50)
 const speakerFilter = ref<string | number>(0)
@@ -829,6 +830,7 @@ async function onSegmentRestored(updated: Segment) {
 }
 </script>
 <template>
+  <ReferenceVoiceLibrary v-model:open="referenceLibraryOpen" />
   <section
     v-if="detail"
     class="workspace"
@@ -848,6 +850,13 @@ async function onSegmentRestored(updated: Segment) {
           :items="pageSizeOptions"
           aria-label="每页显示条数"
         />
+        <UButton
+          color="neutral"
+          variant="outline"
+          icon="i-carbon-waveform"
+          @click="referenceLibraryOpen = true"
+          >参考音色</UButton
+        >
         <div v-if="totalPages > 1" class="toolbar-pagination">
           <UButton
             size="md"

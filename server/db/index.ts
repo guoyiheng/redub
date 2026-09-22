@@ -58,6 +58,10 @@ export function initDb() {
         speed INTEGER NOT NULL DEFAULT 0, loudness INTEGER NOT NULL DEFAULT 0, apiKey TEXT
       );
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS reference_voices (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE,
+        duration REAL NOT NULL, createdAt INTEGER NOT NULL
+      );
       PRAGMA user_version=1;
     `)
     const jobColumns = await client.execute('PRAGMA table_info(jobs)')

@@ -122,3 +122,10 @@ export const channels = sqliteTable('channels', {
   apiKey: text()
 })
 export const settings = sqliteTable('settings', { key: text().primaryKey(), value: text().notNull() })
+export const referenceVoices = sqliteTable('reference_voices', {
+  id: text().primaryKey(),
+  name: text().notNull(),
+  path: text().notNull().unique(),
+  duration: real().notNull(),
+  createdAt: integer().notNull()
+})

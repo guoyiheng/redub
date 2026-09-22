@@ -1,3 +1,4 @@
+import { validateReferencePath } from './reference-voices'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { createError } from 'h3'
@@ -228,13 +229,7 @@ export function generateSegment(segmentId: string, input: GenerationInput) {
     )
       throw new Error('请先填写这句台词或译文，再生成配音')
     const reference = customReferencePath === undefined ? line.customReferencePath : customReferencePath
-    if (
-      reference &&
-      (!reference.startsWith(`${project.id}/reference-upload-`) ||
-        !/^[a-zA-Z0-9-]+\/reference-upload-[a-f0-9-]+\.wav$/.test(reference) ||
-        !existsSync(assetPath(reference)))
-    )
-      throw new Error('参考音频不可用，请重新上传')
+    if (reference) await validateReferencePath(reference, project.id)
     if (voice.synthesisMode === 'ai') {
       const channel = await getActiveChannel('volcengine')
       if (channel.type !== 'volcengine') throw new Error('请在设置中启用 AI 配音渠道')

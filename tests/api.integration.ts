@@ -104,8 +104,15 @@ async function start() {
 }
 async function stop() {
   if (server && server.exitCode === null) {
-    server.kill()
-    await once(server, 'exit')
+    const stopping = server
+    const exited = once(stopping, 'exit')
+    stopping.kill()
+    const force = setTimeout(() => stopping.kill('SIGKILL'), 2000)
+    try {
+      await exited
+    } finally {
+      clearTimeout(force)
+    }
   }
 }
 async function api(path: string, method = 'GET', body?: unknown) {
@@ -1013,6 +1020,54 @@ describe.sequential('production HTTP workflow', () => {
       channelId: original.project.channelId
     })
     expect((await api(`projects/${project.id}`)).segments[0]!.generationPrompt).toBeNull()
+  })
+  it('saves, renames and reuses library voices across projects while rejecting private references', async () => {
+    const form = new FormData()
+    form.set('file', new Blob([new Uint8Array(voice)], { type: 'audio/mpeg' }), '温柔女声.mp3')
+    const response = await fetch(`${base}/api/reference-voices`, { method: 'POST', body: form })
+    expect(response.status).toBe(200)
+    const saved = await response.json()
+    expect(saved.name).toBe('温柔女声')
+    await api(`reference-voices/${saved.id}`, 'PATCH', { name: '旁白音色' })
+    expect(await api('reference-voices')).toContainEqual({ ...saved, name: '旁白音色' })
+    await expect(api(`reference-voices/${saved.id}`, 'PATCH', { name: ' ' })).rejects.toThrow('400')
+    expect((await fetch(`${base}/api/media?path=${encodeURIComponent(saved.path)}`)).status).toBe(200)
+    const project = await api('projects', 'POST', { name: '全局参考音色', text: '第一句' })
+    const initial: ProjectDetail = await api(`projects/${project.id}`)
+    const line = initial.segments[0]!
+    const before = synthesisRequests.length
+    await api(`segments/${line.id}/generate`, 'POST', {
+      ...defaultVoiceSettings(),
+      customReferencePath: saved.path
+    })
+    await until((d) => d.jobs.every((job) => job.status === 'completed'), project.id)
+    expect(synthesisRequests[before]!.references?.[0]?.audio_data).toBe(
+      (await readFile(join(process.env.REDUB_DATA_DIR!, saved.path))).toString('base64')
+    )
+    const privateForm = new FormData()
+    privateForm.set('file', new Blob([new Uint8Array(voice)]), 'private.mp3')
+    const privateVoice = await (
+      await fetch(`${base}/api/segments/${line.id}/reference`, { method: 'POST', body: privateForm })
+    ).json()
+    const other = await api('projects', 'POST', { name: '另一个项目', text: '另一句' })
+    const otherLine = (await api(`projects/${other.id}`)).segments[0]
+    await expect(
+      api(`segments/${otherLine.id}/generate`, 'POST', {
+        ...defaultVoiceSettings(),
+        customReferencePath: privateVoice.path
+      })
+    ).rejects.toThrow('参考音色不存在')
+    const persisted = createClient({
+      url: pathToFileURL(join(process.env.REDUB_DATA_DIR!, 'redub.sqlite')).href
+    })
+    try {
+      expect(
+        (await persisted.execute({ sql: 'SELECT name FROM reference_voices WHERE id = ?', args: [saved.id] }))
+          .rows[0]!.name
+      ).toBe('旁白音色')
+    } finally {
+      persisted.close()
+    }
   })
   it('rejects invalid references and prompts without changing a segment or adding jobs', async () => {
     const project = await api('projects', 'POST', { name: '无效参考验证', text: '原文' })

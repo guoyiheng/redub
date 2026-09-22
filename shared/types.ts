@@ -13,6 +13,13 @@ export const stageLabels = {
 export type Stage = keyof typeof stageLabels
 export type JobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'skipped' | 'cancelled'
 export type MediaKind = 'video' | 'audio' | 'text'
+export interface ReferenceVoice {
+  id: string
+  name: string
+  path: string
+  duration: number
+  createdAt: number
+}
 export interface Project {
   id: string
   name: string

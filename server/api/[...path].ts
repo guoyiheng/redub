@@ -1,6 +1,7 @@
 import { normalizeLanguage } from '../../shared/languages'
 import { speakerName, voiceSettingsSchema, generationSchema } from '../../shared/voice'
 import { uploadReference } from '../services/reference-upload'
+import { listReferenceVoices, addReferenceVoice, renameReferenceVoice } from '../services/reference-voices'
 import { batchSchema } from '../../shared/batch'
 import { settingsSchema } from '../../shared/settings'
 import { saveChannel } from '../services/channels'
@@ -41,6 +42,11 @@ export default defineEventHandler(async (event) => {
     method = event.method
   const [resource, id, action] = parts
   try {
+    if (resource === 'reference-voices') {
+      if (method === 'GET' && !id) return await listReferenceVoices()
+      if (method === 'POST' && !id) return await addReferenceVoice(event)
+      if (method === 'PATCH' && id) return await renameReferenceVoice(id, (await readBody(event))?.name)
+    }
     if (resource === 'health' && method === 'GET') return await mediaHealth()
     if (resource === 'tts' && id === 'preview' && method === 'POST') {
       const body = (await readBody(event)) || {}

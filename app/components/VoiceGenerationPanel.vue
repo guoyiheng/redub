@@ -7,7 +7,7 @@ import {
   dubbedText,
   withVoiceLanguage
 } from '../../shared/voice'
-import type { Segment } from '../../shared/types'
+import type { Segment, ReferenceVoice } from '../../shared/types'
 const props = defineProps<{ segment: Segment }>()
 const emit = defineEmits<{ close: []; generated: [] }>()
 const { act, channels, detail, toast, errorMessage } = useStudio()
@@ -15,7 +15,38 @@ const canReference = computed(
   () => !!detail.value?.project.vocalsPath && detail.value?.project.kind !== 'text'
 )
 const customReference = ref(props.segment.customReferencePath || null)
-const referenceName = ref(customReference.value ? '自定义参考' : '原声参考')
+const uploadedName = ref('自定义参考')
+const { voices, load: loadVoices } = useReferenceVoices()
+const libraryOpen = ref(false)
+const referenceName = computed(() =>
+  customReference.value
+    ? voices.value.find((v) => v.path === customReference.value)?.name || uploadedName.value
+    : '本句原声'
+)
+onMounted(() => {
+  void loadVoices().catch(() => {})
+})
+function useVoice(voice: ReferenceVoice) {
+  customReference.value = voice.path
+  draft.value.aiUseReference = true
+  referenceOpen.value = false
+}
+const referenceChoices = computed(() => [
+  ...(canReference.value ? [{ label: '本句原声', icon: 'i-carbon-waveform', onSelect: useOriginal }] : []),
+  ...voices.value.map((voice) => ({
+    label: voice.name,
+    icon: 'i-carbon-music',
+    onSelect: () => useVoice(voice)
+  })),
+  {
+    label: '添加 / 管理音色',
+    icon: 'i-carbon-add',
+    onSelect: () => {
+      libraryOpen.value = true
+    }
+  },
+  { label: '临时上传音频', icon: 'i-carbon-upload', onSelect: () => picker.value?.click() }
+])
 const draft = ref(
   voiceSettingsSchema.parse({
     ...props.segment,
@@ -62,10 +93,6 @@ const referenceSrc = computed(() =>
         ? mediaUrl(props.segment.referencePath)
         : `/api/segments/${props.segment.id}/original?t=${props.segment.start}-${props.segment.end}`
       : ''
-)
-
-const progressPercent = computed(() =>
-  duration.value > 0 ? Math.min(100, (currentTime.value / duration.value) * 100) : 0
 )
 
 function togglePlay() {
@@ -116,23 +143,6 @@ function onAudioError() {
   isPlaying.value = false
 }
 
-function seek(event: MouseEvent) {
-  if (!audioRef.value || !duration.value) return
-  const bar = event.currentTarget as HTMLElement
-  const rect = bar.getBoundingClientRect()
-  const clickX = Math.max(0, Math.min(event.clientX - rect.left, rect.width))
-  const pct = clickX / rect.width
-  audioRef.value.currentTime = pct * duration.value
-  currentTime.value = audioRef.value.currentTime
-}
-
-function formatAudioTime(seconds: number) {
-  if (!Number.isFinite(seconds) || seconds < 0) return '0:00'
-  const mins = Math.floor(seconds / 60)
-  const secs = Math.floor(seconds % 60)
-  return `${mins}:${secs.toString().padStart(2, '0')}`
-}
-
 watch(referenceSrc, () => {
   if (audioRef.value) {
     audioRef.value.pause()
@@ -168,12 +178,10 @@ function removeReference() {
   currentTime.value = 0
   draft.value.aiUseReference = false
   customReference.value = null
-  referenceName.value = '原声参考'
   referenceOpen.value = false
 }
 function useOriginal() {
   customReference.value = null
-  referenceName.value = '原声参考'
   draft.value.aiUseReference = true
   referenceOpen.value = false
 }
@@ -191,7 +199,7 @@ async function upload(event: Event) {
       { method: 'POST', body }
     )
     customReference.value = result.path
-    referenceName.value = result.name
+    uploadedName.value = result.name
     draft.value.aiUseReference = true
     referenceOpen.value = false
   } catch (error) {
@@ -226,6 +234,7 @@ async function generate() {
 }
 </script>
 <template>
+  <ReferenceVoiceLibrary v-model:open="libraryOpen" selectable @select="useVoice" />
   <form class="generation-panel" @submit.prevent="generate">
     <VoiceParameters v-model="draft" :disabled="busy" :can-reference="canReference || !!customReference">
       <UTextarea
@@ -247,7 +256,7 @@ async function generate() {
       <template #reference>
         <div
           v-if="draft.synthesisMode === 'ai' && draft.aiUseReference && referenceSrc"
-          class="voice-reference-bar"
+          class="reference-chip"
         >
           <audio
             ref="audioRef"
@@ -273,19 +282,18 @@ async function generate() {
           <div class="voice-reference-meta">
             <span class="voice-reference-title" :title="referenceName">{{ referenceName }}</span>
           </div>
-          <div
-            class="voice-reference-progress-track"
-            role="progressbar"
-            :aria-valuenow="progressPercent"
-            aria-valuemin="0"
-            aria-valuemax="100"
-            @click.stop="seek"
-          >
-            <div class="voice-reference-progress-fill" :style="{ width: `${progressPercent}%` }" />
-          </div>
-          <div class="voice-reference-time">
-            {{ formatAudioTime(currentTime) }} / {{ formatAudioTime(duration) }}
-          </div>
+          <UDropdownMenu :items="referenceChoices" :content="{ side: 'top', align: 'start' }">
+            <UButton
+              type="button"
+              color="neutral"
+              variant="outline"
+              size="sm"
+              icon="i-carbon-chevron-down"
+              :disabled="busy"
+              aria-label="替换参考音色"
+              title="替换参考音色"
+            />
+          </UDropdownMenu>
           <UButton
             type="button"
             color="neutral"
@@ -303,9 +311,9 @@ async function generate() {
         <span class="voice-segment-time"
           >{{ formatTime(segment.start) }} – {{ formatTime(segment.end) }}</span
         >
-        <UPopover
+        <UDropdownMenu
           v-if="draft.synthesisMode === 'ai' && !draft.aiUseReference"
-          v-model:open="referenceOpen"
+          :items="referenceChoices"
           :content="{ side: 'top', align: 'start' }"
         >
           <UButton
@@ -316,33 +324,9 @@ async function generate() {
             icon="i-carbon-add"
             :disabled="busy"
             :loading="uploading"
-            aria-label="添加参考音频"
+            >参考音色</UButton
           >
-            参考音频
-          </UButton>
-          <template #content>
-            <div class="voice-reference-menu">
-              <UButton
-                v-if="canReference"
-                type="button"
-                color="neutral"
-                variant="ghost"
-                icon="i-carbon-waveform"
-                @click="useOriginal"
-                >使用本句原声</UButton
-              >
-              <UButton
-                type="button"
-                color="neutral"
-                variant="ghost"
-                icon="i-carbon-upload"
-                @click="picker?.click()"
-                >上传参考音频</UButton
-              >
-              <p>30 秒以内，最大 10 MB</p>
-            </div>
-          </template>
-        </UPopover>
+        </UDropdownMenu>
       </template>
       <template #actions>
         <StudioAction
@@ -369,3 +353,31 @@ async function generate() {
     />
   </form>
 </template>
+
+<style scoped>
+.reference-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  max-width: calc(100% - 24px);
+  margin: 0 12px 10px;
+  padding: 5px;
+  border: 1px solid var(--ui-border);
+  border-radius: 10px;
+  background: var(--ui-bg);
+}
+.reference-chip .voice-reference-meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 150px;
+}
+.reference-chip .voice-reference-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  padding: 0 4px;
+}
+</style>
