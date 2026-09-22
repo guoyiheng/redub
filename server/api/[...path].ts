@@ -1,5 +1,6 @@
 import { normalizeLanguage } from '../../shared/languages'
-import { speakerName, voiceSettingsSchema } from '../../shared/voice'
+import { speakerName, voiceSettingsSchema, generationSchema } from '../../shared/voice'
+import { uploadReference } from '../services/reference-upload'
 import { batchSchema } from '../../shared/batch'
 import { assertTimeline } from '../../shared/timeline'
 import { originalClip } from '../services/original-clip'
@@ -127,9 +128,7 @@ export default defineEventHandler(async (event) => {
             const data = (await res.json()) as any
             let list: string[] = []
             if (Array.isArray(data?.data)) {
-              list = data.data
-                .map((m: any) => (typeof m === 'string' ? m : m?.id))
-                .filter(Boolean)
+              list = data.data.map((m: any) => (typeof m === 'string' ? m : m?.id)).filter(Boolean)
             } else if (Array.isArray(data?.models)) {
               list = data.models
                 .map((m: any) => (typeof m === 'string' ? m : m?.id || m?.name))
@@ -150,12 +149,7 @@ export default defineEventHandler(async (event) => {
 
         if (body.type === 'volcengine') {
           return {
-            models: [
-              'seed-audio-1.0',
-              'seed-audio-2.0',
-              'seed-tts-1.0',
-              'seed-tts-2.0'
-            ]
+            models: ['seed-audio-1.0', 'seed-audio-2.0', 'seed-tts-1.0', 'seed-tts-2.0']
           }
         }
 
@@ -245,7 +239,7 @@ export default defineEventHandler(async (event) => {
                   generatedHash: null,
                   ...(normalizeLanguage(currentProject.targetLanguage) !==
                   normalizeLanguage(data.targetLanguage)
-                    ? { translation: '' }
+                    ? { translation: '', generationPrompt: null }
                     : {})
                 })
                 .where(eq(segments.projectId, id))
@@ -376,7 +370,12 @@ export default defineEventHandler(async (event) => {
     }
     if (resource === 'segments' && id && action === 'generate' && method === 'POST') {
       setResponseStatus(event, 202)
-      return await generateSegment(id, voiceSettingsSchema.parse(await readBody(event)))
+      return await generateSegment(id, generationSchema.parse(await readBody(event)))
+    }
+    if (resource === 'segments' && id && action === 'reference' && method === 'POST') {
+      const [line] = await db.select().from(segments).where(eq(segments.id, id))
+      if (!line) throw createError({ statusCode: 404, statusMessage: '片段不存在' })
+      return await uploadReference(event, line.projectId)
     }
     if (resource === 'segments' && id && action === 'translate' && method === 'POST') {
       return await serializeEnqueue(async () => {
@@ -396,6 +395,7 @@ export default defineEventHandler(async (event) => {
           .update(segments)
           .set({
             translation,
+            generationPrompt: null,
             generatedPath: null,
             generatedHash: null,
             subtitle: null,
@@ -429,6 +429,9 @@ export default defineEventHandler(async (event) => {
           .set({
             ...data,
             referencePath,
+            ...(old.text !== data.text || old.translation !== data.translation
+              ? { generationPrompt: null }
+              : {}),
             ...(changed
               ? { generatedPath: null, generatedHash: null, subtitle: null, generatedDuration: null }
               : {})

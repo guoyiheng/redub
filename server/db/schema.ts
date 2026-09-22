@@ -33,6 +33,8 @@ export const segments = sqliteTable(
     speaker: text().notNull().default('角色 1'),
     enabled: integer({ mode: 'boolean' }).notNull().default(true),
     referencePath: text(),
+    customReferencePath: text(),
+    generationPrompt: text(),
     synthesisMode: text().$type<'ai' | 'tts'>().notNull().default('ai'),
     aiSpeaker: text(),
     aiUseReference: integer({ mode: 'boolean' }).notNull().default(true),

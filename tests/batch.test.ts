@@ -125,6 +125,32 @@ describe('批量处理范围与事务', () => {
     expect((await getSegments(id))[0]!.generatedPath).toBe('ready.mp3')
     expect(await db.select().from(jobs).where(eq(jobs.projectId, id))).toHaveLength(0)
   })
+  it('沿用每句配置时保留完整要求，共用参数时重新使用台词', async () => {
+    const id = await fixture()
+    await db
+      .update(segments)
+      .set({ text: '', generationPrompt: '轻声说：「你好。」', aiUseReference: false })
+      .where(eq(segments.id, `${id}-missing`))
+    await enqueue(id, undefined, undefined, {
+      action: 'synthesize',
+      scope: 'missing',
+      finish: false,
+      useSegmentVoices: true
+    })
+    expect((await getSegments(id))[1]!.generationPrompt).toBe('轻声说：「你好。」')
+    const otherId = await fixture()
+    await db
+      .update(segments)
+      .set({ generationPrompt: '旧要求' })
+      .where(eq(segments.id, `${otherId}-missing`))
+    await enqueue(otherId, undefined, undefined, {
+      action: 'synthesize',
+      scope: 'missing',
+      finish: false,
+      voice
+    })
+    expect((await getSegments(otherId))[1]!.generationPrompt).toBeNull()
+  })
   it('已有台词不会重新分段；文本项目缺少配音不会直接合成', async () => {
     const id = await fixture()
     const project = await getProject(id),

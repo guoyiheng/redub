@@ -12,6 +12,9 @@ import { synthesizeSpeech, translateLines } from '../server/services/providers'
 import type { Job, Stage } from '../shared/types'
 import { getPreviewTracks } from '../server/services/preview-tracks'
 import { exportProject } from '../server/services/export'
+import { edgeSpeech } from '../server/services/edge-speech'
+import { dubbedText } from '../shared/voice'
+vi.mock('../server/services/edge-speech', () => ({ edgeSpeech: vi.fn() }))
 
 let id: string, dir: string, voice: Buffer
 const progress = async () => {}
@@ -125,6 +128,58 @@ describe.sequential('媒体处理与服务协议', () => {
     )
     expect(result.duration).toBeGreaterThan(0)
     expect(fetcher).toHaveBeenCalledOnce()
+  })
+  it('合并输入直接作为 AI 要求，替换和移除参考均作用于实际请求', async () => {
+    const line = {
+      ...(await getSegments(id))[0]!,
+      aiPrompt: '不应附加的旧提示词',
+      generationPrompt: '用轻松的语气说：「欢迎回来。」',
+      customReferencePath: `${id}/fixture.mp3`
+    }
+    const fetcher = vi.fn(async (_url, options) => {
+      const body = JSON.parse(options.body)
+      expect(body.text_prompt).toContain(line.generationPrompt)
+      expect(body.text_prompt).not.toContain(line.translation)
+      expect(body.text_prompt).not.toContain(line.aiPrompt)
+      expect(body.audio_config.enable_subtitle).toBe(true)
+      return new Response(
+        JSON.stringify({ audio: voice.toString('base64'), subtitle: { text: '欢迎回来。' } })
+      )
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const channel = await getChannel('volcengine-default')
+    const result = await synthesizeSpeech(line, channel, join(dir, 'custom-reference.mp3'))
+    expect(JSON.parse(fetcher.mock.calls[0]![1].body).references).toEqual([
+      { audio_data: voice.toString('base64') }
+    ])
+    expect(dubbedText({ ...line, subtitle: result.subtitle })).toBe('欢迎回来。')
+    expect(dubbedText({ ...line, subtitle: null })).toBe('')
+    await synthesizeSpeech(
+      { ...line, aiUseReference: false, customReferencePath: null },
+      channel,
+      join(dir, 'no-reference.mp3')
+    )
+    const request = JSON.parse(fetcher.mock.calls[1]![1].body)
+    expect(request.references).toBeUndefined()
+    expect(request.text_prompt).not.toContain('@音频1')
+  })
+  it('微软 TTS 只朗读输入文字，不发送 AI 提示词或参考音频', async () => {
+    const line = {
+      ...(await getSegments(id))[0]!,
+      synthesisMode: 'tts' as const,
+      translation: '这次只读新台词。',
+      generationPrompt: '用轻松的语气说：「旧内容。」'
+    }
+    vi.mocked(edgeSpeech).mockResolvedValue(voice)
+    const fetcher = vi.fn()
+    vi.stubGlobal('fetch', fetcher)
+    await synthesizeSpeech(line, await getChannel('volcengine-default'), join(dir, 'tts-input.mp3'))
+    expect(edgeSpeech).toHaveBeenLastCalledWith(
+      line.translation,
+      expect.objectContaining({ voice: line.ttsVoice })
+    )
+    expect(fetcher).not.toHaveBeenCalled()
+    expect(dubbedText(line)).toBe(line.translation)
   })
   it('合并仅替换启用片段，未替换原始 PCM 保持一致', async () => {
     await ffmpeg([

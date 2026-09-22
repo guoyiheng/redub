@@ -23,6 +23,7 @@ import type { Job, Segment } from '../../shared/types'
 import { exportProject } from './export'
 import { getPreviewTracks } from './preview-tracks'
 import { assertTimeline } from '../../shared/timeline'
+import { dubbedText } from '../../shared/voice'
 
 export async function executeJob(job: Job, progress: (value: number, message: string) => Promise<void>) {
   const p = await getProject(job.projectId)
@@ -171,6 +172,7 @@ export async function executeJob(job: Job, progress: (value: number, message: st
           .set({
             text,
             translation: '',
+            generationPrompt: null,
             generatedPath: null,
             generatedHash: null,
             generatedDuration: null,
@@ -199,7 +201,12 @@ export async function executeJob(job: Job, progress: (value: number, message: st
         for (const s of batch)
           await tx
             .update(segments)
-            .set({ translation: result.get(s.id)!, generatedPath: null, generatedHash: null })
+            .set({
+              translation: result.get(s.id)!,
+              generationPrompt: null,
+              generatedPath: null,
+              generatedHash: null
+            })
             .where(eq(segments.id, s.id))
       })
       await progress(
@@ -215,7 +222,9 @@ export async function executeJob(job: Job, progress: (value: number, message: st
     )
     if (!lines.length) throw new Error('没有启用的配音片段')
     const needsAi = lines.some((s) => s.synthesisMode !== 'tts')
-    const needsReference = lines.some((s) => s.synthesisMode !== 'tts' && s.aiUseReference)
+    const needsReference = lines.some(
+      (s) => s.synthesisMode !== 'tts' && s.aiUseReference && !s.customReferencePath
+    )
     const channel = needsAi ? await getChannel(p.channelId) : undefined
     if (needsReference && p.kind !== 'text' && (!p.vocalsPath || !existsSync(assetPath(p.vocalsPath))))
       throw new Error('请先完成人声分离，再使用原声参考配音')
@@ -225,6 +234,7 @@ export async function executeJob(job: Job, progress: (value: number, message: st
       if (
         s.synthesisMode !== 'tts' &&
         s.aiUseReference &&
+        !s.customReferencePath &&
         p.kind !== 'text' &&
         (!s.referencePath || !existsSync(assetPath(s.referencePath)))
       ) {
@@ -360,7 +370,8 @@ export async function executeJob(job: Job, progress: (value: number, message: st
       subtitleText(
         lines
           .filter((s) => p.kind !== 'text' || s.enabled)
-          .map((s) => ({ ...s, text: s.enabled && s.generatedPath ? s.translation || s.text : s.text }))
+          .map((s) => ({ ...s, text: s.enabled && s.generatedPath ? dubbedText(s) : s.text }))
+          .filter((s) => s.text.trim())
       )
     )
     await update({ mixedPath: mixed, duration })

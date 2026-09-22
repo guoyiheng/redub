@@ -1,6 +1,7 @@
 import type { ExportOptions } from '../../shared/export'
 import type { MediaKind, Segment } from '../../shared/types'
 import { subtitleText } from './text'
+import { dubbedText } from '../../shared/voice'
 
 /** Match subtitles to the speech actually included in the selected audio tracks. */
 export function exportSubtitles(lines: Segment[], kind: MediaKind, options: ExportOptions) {
@@ -12,7 +13,7 @@ export function exportSubtitles(lines: Segment[], kind: MediaKind, options: Expo
       ((options.optimized && !replaced) ||
         (options.original && (options.originalMode === 'full' || !replaced)))
     if (!hasDub && !hasOriginal) return []
-    const text = (hasDub ? line.translation || line.text : line.text).trim()
+    const text = (hasDub ? dubbedText(line) : line.text).trim()
     return text ? [{ start: line.start, end: line.end, text }] : []
   })
   return subtitleText(spans)

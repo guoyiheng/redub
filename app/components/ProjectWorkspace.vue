@@ -3,7 +3,7 @@ import type { BatchInput } from '../../shared/batch'
 import type { ExportResult } from '../../shared/export'
 import type { PreviewTracks } from '../../shared/preview'
 import { languageOptions, normalizeLanguage } from '../../shared/languages'
-import { speakerName } from '../../shared/voice'
+import { speakerName, dubbedText } from '../../shared/voice'
 
 type PreviewTrackKey = 'optimized' | 'original' | 'background' | 'dubbed'
 type ExportFormat = 'mkv' | 'mp4' | 'wav'
@@ -833,9 +833,15 @@ async function renderFilm() {
               <div class="dialogue-content">
                 <div>
                   <p class="dialogue-translation">
-                    {{ line.translation || line.text || '填写要生成的配音台词' }}
+                    {{
+                      line.generatedPath
+                        ? dubbedText(line) || '已生成配音'
+                        : line.translation || line.text || '填写要生成的配音台词'
+                    }}
                   </p>
-                  <small v-if="!line.translation && line.text" class="help">使用原文配音</small>
+                  <small v-if="!line.generatedPath && !line.translation && line.text" class="help"
+                    >使用原文配音</small
+                  >
                 </div>
               </div>
               <div class="generated-output">

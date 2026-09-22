@@ -870,21 +870,19 @@ button:disabled {
   gap: 16px;
 }
 .generation-drawer[data-vaul-drawer][data-vaul-drawer-direction='bottom'] {
-  left: max(232px, calc(50vw - 272px));
-  right: max(24px, calc(50vw - 488px));
-  bottom: 20px;
-  max-height: min(620px, calc(100dvh - 40px));
+  left: max(232px, calc(50vw - 280px));
+  right: max(24px, calc(50vw - 496px));
+  bottom: 24px;
+  max-height: calc(100dvh - 48px);
   overflow-y: auto;
   border: 1px solid var(--ui-border);
-  border-radius: 24px;
+  border-radius: 22px;
   background: var(--ui-bg-elevated);
-  box-shadow:
-    0 24px 80px #30302e24,
-    0 2px 10px #30302e12;
+  box-shadow: 0 16px 56px #30302e20;
 }
 .generation-drawer-inner {
   width: 100%;
-  padding: 16px 18px 18px;
+  padding: 14px;
 }
 .generation-panel {
   display: grid;
@@ -894,151 +892,178 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 0 2px 8px;
+  gap: 12px;
+  padding: 0 4px;
 }
 .generation-composer-title {
-  display: grid;
-  gap: 3px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
   min-width: 0;
 }
 .generation-composer-title > span {
-  color: var(--ui-text-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.generation-composer-title > time {
   font-size: 11px;
-  font-weight: 650;
-  letter-spacing: 0.04em;
+  color: var(--ui-text-muted);
+  font-variant-numeric: tabular-nums;
 }
-.generation-composer-title p {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-  margin: 0;
-  font-size: 14px;
-  font-weight: 550;
-  text-overflow: ellipsis;
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-}
-.generation-panel .voice-parameters {
+.voice-composer {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
+  padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--ui-text-muted) 45%, var(--ui-border));
+  border-radius: 18px;
+  background: var(--ui-bg);
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
 }
-.generation-prompt {
-  border-radius: 12px;
-  background: transparent;
+.voice-composer:focus-within {
+  border-color: var(--ui-text-muted);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ui-text-muted) 12%, transparent);
 }
-.generation-prompt:focus-within {
-  outline: 1px solid var(--ui-border);
-}
-.generation-prompt textarea,
-textarea.generation-prompt {
-  min-height: 88px;
-  padding: 10px 12px;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
+.voice-composer-input textarea {
+  min-height: 112px;
+  padding: 14px 14px 6px;
   font-size: 15px;
-  line-height: 1.7;
+  line-height: 1.8;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
   resize: none;
-}
-.generation-prompt textarea:focus,
-textarea.generation-prompt:focus {
   box-shadow: none;
 }
-.generation-prompt textarea::placeholder,
-textarea.generation-prompt::placeholder {
+.voice-composer-input textarea:focus {
+  outline: none;
+  box-shadow: none;
+}
+.voice-composer-input textarea::placeholder {
   color: var(--ui-text-muted);
 }
-.generation-toolbar {
+.voice-composer-footer {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 8px 8px;
 }
-.generation-toolbar > * {
+.voice-composer-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
   min-width: 0;
 }
-.generation-toolbar-actions {
-  flex: 0 0 auto;
-  margin-left: auto;
-  padding-left: 6px;
+.voice-composer-tools > * {
+  min-width: 0;
+  border-radius: 999px;
 }
-.generation-mode-select,
-.generation-reference-select {
+.voice-mode-select,
+.voice-source-select {
   width: auto;
-  flex: 0 0 auto;
 }
-.generation-voice-select {
-  width: min(100%, 360px);
-  flex: 1 1 220px;
+.voice-tts-select {
+  max-width: 210px;
 }
-.generation-speaker-input {
-  flex: 1 1 180px;
+.voice-composer-footer > .action-hint {
+  flex-shrink: 0;
+  margin-left: auto;
 }
-.generation-reference-row {
+.voice-submit {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--ui-text);
+  color: var(--ui-bg-elevated);
+}
+.voice-submit:not(:disabled):hover {
+  background: var(--ui-text-muted);
+}
+.voice-submit:disabled {
+  opacity: 0.3;
+}
+.voice-attachment {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 2px 2px 0;
-  color: var(--ui-text-muted);
+  gap: 6px;
+  width: fit-content;
+  max-width: calc(100% - 28px);
+  margin: 0 14px;
+  padding: 3px 5px 3px 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: 10px;
+  background: var(--ui-bg-elevated);
   font-size: 12px;
 }
-.generation-reference-row audio {
-  width: min(100%, 360px);
-  height: 34px;
+.voice-attachment > .iconify {
+  flex-shrink: 0;
+  color: var(--ui-text-muted);
+  width: 18px;
+  height: 18px;
 }
-.generation-parameters {
+.voice-attachment > span:not(.iconify) {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.voice-attachment > button {
+  flex-shrink: 0;
+}
+.voice-reference-preview {
+  width: min(320px, calc(100vw - 40px));
+  padding: 12px;
+}
+.voice-reference-menu {
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+}
+.voice-reference-menu > button {
+  justify-content: flex-start;
+}
+.voice-reference-menu > p {
+  margin: 4px 8px;
+  color: var(--ui-text-muted);
+  font-size: 11px;
+}
+.voice-options-popover {
+  border-radius: 14px;
+}
+.voice-options {
+  display: grid;
+  gap: 16px;
+  width: min(360px, calc(100vw - 40px));
+  padding: 18px;
+}
+.voice-options > h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.voice-options-row {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px;
+  align-items: start;
 }
-.generation-advanced {
-  padding: 8px 2px 0;
-  border-top: 1px solid var(--ui-border);
+.voice-options-pair {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
-.generation-advanced summary {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 4px;
-  color: var(--ui-text-muted);
+.voice-options [data-slot='label'] {
   font-size: 12px;
-  list-style: none;
-  cursor: pointer;
-}
-.generation-advanced[open] .generation-parameters {
-  margin-top: 14px;
-}
-.generation-advanced summary:focus-visible {
-  outline: 2px solid var(--ui-text-muted);
-  outline-offset: 3px;
-}
-.generation-advanced summary::-webkit-details-marker {
-  display: none;
-}
-.generation-advanced summary::after {
-  content: '⌄';
-  font-size: 13px;
-  line-height: 1;
-  transition: transform 120ms ease;
-}
-.generation-advanced[open] summary::after {
-  transform: rotate(180deg);
-}
-.generation-advanced summary:hover {
-  color: var(--ui-text);
+  white-space: nowrap;
 }
 .sidebar-project-item > button:not(.sidebar-project-main) {
   width: 28px;
   min-height: 28px;
   padding: 5px;
-}
-.generation-submit {
-  flex: 0 0 auto;
-  width: 40px;
-  height: 40px;
-  justify-content: center;
-  border-radius: 999px;
 }
 .reference-audio,
 .generated-audio {
@@ -1747,21 +1772,15 @@ textarea.generation-prompt::placeholder {
   .generation-drawer-inner {
     padding: 14px;
   }
-  .generation-mode-select,
-  .generation-reference-select,
-  .generation-voice-select {
-    width: 100%;
-    flex-basis: 100%;
+  .voice-composer-footer {
+    gap: 6px;
+    padding-inline: 4px;
   }
-  .generation-reference-row {
-    align-items: stretch;
-    flex-direction: column;
+  .voice-composer-tools {
+    gap: 2px;
   }
-  .generation-reference-row audio {
-    width: 100%;
-  }
-  .generation-parameters {
-    grid-template-columns: 1fr;
+  .voice-tts-select {
+    max-width: 180px;
   }
   .content-heading {
     flex-wrap: wrap;
@@ -2110,18 +2129,6 @@ textarea.generation-prompt::placeholder {
 .dialogue-content > div,
 .dialogue-content > p {
   min-width: 0;
-}
-.dialogue-original,
-.dialogue-translation {
-  cursor: pointer;
-  border-radius: 6px;
-  padding: 3px 6px;
-  margin: -3px -6px;
-  transition: background 120ms ease;
-}
-.dialogue-original:hover,
-.dialogue-translation:hover {
-  background: var(--ui-bg-muted);
 }
 .dialogue-translation {
   font-size: 14px;

@@ -41,6 +41,8 @@ export interface Segment {
   speaker: string
   enabled: boolean
   referencePath: string | null
+  customReferencePath?: string | null
+  generationPrompt?: string | null
   synthesisMode: 'ai' | 'tts'
   aiSpeaker: string | null
   aiUseReference: boolean

@@ -91,7 +91,9 @@ const steps = computed(() => {
     ]
   return [
     `${useSegmentVoices.value ? '沿用各句已保存的参数，生成' : '将共用参数应用到'} ${targets.value.length} 句${scope.value === 'all' ? '需替换台词，重新生成并覆盖已有配音' : '尚未生成配音的台词'}，清除旧成片`,
-    '按译文生成声音；没有译文时使用原文',
+    useSegmentVoices.value
+      ? '优先使用各句已保存的配音要求；未设置时使用译文或原文'
+      : '按译文生成声音；没有译文时使用原文',
     ...(finish.value
       ? ['配音完成后保留背景音、合并音轨并生成成片']
       : ['生成完成后在工作区逐句试听，不自动合成成片'])

@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { createClient } from '@libsql/client'
 import { pathToFileURL } from 'node:url'
@@ -20,7 +20,7 @@ let holdSynthesis: Promise<void> | undefined
 let holdTranslation: Promise<void> | undefined
 const synthesisRequests: {
   text_prompt: string
-  references?: { speaker?: string }[]
+  references?: { speaker?: string; audio_data?: string }[]
   audio_config: { speech_rate: number }
 }[] = []
 let translationRequests = 0
@@ -665,6 +665,103 @@ describe.sequential('production HTTP workflow', () => {
       subtitle: null
     })
     expect(changed.segments[1]).toEqual(done.segments[1])
+  })
+  it('generates from one complete prompt with replaceable and removable audio references', async () => {
+    const project = await api('projects', 'POST', { name: '配音输入框验证', text: '不可改动的原文' })
+    const original: ProjectDetail = await api(`projects/${project.id}`)
+    const line = original.segments[0]!
+    const uploadReference = async (name: string) => {
+      const form = new FormData()
+      form.set('file', new Blob([new Uint8Array(voice)], { type: 'audio/mpeg' }), name)
+      const response = await fetch(`${base}/api/segments/${line.id}/reference`, {
+        method: 'POST',
+        body: form
+      })
+      expect(response.status).toBe(200)
+      return response.json() as Promise<{ path: string; name: string }>
+    }
+    const first = await uploadReference('参考一.mp3')
+    const second = await uploadReference('参考二.mp3')
+    expect(first.path).not.toBe(second.path)
+    expect(second.name).toBe('参考二.mp3')
+    expect((await api(`projects/${project.id}`)).segments[0]).toEqual(line)
+    const generationPrompt = '用轻松的语气说：「配音测试」'
+    const before = synthesisRequests.length
+    await api(`segments/${line.id}/generate`, 'POST', {
+      ...defaultVoiceSettings(),
+      generationPrompt,
+      customReferencePath: second.path
+    })
+    const done = await until((d) => d.jobs.every((j) => j.status === 'completed'), project.id)
+    expect(done.segments[0]).toMatchObject({
+      text: line.text,
+      translation: line.translation,
+      generationPrompt,
+      customReferencePath: second.path
+    })
+    expect(synthesisRequests[before]!.text_prompt).toContain(generationPrompt)
+    expect(synthesisRequests[before]!.text_prompt).not.toContain(line.text)
+    expect(synthesisRequests[before]!.references?.[0]?.audio_data).toBe(
+      (await readFile(join(process.env.REDUB_DATA_DIR!, second.path))).toString('base64')
+    )
+    await api(`segments/${line.id}/generate`, 'POST', {
+      ...defaultVoiceSettings(false),
+      generationPrompt,
+      customReferencePath: null
+    })
+    const removed = await until((d) => d.jobs.every((j) => j.status === 'completed'), project.id)
+    expect(removed.segments[0]!.customReferencePath).toBeNull()
+    expect(synthesisRequests[before + 1]!.references).toBeUndefined()
+    expect(synthesisRequests[before + 1]!.text_prompt).not.toContain('@音频1')
+    const exported = await api(`projects/${project.id}/export`, 'POST', {
+      optimized: true,
+      original: false,
+      background: false,
+      dubbed: false,
+      format: 'wav'
+    })
+    await until((d) => d.jobs.find((j) => j.id === exported.jobId)?.status === 'completed', project.id)
+    const exportDetail: JobDetail = await api(`jobs/${exported.jobId}`)
+    const result = exportDetail.result as { subtitlePath: string }
+    const subtitle = await readFile(join(process.env.REDUB_DATA_DIR!, result.subtitlePath), 'utf8')
+    expect(subtitle).toContain('配音测试')
+    expect(subtitle).not.toContain('轻松')
+    expect(subtitle).not.toContain(line.text)
+    await api(`projects/${project.id}`, 'PATCH', {
+      name: original.project.name,
+      sourceLanguage: 'auto',
+      targetLanguage: 'English',
+      channelId: original.project.channelId
+    })
+    expect((await api(`projects/${project.id}`)).segments[0]!.generationPrompt).toBeNull()
+  })
+  it('rejects invalid references and prompts without changing a segment or adding jobs', async () => {
+    const project = await api('projects', 'POST', { name: '无效参考验证', text: '原文' })
+    const original: ProjectDetail = await api(`projects/${project.id}`)
+    const line = original.segments[0]!
+    const dir = join(process.env.REDUB_DATA_DIR!, project.id)
+    const initialFiles = await readdir(dir)
+    const longPath = join(process.env.REDUB_DATA_DIR!, 'long-reference.wav')
+    await ffmpeg(['-f', 'lavfi', '-i', 'sine=frequency=550:duration=31', longPath])
+    for (const file of [Buffer.from('not an audio file'), await readFile(longPath)]) {
+      const form = new FormData()
+      form.set('file', new Blob([new Uint8Array(file)]), 'reference.wav')
+      expect(
+        (await fetch(`${base}/api/segments/${line.id}/reference`, { method: 'POST', body: form })).status
+      ).toBe(400)
+    }
+    expect(await readdir(dir)).toEqual(initialFiles)
+    for (const fields of [
+      { generationPrompt: '   ' },
+      { customReferencePath: `another-project/reference-upload-123.wav` },
+      { customReferencePath: `${project.id}/reference-upload-123.wav` },
+      { customReferencePath: `${project.id}/../secret.wav` }
+    ]) {
+      await expect(
+        api(`segments/${line.id}/generate`, 'POST', { ...defaultVoiceSettings(false), ...fields })
+      ).rejects.toThrow('400')
+    }
+    expect(await api(`projects/${project.id}`)).toEqual(original)
   })
   it('serves signed web updates immediately without restarting the local API', async () => {
     const { installWebUpdate } = createRequire(import.meta.url)('../electron/web-update.cjs')

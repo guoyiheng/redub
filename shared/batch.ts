@@ -44,11 +44,21 @@ export function batchPlan(
   }
   const targets = enabled.filter((s) => input.scope === 'all' || !s.generatedPath)
   if (!targets.length) throw new Error('此范围内没有需要生成的台词')
-  if (targets.some((s) => !(s.translation || s.text).trim())) throw new Error('请先填写要生成的台词')
+  if (
+    targets.some(
+      (s) =>
+        !(
+          input.useSegmentVoices && s.synthesisMode === 'ai'
+            ? s.generationPrompt || s.translation || s.text
+            : s.translation || s.text
+        ).trim()
+    )
+  )
+    throw new Error('请先填写要生成的台词')
   if (
     targets.some((line) => {
       const voice = input.useSegmentVoices ? line : input.voice
-      return voice?.synthesisMode === 'ai' && voice.aiUseReference
+      return voice?.synthesisMode === 'ai' && voice.aiUseReference && !line.customReferencePath
     }) &&
     (project.kind === 'text' || !project.vocalsPath)
   )

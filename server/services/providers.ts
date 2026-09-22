@@ -13,6 +13,8 @@ export function synthesisHash(segment: Segment, channel: Channel | null | undefi
         start: segment.start,
         end: segment.end,
         reference: segment.referencePath,
+        customReference: segment.customReferencePath,
+        generationPrompt: segment.generationPrompt,
         synthesisMode: segment.synthesisMode,
         aiSpeaker: segment.aiSpeaker,
         aiUseReference: segment.aiUseReference,
@@ -108,7 +110,8 @@ export async function translateLines(lines: Segment[], target: string, channel: 
 }
 export async function synthesizeSpeech(segment: Segment, channel: Channel, output: string) {
   const text = segment.translation || segment.text
-  if (!text.trim()) throw new Error('请先填写译文或台词')
+  if (!(segment.synthesisMode === 'ai' ? segment.generationPrompt || text : text).trim())
+    throw new Error('请先填写译文或台词')
   if (segment.synthesisMode === 'tts') {
     const audio = await edgeSpeech(text, {
       voice: segment.ttsVoice || 'zh-CN-XiaoxiaoNeural',
@@ -123,8 +126,9 @@ export async function synthesizeSpeech(segment: Segment, channel: Channel, outpu
   if (channel.type !== 'volcengine') throw new Error('AI 配音请选择火山 Audio 兼容渠道')
   const duration = segment.end - segment.start
   let references: ({ audio_data: string } | { speaker: string })[] | undefined
-  if (segment.aiUseReference && segment.referencePath) {
-    const path = assetPath(segment.referencePath)
+  const reference = segment.customReferencePath || segment.referencePath
+  if (segment.aiUseReference && reference) {
+    const path = assetPath(reference)
     const info = await probe(path)
     let referencePath = path
     if (info.duration > 29) {
@@ -137,7 +141,10 @@ export async function synthesizeSpeech(segment: Segment, channel: Channel, outpu
   } else if (segment.aiSpeaker?.trim()) {
     references = [{ speaker: segment.aiSpeaker.trim() }]
   }
-  const prompt = `${segment.aiPrompt?.trim() ? `${segment.aiPrompt.trim()}\n` : ''}${references?.some((reference) => 'audio_data' in reference) ? '参考@音频1的说话音色，' : ''}只朗读以下台词，保持自然语气，目标时长约${duration.toFixed(2)}秒：\n${text}`
+  const referenceHint = references?.some((item) => 'audio_data' in item) ? '参考@音频1的说话音色。' : ''
+  const prompt = segment.generationPrompt?.trim()
+    ? `${referenceHint}目标时长约${duration.toFixed(2)}秒。\n${segment.generationPrompt.trim()}`
+    : `${segment.aiPrompt?.trim() ? `${segment.aiPrompt.trim()}\n` : ''}${referenceHint}只朗读以下台词，保持自然语气，目标时长约${duration.toFixed(2)}秒：\n${text}`
   if (prompt.length > 3000) throw new Error('配音文本超过 3000 字限制')
   const result = await responseJson(
     await jobFetch(

@@ -9,7 +9,7 @@ import { getSegments, getChannel, getSettings, getProject, assertIdle } from './
 import { executeJob } from './pipeline'
 import { safeError } from './providers'
 import { assetPath } from './media'
-import type { VoiceSettings } from '../../shared/voice'
+import type { GenerationInput } from '../../shared/voice'
 import type { Job, MediaKind, Stage } from '../../shared/types'
 import { jobContext, interruptJobRequests, jobColumns } from './job-requests'
 import { exportSchema } from '../../shared/export'
@@ -91,6 +91,7 @@ export function enqueue(projectId: string, stages?: Stage[], segmentId?: string,
           .update(segments)
           .set({
             ...(batch.useSegmentVoices ? {} : batch.voice),
+            ...(batch.useSegmentVoices ? {} : { generationPrompt: null }),
             generatedPath: null,
             generatedHash: null,
             generatedDuration: null,
@@ -115,18 +116,36 @@ export function enqueue(projectId: string, stages?: Stage[], segmentId?: string,
   })
 }
 
-export function generateSegment(segmentId: string, voice: VoiceSettings) {
+export function generateSegment(segmentId: string, input: GenerationInput) {
   return serializeEnqueue(async () => {
+    const { generationPrompt, translation, customReferencePath, ...voice } = input
     await initDb()
     const [line] = await db.select().from(segments).where(eq(segments.id, segmentId))
     if (!line) throw createError({ statusCode: 404, statusMessage: '片段不存在' })
     const project = await getProject(line.projectId)
-    if (!(line.translation || line.text).trim()) throw new Error('请先填写这句台词或译文，再生成配音')
+    const prompt = generationPrompt ?? line.generationPrompt
+    if (
+      !(
+        voice.synthesisMode === 'ai'
+          ? prompt || translation || line.translation || line.text
+          : translation || line.translation || line.text
+      ).trim()
+    )
+      throw new Error('请先填写这句台词或译文，再生成配音')
+    const reference = customReferencePath === undefined ? line.customReferencePath : customReferencePath
+    if (
+      reference &&
+      (!reference.startsWith(`${project.id}/reference-upload-`) ||
+        !/^[a-zA-Z0-9-]+\/reference-upload-[a-f0-9-]+\.wav$/.test(reference) ||
+        !existsSync(assetPath(reference)))
+    )
+      throw new Error('参考音频不可用，请重新上传')
     if (voice.synthesisMode === 'ai') {
       const channel = await getChannel(project.channelId)
       if (channel.type !== 'volcengine') throw new Error('请在项目设置中选择 AI 配音渠道')
       if (
         voice.aiUseReference &&
+        !reference &&
         (project.kind === 'text' || !project.vocalsPath || !existsSync(assetPath(project.vocalsPath)))
       )
         throw new Error('没有可用原声，请先分离人声，或关闭原声参考并选择音色')
@@ -159,6 +178,9 @@ export function generateSegment(segmentId: string, voice: VoiceSettings) {
         .update(segments)
         .set({
           ...voice,
+          ...(generationPrompt !== undefined ? { generationPrompt } : {}),
+          ...(translation !== undefined ? { translation } : {}),
+          ...(customReferencePath !== undefined ? { customReferencePath } : {}),
           enabled: true,
           generatedPath: null,
           generatedHash: null,
