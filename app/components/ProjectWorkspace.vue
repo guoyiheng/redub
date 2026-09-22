@@ -53,6 +53,7 @@ const showOptions = ref(false),
   showEditor = ref(false),
   showGeneration = ref(false),
   showBatch = ref(false),
+  showExportModal = ref(false),
   dirty = ref(false),
   savingOptions = ref(false)
 const options = ref({ name: '', sourceLanguage: 'auto', targetLanguage: '中文', channelId: '' })
@@ -227,6 +228,27 @@ const exportReason = computed(() => {
   if (!trackAvailable(exportTrack.value)) return '所选音轨尚未准备好'
   return ''
 })
+const trackDetailNotes = computed<Record<PreviewTrackKey, { title: string; desc: string }>>(() => ({
+  optimized: {
+    title: '优化合成音轨（交付首选）',
+    desc:
+      exportTarget.value === 'video'
+        ? '保留原视频画质与轨道结构，在配音台词区间替换为全新的 AI 配音，并与分离后的纯净背景音乐和环境音精确混响融合；未生成配音的片段将自动保留原声，导出即可直接交付。'
+        : '将全新的 AI 配音与提取的纯净背景音乐进行专业混响与声学对齐，合成一条高保真 WAV 音轨文件。'
+  },
+  original: {
+    title: '原始完整音轨',
+    desc: '包含原素材原本的人声和环境声，未经任何替换或二次混音处理。可用于新老配音效果的对照试听或母带存档。'
+  },
+  background: {
+    title: '背景伴奏音轨',
+    desc: '通过本机 AI 声音分离算法提取的独立背景音，彻底剔除了原演员人声，完整保留了背景配乐与环境音效。便于在专业非编软件中进行二次精修。'
+  },
+  dubbed: {
+    title: '新配音独立干音',
+    desc: '仅包含已翻译生成的新角色配音片段，严格按台词起止时间轴定位，静音区间不含任何伴奏。适合作为独立干音频道导入专业音频工程。'
+  }
+}))
 const addReason = computed(() =>
   locked.value
     ? '请等待当前项目任务完成'
@@ -683,12 +705,11 @@ async function translateSingleLine(lineId: string) {
             >刷新音轨</UButton
           >
           <UButton
-            v-if="project.outputPath"
-            :href="mediaUrl(project.outputPath, true)"
+            color="primary"
+            variant="solid"
             icon="i-carbon-download"
-            color="neutral"
-            variant="soft"
-            >导出成片</UButton
+            @click="showExportModal = true"
+            >导出</UButton
           >
         </template>
       </div>
@@ -933,7 +954,6 @@ async function translateSingleLine(lineId: string) {
                   <strong>{{ trackLabels[key] }}</strong>
                   <span>{{ trackDescriptions[key] }}</span>
                 </div>
-                <span class="mixer-track-state">{{ trackState(key) }}</span>
               </div>
               <div
                 class="mixer-lane"
@@ -959,68 +979,10 @@ async function translateSingleLine(lineId: string) {
                 </div>
                 <span class="mixer-progress" :style="{ width: `${progress}%` }" aria-hidden="true" />
                 <span class="playhead" :style="{ left: `${progress}%` }" aria-hidden="true" />
-                <span v-if="!trackAvailable(key)" class="mixer-empty">{{ trackState(key) }}</span>
+                <span v-if="!trackAvailable(key)" class="mixer-empty">未生成</span>
               </div>
             </div>
           </section>
-        </section>
-        <section class="export-panel">
-          <header class="export-heading">
-            <div>
-              <h3>导出</h3>
-            </div>
-          </header>
-          <div class="export-choices" role="group" aria-label="导出内容">
-            <button
-              type="button"
-              class="export-choice"
-              :class="{ selected: exportTarget === 'audio' }"
-              :aria-pressed="exportTarget === 'audio'"
-              @click="exportTarget = 'audio'"
-            >
-              <UIcon name="i-carbon-waveform" />
-              <span><strong>仅音轨</strong><small>保存为 WAV 音频</small></span>
-              <UIcon v-if="exportTarget === 'audio'" name="i-carbon-checkmark" />
-            </button>
-            <button
-              v-if="project.kind === 'video'"
-              type="button"
-              class="export-choice"
-              :class="{ selected: exportTarget === 'video' }"
-              :aria-pressed="exportTarget === 'video'"
-              @click="exportTarget = 'video'"
-            >
-              <UIcon name="i-carbon-video" />
-              <span><strong>视频成片</strong><small>原视频 · 追加可切换音轨</small></span>
-              <UIcon v-if="exportTarget === 'video'" name="i-carbon-checkmark" />
-            </button>
-          </div>
-          <UFormField :label="exportTarget === 'video' ? '新增音轨' : '导出音轨'" class="export-track-field">
-            <USelect v-model="exportTrack" class="w-full" :items="exportTrackItems" />
-          </UFormField>
-          <div class="export-summary">
-            <div>
-              <strong>{{ exportSummary }}</strong>
-              <p v-if="exportReason" class="export-reason">{{ exportReason }}</p>
-            </div>
-            <div class="export-actions">
-              <UButton
-                v-if="lastExportResult?.subtitlePath"
-                :href="mediaUrl(lastExportResult.subtitlePath, true)"
-                color="neutral"
-                variant="ghost"
-                icon="i-carbon-closed-caption"
-                >配套字幕</UButton
-              >
-              <StudioAction
-                icon="i-carbon-download"
-                :reason="exportReason"
-                :loading="exporting"
-                @click="exportFilm"
-                >{{ exportTarget === 'video' ? '导出视频成片' : '导出音轨' }}</StudioAction
-              >
-            </div>
-          </div>
         </section>
       </div>
       <audio
@@ -1153,5 +1115,101 @@ async function translateSingleLine(lineId: string) {
           @close="showBatch = false"
           @submitted="showBatch = false" /></template
     ></UModal>
+    <UModal
+      v-model:open="showExportModal"
+      title="导出设置"
+      :ui="{ content: 'sm:max-w-xl ring-0' }"
+    >
+      <template #body>
+        <div class="export-modal-body">
+          <div v-if="project.kind === 'video'" class="export-modal-section">
+            <label class="modal-section-label">导出格式</label>
+            <div class="export-target-options">
+              <button
+                type="button"
+                class="export-target-card"
+                :class="{ selected: exportTarget === 'video' }"
+                @click="exportTarget = 'video'"
+              >
+                <UIcon name="i-carbon-video" class="target-icon" />
+                <div class="target-info">
+                  <strong>视频成片 (MP4)</strong>
+                  <small>原视频追加所选音轨，配套外挂字幕</small>
+                </div>
+                <UIcon v-if="exportTarget === 'video'" name="i-carbon-checkmark" class="check-icon" />
+              </button>
+              <button
+                type="button"
+                class="export-target-card"
+                :class="{ selected: exportTarget === 'audio' }"
+                @click="exportTarget = 'audio'"
+              >
+                <UIcon name="i-carbon-waveform" class="target-icon" />
+                <div class="target-info">
+                  <strong>仅音轨 (WAV)</strong>
+                  <small>保存所选音轨为高质量独立音频</small>
+                </div>
+                <UIcon v-if="exportTarget === 'audio'" name="i-carbon-checkmark" class="check-icon" />
+              </button>
+            </div>
+          </div>
+
+          <div class="export-modal-section">
+            <label class="modal-section-label">选择导出音轨</label>
+            <div class="export-track-grid">
+              <button
+                v-for="key in trackKeys"
+                :key="key"
+                type="button"
+                class="export-track-item"
+                :class="{ selected: exportTrack === key, disabled: !trackAvailable(key) }"
+                :disabled="!trackAvailable(key)"
+                @click="exportTrack = key"
+              >
+                <div class="track-item-header">
+                  <span class="track-item-title">{{ trackLabels[key] }}</span>
+                  <UBadge v-if="key === 'optimized'" color="primary" variant="subtle" size="xs">推荐</UBadge>
+                  <UBadge v-else-if="!trackAvailable(key)" color="neutral" variant="subtle" size="xs">未就绪</UBadge>
+                </div>
+                <p class="track-item-desc">{{ trackDescriptions[key] }}</p>
+              </button>
+            </div>
+
+            <div class="track-detail-card">
+              <div class="track-detail-header">
+                <UIcon name="i-carbon-information" class="detail-icon" />
+                <strong>{{ trackDetailNotes[exportTrack].title }}</strong>
+              </div>
+              <p class="track-detail-text">
+                {{ trackDetailNotes[exportTrack].desc }}
+              </p>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <template #footer>
+        <div class="export-modal-footer">
+          <UButton
+            v-if="lastExportResult?.subtitlePath"
+            :href="mediaUrl(lastExportResult.subtitlePath, true)"
+            color="neutral"
+            variant="ghost"
+            icon="i-carbon-closed-caption"
+            >配套字幕</UButton
+          >
+          <div class="export-modal-actions">
+            <UButton color="neutral" variant="ghost" @click="showExportModal = false">取消</UButton>
+            <StudioAction
+              icon="i-carbon-download"
+              :reason="exportReason"
+              :loading="exporting"
+              @click="exportFilm"
+              >{{ exportTarget === 'video' ? '导出视频成片' : '导出音轨' }}</StudioAction
+            >
+          </div>
+        </div>
+      </template>
+    </UModal>
   </section>
 </template>
