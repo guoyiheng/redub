@@ -21,7 +21,7 @@ function job(id: string, stage: Stage, status: JobStatus = 'queued', options: Pa
 }
 
 describe('任务面板聚合', () => {
-  it('并行批次在全部结束后才移至已完成，失败仍留在进行中', () => {
+  it('并行批次在全部结束后移至已完成，包含排队或运行中的批次留在进行中', () => {
     const jobs = [
       job('a', 'translate', 'completed', { batchId: 'translation' }),
       job('b', 'translate', 'running', { batchId: 'translation' }),
@@ -38,11 +38,30 @@ describe('任务面板聚合', () => {
       groups.find((group) => group.kind === 'translate' && group.status === 'running')!.jobs
     ).toHaveLength(2)
     jobs[1]!.status = 'completed'
-    jobs[2]!.status = 'skipped'
+    jobs[2]!.status = 'failed'
     jobs[3]!.status = 'completed'
     groups = groupJobs(jobs)
     expect(groups.filter((group) => isActiveTask(group.status))).toHaveLength(0)
     expect(groups.filter((group) => !isActiveTask(group.status))).toHaveLength(5)
+    expect(groups.find((group) => group.status === 'failed')).toBeDefined()
+  })
+
+  it('任务失败属于已完成状态，不再停留在进行中标签', () => {
+    expect(isActiveTask('failed')).toBe(false)
+    expect(isActiveTask('completed')).toBe(false)
+    expect(isActiveTask('cancelled')).toBe(false)
+    expect(isActiveTask('skipped')).toBe(false)
+    expect(isActiveTask('running')).toBe(true)
+    expect(isActiveTask('queued')).toBe(true)
+
+    const jobs = [
+      job('f1', 'translate', 'failed'),
+      job('f2', 'synthesize', 'failed'),
+      job('r1', 'synthesize', 'running')
+    ]
+    const groups = groupJobs(jobs)
+    expect(groups.filter((group) => isActiveTask(group.status))).toHaveLength(1)
+    expect(groups.filter((group) => !isActiveTask(group.status))).toHaveLength(2)
   })
   it('取消的旧自动链显示已取消，不计为排队或完成', () => {
     const groups = groupJobs([

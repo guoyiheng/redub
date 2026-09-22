@@ -1058,4 +1058,47 @@ describe.sequential('production HTTP workflow', () => {
     expect(await (await fetch(base + '/')).text()).toContain('Verified web update')
     expect((await api('projects')).some((p: { id: string }) => p.id === id)).toBe(true)
   })
+  it('supports restoring past translation or dubbing versions via /api/segments/:id/restore-version', async () => {
+    const project = await api('projects', 'POST', {
+      name: 'Version restore test',
+      text: 'Original dialogue'
+    })
+    const detail: ProjectDetail = await api(`projects/${project.id}`)
+    const seg = detail.segments[0]!
+
+    await api(`segments/${seg.id}`, 'PATCH', {
+      start: seg.start,
+      end: seg.end,
+      speaker: seg.speaker,
+      text: seg.text,
+      translation: 'Version 1 Translation',
+      enabled: true
+    })
+    await api(`segments/${seg.id}`, 'PATCH', {
+      start: seg.start,
+      end: seg.end,
+      speaker: seg.speaker,
+      text: seg.text,
+      translation: 'Version 2 Translation',
+      enabled: true
+    })
+
+    const afterUpdate: ProjectDetail = await api(`projects/${project.id}`)
+    const updatedSeg = afterUpdate.segments[0]!
+    expect(updatedSeg.translation).toBe('Version 2 Translation')
+    expect(updatedSeg.translationHistory?.length).toBeGreaterThanOrEqual(2)
+
+    const v1 = updatedSeg.translationHistory!.find((v) => v.text === 'Version 1 Translation')!
+    expect(v1).toBeTruthy()
+
+    const res = await api(`segments/${seg.id}/restore-version`, 'POST', {
+      type: 'translation',
+      versionId: v1.id
+    })
+    expect(res.ok).toBe(true)
+    expect(res.segment.translation).toBe('Version 1 Translation')
+
+    const verified: ProjectDetail = await api(`projects/${project.id}`)
+    expect(verified.segments[0]!.translation).toBe('Version 1 Translation')
+  })
 })

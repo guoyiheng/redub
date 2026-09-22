@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { batchPlan, type BatchInput } from '../../shared/batch'
 import { defaultVoiceSettings, speakerName, voiceSettingsSchema } from '../../shared/voice'
+import { languageOptions } from '../../shared/languages'
 const props = defineProps<{ initialAction?: BatchInput['action'] | 'speaker' }>()
 const emit = defineEmits<{ close: []; submitted: [] }>()
 const { detail, channels, settings, act } = useStudio()
@@ -19,6 +20,10 @@ const scope = ref<'missing' | 'all'>('missing')
 const saving = ref(false)
 const voice = ref(defaultVoiceSettings(!!project.value.vocalsPath))
 const useSegmentVoices = ref(true)
+const sourceLanguage = ref(project.value.sourceLanguage || 'auto')
+const targetLanguage = ref(project.value.targetLanguage || '中文')
+const aiChannels = computed(() => channels.value.filter((c) => c.type === 'volcengine' && c.enabled))
+const channelId = ref(project.value.channelId || aiChannels.value[0]?.id || '')
 const input = computed<BatchInput>(() => ({
   action: action.value === 'speaker' ? 'synthesize' : action.value,
   scope: scope.value,
@@ -54,11 +59,10 @@ const reason = computed(() => {
   } catch (e) {
     return (e as Error).message
   }
-  const channelId =
-    action.value === 'translate' ? settings.value.translationChannelId : project.value.channelId
+  const activeChannelId = action.value === 'translate' ? settings.value.translationChannelId : channelId.value
   if (
     (action.value === 'translate' || (action.value === 'synthesize' && needsAi.value)) &&
-    !channels.value.some((c) => c.id === channelId && c.enabled && c.configured)
+    !channels.value.some((c) => c.id === activeChannelId && c.enabled && c.configured)
   )
     return '请先在左下角设置中配置对应渠道和密钥'
   return ''
@@ -78,8 +82,8 @@ const steps = computed(() => {
     ]
   if (action.value === 'translate')
     return [
-      `将 ${lines.value.filter((s) => s.enabled).length} 句需替换台词翻译为${project.value.targetLanguage}`,
-      '覆盖这些台词的现有译文，并清除对应配音与成片',
+      `将 ${lines.value.filter((s) => s.enabled).length} 句需替换台词翻译为${targetLanguage.value}`,
+      '覆盖这些台词的现有译文，保留已有配音与成片',
       '翻译完成后核对译文，再手动生成配音'
     ]
   if (action.value === 'render')
@@ -99,6 +103,27 @@ const steps = computed(() => {
 async function submit() {
   if (reason.value || saving.value) return
   saving.value = true
+  if (action.value === 'translate') {
+    if (
+      sourceLanguage.value !== project.value.sourceLanguage ||
+      targetLanguage.value !== project.value.targetLanguage
+    ) {
+      await $fetch(`/api/projects/${project.value.id}`, {
+        method: 'PATCH',
+        body: { sourceLanguage: sourceLanguage.value, targetLanguage: targetLanguage.value }
+      })
+      project.value.sourceLanguage = sourceLanguage.value
+      project.value.targetLanguage = targetLanguage.value
+    }
+  } else if (action.value === 'synthesize' && needsAi.value) {
+    if (channelId.value && channelId.value !== project.value.channelId) {
+      await $fetch(`/api/projects/${project.value.id}`, {
+        method: 'PATCH',
+        body: { channelId: channelId.value }
+      })
+      project.value.channelId = channelId.value
+    }
+  }
   if (action.value === 'speaker') {
     const ok = await act(
       () =>
@@ -140,6 +165,37 @@ async function submit() {
         ]"
       />
     </UFormField>
+    <template v-if="action === 'translate'">
+      <div class="form-grid">
+        <UFormField label="原始语言" description="素材中台词的原始语言">
+          <USelect
+            v-model="sourceLanguage"
+            class="w-full"
+            :disabled="saving"
+            :items="[
+              { label: '自动检测', value: 'auto' },
+              { label: '中文', value: 'zh' },
+              { label: '英语', value: 'en' },
+              { label: '日语', value: 'ja' },
+              { label: '韩语', value: 'ko' },
+              { label: '西班牙语', value: 'es' },
+              { label: '法语', value: 'fr' },
+              { label: '德语', value: 'de' },
+              { label: '俄语', value: 'ru' }
+            ]"
+          />
+        </UFormField>
+        <UFormField label="目标语言" description="翻译后的对白语言">
+          <USelect
+            v-model="targetLanguage"
+            class="w-full"
+            :disabled="saving"
+            :items="languageOptions(targetLanguage)"
+            aria-label="目标语言"
+          />
+        </UFormField>
+      </div>
+    </template>
     <template v-if="action === 'speaker'">
       <UFormField label="目标角色" description="选择要统一配置发音人与音色的角色">
         <USelect
@@ -160,6 +216,19 @@ async function submit() {
       </section>
     </template>
     <template v-if="action === 'synthesize'">
+      <UFormField
+        v-if="needsAi"
+        label="AI 配音渠道"
+        description="密钥在左下角设置中配置；微软 TTS 无需密钥。"
+      >
+        <USelect
+          v-model="channelId"
+          class="w-full"
+          :disabled="saving"
+          :items="aiChannels.map((c) => ({ label: c.name, value: c.id }))"
+          placeholder="选择 AI 配音渠道"
+        />
+      </UFormField>
       <UFormField label="应用范围"
         ><USelect
           v-model="scope"

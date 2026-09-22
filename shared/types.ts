@@ -23,6 +23,7 @@ export interface Project {
   targetLanguage: string
   channelId: string
   paused: boolean
+  pinned?: boolean
   createdAt: number
   updatedAt: number
   audioPath: string | null
@@ -30,6 +31,23 @@ export interface Project {
   backgroundPath: string | null
   mixedPath: string | null
   outputPath: string | null
+}
+export interface TranslationVersion {
+  id: string
+  name: string
+  text: string
+  createdAt: number
+}
+export interface AudioVersion {
+  id: string
+  name: string
+  audioPath: string
+  duration?: number | null
+  synthesisMode?: 'ai' | 'tts'
+  speaker?: string | null
+  generationPrompt?: string | null
+  subtitle?: string | null
+  createdAt: number
 }
 export interface Segment {
   id: string
@@ -60,6 +78,8 @@ export interface Segment {
   generatedHash: string | null
   generatedDuration: number | null
   subtitle: string | null
+  translationHistory?: TranslationVersion[] | null
+  audioHistory?: AudioVersion[] | null
 }
 export interface Job {
   id: string

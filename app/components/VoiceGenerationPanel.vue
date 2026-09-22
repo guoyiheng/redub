@@ -15,11 +15,15 @@ const draft = ref(
     aiUseReference: props.segment.aiUseReference && (canReference.value || !!customReference.value)
   })
 )
+const aiChannels = computed(() => channels.value.filter((c) => c.type === 'volcengine' && c.enabled))
+const selectedChannelId = ref(detail.value?.project.channelId || aiChannels.value[0]?.id || '')
 const originalText = (props.segment.translation || props.segment.text || '').trim()
-const direction =
-  !props.segment.aiPrompt?.trim() || props.segment.aiPrompt === referenceVoicePrompt
-    ? naturalVoicePrompt
-    : props.segment.aiPrompt.trim()
+const hasReference = draft.value.aiUseReference && (canReference.value || !!customReference.value)
+const direction = props.segment.aiPrompt?.trim()
+  ? props.segment.aiPrompt.trim()
+  : hasReference
+    ? referenceVoicePrompt
+    : naturalVoicePrompt
 const aiContent = ref(props.segment.generationPrompt || `${direction}\n朗读：「${originalText}」`)
 const ttsContent = ref(dubbedText(props.segment) || originalText)
 const content = computed({
@@ -144,9 +148,9 @@ const unavailableReason = computed(() => {
   if (!content.value.trim()) return '请输入配音内容'
   if (
     draft.value.synthesisMode === 'ai' &&
-    !channels.value.some((c) => c.id === detail.value?.project.channelId && c.enabled && c.configured)
+    !channels.value.some((c) => c.id === selectedChannelId.value && c.enabled && c.configured)
   )
-    return 'AI 渠道尚未配置'
+    return '请选择已配置的 AI 配音渠道'
   return ''
 })
 function removeReference() {
@@ -194,6 +198,18 @@ async function generate() {
   if (unavailableReason.value) return
   saving.value = true
   try {
+    if (
+      draft.value.synthesisMode === 'ai' &&
+      selectedChannelId.value &&
+      detail.value?.project &&
+      selectedChannelId.value !== detail.value.project.channelId
+    ) {
+      await $fetch(`/api/projects/${detail.value.project.id}`, {
+        method: 'PATCH',
+        body: { channelId: selectedChannelId.value }
+      })
+      detail.value.project.channelId = selectedChannelId.value
+    }
     const ok = await act(
       () =>
         $fetch(`/api/segments/${props.segment.id}/generate`, {
@@ -290,6 +306,18 @@ async function generate() {
         <span class="voice-segment-time"
           >{{ formatTime(segment.start) }} – {{ formatTime(segment.end) }}</span
         >
+        <USelect
+          v-if="draft.synthesisMode === 'ai' && aiChannels.length"
+          v-model="selectedChannelId"
+          class="voice-channel-select"
+          color="neutral"
+          variant="ghost"
+          size="sm"
+          icon="i-carbon-flow"
+          :items="aiChannels.map((c) => ({ label: c.name, value: c.id }))"
+          aria-label="AI 配音渠道"
+          :disabled="busy"
+        />
         <UPopover
           v-if="draft.synthesisMode === 'ai' && !draft.aiUseReference"
           v-model:open="referenceOpen"

@@ -827,11 +827,25 @@ async function onSegmentRestored(updated: Segment) {
 }
 </script>
 <template>
-  <section v-if="detail" class="workspace" :class="{ 'workspace-preview': panel === 'preview' }">
+  <section
+    v-if="detail"
+    class="workspace"
+    :class="{ 'workspace-preview': panel === 'preview', 'workspace-script': panel === 'script' }"
+  >
     <header class="workspace-header">
       <div v-if="panel === 'script' && lines.length" class="workspace-filters">
-        <USelect v-model="speakerFilter" class="w-44" :items="speakerOptions" aria-label="按角色筛选" />
-        <USelect v-model="pageSize" class="w-36" :items="pageSizeOptions" aria-label="每页显示条数" />
+        <USelect
+          v-model="speakerFilter"
+          class="speaker-filter"
+          :items="speakerOptions"
+          aria-label="按角色筛选"
+        />
+        <USelect
+          v-model="pageSize"
+          class="page-size-select"
+          :items="pageSizeOptions"
+          aria-label="每页显示条数"
+        />
         <div v-if="totalPages > 1" class="toolbar-pagination">
           <UButton
             size="xs"
@@ -856,7 +870,9 @@ async function onSegmentRestored(updated: Segment) {
       </div>
       <div class="row-actions">
         <template v-if="panel === 'script'">
-          <span v-if="lines.length" class="help">{{ completed }} / {{ enabledCount }} 句已配音</span>
+          <span v-if="lines.length" class="help dubbing-progress"
+            >{{ completed }} / {{ enabledCount }} 句已配音</span
+          >
           <StudioAction
             v-if="lines.length"
             color="neutral"
@@ -917,16 +933,16 @@ async function onSegmentRestored(updated: Segment) {
         </div>
       </div>
       <template v-else>
-        <div class="studio-table">
+        <div class="studio-table" aria-label="台词与配音对照">
           <div class="studio-table-header">
             <div class="th-meta">片段 / 时间</div>
             <div class="th-col">
               <UIcon name="i-carbon-volume-up" />
-              <span>原文与原声素材</span>
+              <span>原文与原声</span>
             </div>
             <div class="th-col">
               <UIcon name="i-carbon-microphone" />
-              <span>配音台词与新声音</span>
+              <span>配音</span>
             </div>
             <div class="th-actions">状态与操作</div>
           </div>
@@ -934,7 +950,8 @@ async function onSegmentRestored(updated: Segment) {
             <article
               v-for="line in pagedLines"
               :key="line.id"
-              class="studio-row comparison-row"
+              class="studio-row"
+              :aria-label="`第 ${getGlobalIndex(line.id)} 句`"
               :class="{ selected: current === line.id, 'not-replaced': !line.enabled }"
             >
               <div class="row-meta">
@@ -944,6 +961,7 @@ async function onSegmentRestored(updated: Segment) {
               </div>
 
               <div class="row-source-text">
+                <span class="comparison-label">原文与原声</span>
                 <p class="dialogue-original">{{ line.text || '尚未填写原文' }}</p>
               </div>
 
@@ -960,6 +978,7 @@ async function onSegmentRestored(updated: Segment) {
               </div>
 
               <div class="row-dub-text">
+                <span class="comparison-label">配音</span>
                 <p
                   class="dialogue-translation"
                   :class="{ 'is-empty': !line.translation && !line.generatedPath }"
@@ -980,7 +999,13 @@ async function onSegmentRestored(updated: Segment) {
                 />
                 <div v-else class="audio-placeholder">
                   <UIcon name="i-carbon-waveform" />
-                  <span>{{ lineJob(line.id) ? '正在生成配音...' : '未生成配音音频' }}</span>
+                  <span>{{
+                    lineJob(line.id)
+                      ? lineJob(line.id)?.status === 'running'
+                        ? '正在生成配音…'
+                        : '等待生成配音'
+                      : '尚未生成配音'
+                  }}</span>
                 </div>
               </div>
 
@@ -1024,15 +1049,6 @@ async function onSegmentRestored(updated: Segment) {
                 </div>
 
                 <div class="row-more-actions">
-                  <UButton
-                    variant="ghost"
-                    color="neutral"
-                    size="xs"
-                    icon="i-carbon-edit"
-                    :aria-label="`第 ${getGlobalIndex(line.id)} 句编辑`"
-                    title="编辑台词"
-                    @click="editLine(line.id)"
-                  />
                   <UButton
                     variant="ghost"
                     color="neutral"

@@ -53,7 +53,9 @@ export function dubbedText(
   }
 }
 export const speakerName = (value: string | null | undefined) => value?.trim() || '角色 1'
-export const referenceVoicePrompt = '沿用原句的音色、语速和情绪，保持自然的节奏与停顿。'
+export const legacyReferenceVoicePrompt = '沿用原句的音色、语速和情绪，保持自然的节奏与停顿。'
+export const referenceVoicePrompt =
+  '严格克隆原配音的音色与说话语气，深度复刻人物的情感色彩、语调起伏与口吻风格，使生成效果与原配音听起来完全一致，保持自然的呼吸与节奏停顿。'
 export const naturalVoicePrompt = '自然、清晰地朗读，保持流畅的节奏与停顿。'
 export const defaultVoicePrompt = (useReference: boolean) =>
   useReference ? referenceVoicePrompt : naturalVoicePrompt

@@ -21,10 +21,13 @@ import {
 import { importProject } from '../services/importer'
 import { enqueue, enqueueOutput, generateSegment, serializeEnqueue, tick } from '../services/queue'
 import { mediaHealth, assetPath, cutAudio } from '../services/media'
-import { safeError } from '../services/providers'
+import { safeError, translateLines } from '../services/providers'
 import { stageLabels } from '../../shared/types'
+import type { TranslationVersion, AudioVersion } from '../../shared/types'
+import { createVersionName } from '../../shared/version'
 import { getJobDetail, getJobRequest, jobColumns } from '../services/job-requests'
 import { getPreviewTracks } from '../services/preview-tracks'
+import { edgeSpeech } from '../services/edge-speech'
 
 const channelSchema = z.object({
   name: z.string().trim().min(1).max(80),
@@ -58,6 +61,42 @@ export default defineEventHandler(async (event) => {
   const [resource, id, action] = parts
   try {
     if (resource === 'health' && method === 'GET') return await mediaHealth()
+    if (resource === 'tts' && id === 'preview' && method === 'POST') {
+      const body = (await readBody(event)) || {}
+      const voice = String(body.voice || 'zh-CN-XiaoxiaoNeural').trim()
+      let sampleText = typeof body.text === 'string' && body.text.trim() ? body.text.trim() : ''
+      if (!sampleText) {
+        if (voice.startsWith('zh-')) {
+          sampleText = '你好，这是微软语音的声音试听效果。'
+        } else if (voice.startsWith('en-')) {
+          sampleText = 'Hello, this is a sample preview of Microsoft text to speech.'
+        } else if (voice.startsWith('ja-')) {
+          sampleText = 'こんにちは、こちらは音声のサンプルです。'
+        } else if (voice.startsWith('ko-')) {
+          sampleText = '안녕하세요, 음성 샘플입니다.'
+        } else if (voice.startsWith('es-')) {
+          sampleText = 'Hola, esta es una muestra de voz.'
+        } else if (voice.startsWith('fr-')) {
+          sampleText = 'Bonjour, ceci est un exemple de voix.'
+        } else if (voice.startsWith('de-')) {
+          sampleText = 'Hallo, dies ist eine Sprachprobe.'
+        } else if (voice.startsWith('it-')) {
+          sampleText = 'Ciao, questo è un esempio di voce.'
+        } else if (voice.startsWith('ru-')) {
+          sampleText = 'Здравствуйте, это образец синтеза речи.'
+        } else {
+          sampleText = '你好，这是微软语音的声音试听。'
+        }
+      }
+      const audio = await edgeSpeech(sampleText, {
+        voice,
+        rate: String(body.rate ?? '0%'),
+        pitch: String(body.pitch ?? '0Hz'),
+        volume: String(body.volume ?? '0%')
+      })
+      setHeader(event, 'Content-Type', 'audio/mpeg')
+      return audio
+    }
     if (resource === 'settings') {
       if (method === 'GET') return await getSettings()
       if (method === 'PATCH') {
@@ -188,10 +227,20 @@ export default defineEventHandler(async (event) => {
       }
     }
     if (resource === 'projects') {
-      if (!id && method === 'GET') return await db.select().from(projects).orderBy(desc(projects.updatedAt))
+      if (!id && method === 'GET')
+        return await db.select().from(projects).orderBy(desc(projects.pinned), desc(projects.updatedAt))
       if (!id && method === 'POST') return await importProject(event)
       if (id) {
         const project = await getProject(id)
+        if (action === 'pin' && method === 'POST') {
+          const body = (await readBody(event)) as { pinned: boolean }
+          await db
+            .update(projects)
+            .set({ pinned: Boolean(body?.pinned) })
+            .where(eq(projects.id, id))
+          const [updated] = await db.select().from(projects).where(eq(projects.id, id))
+          return { ok: true, project: updated }
+        }
         if (!action && method === 'GET')
           return {
             project,
@@ -382,6 +431,90 @@ export default defineEventHandler(async (event) => {
       setResponseStatus(event, 202)
       return { jobs: await enqueue(line.projectId, ['translate'], id) }
     }
+    if (resource === 'segments' && id && action === 'translate-direct' && method === 'POST') {
+      const [line] = await db.select().from(segments).where(eq(segments.id, id))
+      if (!line) throw createError({ statusCode: 404, statusMessage: '片段不存在' })
+      const body = (await readBody(event)) || {}
+      const [p] = await db.select().from(projects).where(eq(projects.id, line.projectId))
+      if (!p) throw createError({ statusCode: 404, statusMessage: '项目不存在' })
+      const sourceLanguage = body.sourceLanguage || p.sourceLanguage
+      const targetLanguage = body.targetLanguage || p.targetLanguage
+      const channelId = body.channelId || (await getSettings()).translationChannelId
+      const channel = await getChannel(channelId)
+      if (channel.type !== 'openai') throw new Error('翻译渠道类型不正确，请在设置中配置')
+      const textToTranslate = typeof body.text === 'string' && body.text.trim() ? body.text.trim() : line.text
+      const lineToTranslate = { ...line, text: textToTranslate }
+      const customPrompt = typeof body.prompt === 'string' ? body.prompt.trim() : undefined
+      const result = await translateLines(
+        [lineToTranslate],
+        targetLanguage,
+        channel,
+        sourceLanguage,
+        customPrompt
+      )
+      const newText = result.get(line.id) || line.translation || ''
+      const history: TranslationVersion[] = [...(line.translationHistory || [])]
+      if (line.translation && line.translation.trim() && history.length === 0) {
+        history.push({
+          id: randomUUID(),
+          name: createVersionName([], new Date(Date.now() - 60000)),
+          text: line.translation,
+          createdAt: Date.now() - 60000
+        })
+      }
+      history.push({
+        id: randomUUID(),
+        name: createVersionName(history.map((v) => v.name)),
+        text: newText,
+        createdAt: Date.now()
+      })
+      await db
+        .update(segments)
+        .set({
+          ...(textToTranslate !== line.text ? { text: textToTranslate } : {}),
+          translation: newText,
+          translationHistory: history
+        })
+        .where(eq(segments.id, line.id))
+      const [updated] = await db.select().from(segments).where(eq(segments.id, line.id))
+      return { ok: true, translation: newText, segment: updated }
+    }
+    if (resource === 'segments' && id && action === 'restore-version' && method === 'POST') {
+      return await serializeEnqueue(async () => {
+        const [old] = await db.select().from(segments).where(eq(segments.id, id))
+        if (!old) throw createError({ statusCode: 404, statusMessage: '片段不存在' })
+        const body = (await readBody(event)) as { type: 'translation' | 'audio'; versionId: string }
+        if (body.type === 'translation') {
+          const versions = old.translationHistory || []
+          const target = versions.find((v) => v.id === body.versionId || v.name === body.versionId)
+          if (!target) throw createError({ statusCode: 404, statusMessage: '未找到对应译文版本' })
+          await db.update(segments).set({ translation: target.text }).where(eq(segments.id, id))
+          const [updated] = await db.select().from(segments).where(eq(segments.id, id))
+          return { ok: true, segment: updated }
+        }
+        if (body.type === 'audio') {
+          const versions = old.audioHistory || []
+          const target = versions.find((v) => v.id === body.versionId || v.name === body.versionId)
+          if (!target) throw createError({ statusCode: 404, statusMessage: '未找到对应配音版本' })
+          await db
+            .update(segments)
+            .set({
+              generatedPath: target.audioPath,
+              generatedDuration: target.duration ?? null,
+              synthesisMode: target.synthesisMode ?? old.synthesisMode,
+              aiSpeaker: target.synthesisMode === 'ai' ? (target.speaker ?? old.aiSpeaker) : old.aiSpeaker,
+              ttsVoice: target.synthesisMode === 'tts' ? (target.speaker ?? old.ttsVoice) : old.ttsVoice,
+              generationPrompt: target.generationPrompt ?? old.generationPrompt,
+              subtitle: target.subtitle ?? null
+            })
+            .where(eq(segments.id, id))
+          await invalidateOutput(old.projectId)
+          const [updated] = await db.select().from(segments).where(eq(segments.id, id))
+          return { ok: true, segment: updated }
+        }
+        throw createError({ statusCode: 400, statusMessage: '无效的版本类型' })
+      })
+    }
     if (resource === 'segments' && id && method === 'PATCH') {
       return await serializeEnqueue(async () => {
         const [old] = await db.select().from(segments).where(eq(segments.id, id))
@@ -390,30 +523,44 @@ export default defineEventHandler(async (event) => {
         const p = await getProject(old.projectId),
           data = segmentSchema.parse(await readBody(event))
         await validateTimeline(p.id, data, p.duration, p.kind === 'text', id)
-        const changed =
-          old.start !== data.start ||
-          old.end !== data.end ||
-          old.text !== data.text ||
-          old.translation !== data.translation
+        const timingChanged = old.start !== data.start || old.end !== data.end
         let referencePath = old.referencePath
-        if (p.vocalsPath && (old.start !== data.start || old.end !== data.end)) {
+        if (p.vocalsPath && timingChanged) {
           referencePath = `${p.id}/reference-${id}-${randomUUID()}.wav`
           await cutAudio(assetPath(p.vocalsPath), assetPath(referencePath), data.start, data.end - data.start)
+        }
+        const history: TranslationVersion[] = [...(old.translationHistory || [])]
+        if (data.translation !== undefined && data.translation !== old.translation) {
+          if (old.translation && old.translation.trim() && history.length === 0) {
+            history.push({
+              id: randomUUID(),
+              name: createVersionName([], new Date(Date.now() - 60000)),
+              text: old.translation,
+              createdAt: Date.now() - 60000
+            })
+          }
+          if (data.translation.trim()) {
+            history.push({
+              id: randomUUID(),
+              name: createVersionName(history.map((v) => v.name)),
+              text: data.translation,
+              createdAt: Date.now()
+            })
+          }
         }
         await db
           .update(segments)
           .set({
             ...data,
             referencePath,
-            ...(old.text !== data.text || old.translation !== data.translation
-              ? { generationPrompt: null }
-              : {}),
-            ...(changed
+            translationHistory: history,
+            ...(old.text !== data.text ? { generationPrompt: null } : {}),
+            ...(timingChanged
               ? { generatedPath: null, generatedHash: null, subtitle: null, generatedDuration: null }
               : {})
           })
           .where(eq(segments.id, id))
-        await invalidateOutput(p.id)
+        if (timingChanged) await invalidateOutput(p.id)
         return { ok: true }
       })
     }
@@ -426,7 +573,7 @@ export default defineEventHandler(async (event) => {
       }
       if (method === 'GET') {
         const query = getQuery(event)
-        const active = ['queued', 'running', 'failed'] as const
+        const active = ['queued', 'running'] as const
         if (query.history === '1') {
           const offset = z.coerce
             .number()

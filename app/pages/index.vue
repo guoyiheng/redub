@@ -40,6 +40,17 @@ async function openProjectSettings(id: string) {
   await choose(id)
   settingsProject.value = id
 }
+async function togglePin(id: string, pinned: boolean) {
+  try {
+    await $fetch(`/api/projects/${id}/pin`, {
+      method: 'POST',
+      body: { pinned }
+    })
+    await refresh()
+  } catch (e) {
+    error.value = errorMessage(e)
+  }
+}
 async function load() {
   loading.value = true
   error.value = ''
@@ -109,10 +120,16 @@ onBeforeUnmount(() => clearInterval(timer))
                       : 'i-carbon-document'
                 "
               /><span>{{ p.name }}</span>
+              <UIcon v-if="p.pinned" name="i-carbon-pin-filled" class="sidebar-pin-icon" title="已置顶" />
             </button>
             <UDropdownMenu
               :items="[
                 [
+                  {
+                    label: p.pinned ? '取消置顶' : '置顶项目',
+                    icon: p.pinned ? 'i-carbon-pin-filled' : 'i-carbon-pin',
+                    onSelect: () => togglePin(p.id, !p.pinned)
+                  },
                   {
                     label: '项目设置',
                     icon: 'i-carbon-settings-adjust',
@@ -152,6 +169,7 @@ onBeforeUnmount(() => clearInterval(timer))
         </div>
       </div>
       <div class="sidebar-footer">
+        <TaskManager />
         <button :class="{ active: view === 'settings' }" @click="show('settings')">
           <UIcon name="i-carbon-settings" />设置
         </button>
@@ -209,8 +227,16 @@ onBeforeUnmount(() => clearInterval(timer))
                   />
                 </div>
                 <div class="project-row-name">
-                  <strong>{{ p.name }}</strong
-                  ><span
+                  <div class="project-title-row">
+                    <strong>{{ p.name }}</strong>
+                    <UIcon
+                      v-if="p.pinned"
+                      name="i-carbon-pin-filled"
+                      class="project-pin-icon"
+                      title="已置顶"
+                    />
+                  </div>
+                  <span
                     >{{ p.kind === 'video' ? '视频' : p.kind === 'audio' ? '音频' : '文本' }} ·
                     {{ formatTime(p.duration) }} · {{ p.targetLanguage }}</span
                   >
@@ -225,6 +251,11 @@ onBeforeUnmount(() => clearInterval(timer))
               <UDropdownMenu
                 :items="[
                   [
+                    {
+                      label: p.pinned ? '取消置顶' : '置顶项目',
+                      icon: p.pinned ? 'i-carbon-pin-filled' : 'i-carbon-pin',
+                      onSelect: () => togglePin(p.id, !p.pinned)
+                    },
                     {
                       label: '项目设置',
                       icon: 'i-carbon-settings-adjust',
@@ -246,6 +277,5 @@ onBeforeUnmount(() => clearInterval(timer))
         </section>
       </section>
     </main>
-    <TaskManager />
   </div>
 </template>

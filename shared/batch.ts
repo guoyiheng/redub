@@ -33,7 +33,7 @@ export function batchPlan(
   if (input.action === 'translate') {
     if (!enabled.length || enabled.some((s) => !s.text.trim()))
       throw new Error('请先识别或填写需要替换的台词')
-    return enabled.map((s) => ({ stage: 'translate', segmentId: s.id }))
+    return [{ stage: 'translate' }]
   }
   if (input.action === 'render') {
     if (!lines.length) throw new Error('请先添加台词')

@@ -37,7 +37,7 @@ function titleOf(kind: TaskGroupKind, size: number) {
 }
 
 export function isActiveTask(status: JobStatus) {
-  return status === 'queued' || status === 'running' || status === 'failed'
+  return status === 'queued' || status === 'running'
 }
 
 function byLatestUpdate(a: Job, b: Job) {
@@ -46,8 +46,8 @@ function byLatestUpdate(a: Job, b: Job) {
 
 function statusOf(jobs: Job[]): JobStatus {
   if (jobs.some((job) => job.status === 'running')) return 'running'
-  if (jobs.some((job) => job.status === 'failed')) return 'failed'
   if (jobs.some((job) => job.status === 'queued')) return 'queued'
+  if (jobs.some((job) => job.status === 'failed')) return 'failed'
   if (jobs.some((job) => job.status === 'cancelled')) return 'cancelled'
   if (jobs.every((job) => job.status === 'skipped')) return 'skipped'
   return 'completed'
@@ -148,8 +148,9 @@ export function groupJobs(allJobs: Job[], recentLimit = 8): TaskGroup[] {
   const active = groups
     .filter((group) => isActiveTask(group.status))
     .sort((a, b) => {
-      const rank = { running: 0, failed: 1, queued: 2 } as const
-      const statusDiff = rank[a.status as keyof typeof rank] - rank[b.status as keyof typeof rank]
+      const rank = { running: 0, queued: 1 } as const
+      const statusDiff =
+        (rank[a.status as keyof typeof rank] ?? 2) - (rank[b.status as keyof typeof rank] ?? 2)
       return statusDiff || byLatestUpdate(a.jobs[0]!, b.jobs[0]!)
     })
   const recent = groups

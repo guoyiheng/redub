@@ -1,62 +1,55 @@
 <script setup lang="ts">
-import { targetLanguages } from '../../shared/languages'
 const emit = defineEmits<{ created: [id: string]; cancel: [] }>()
 const { errorMessage } = useStudio()
-const type = ref<'file' | 'text'>('file'),
-  file = ref<File>(),
-  text = ref(''),
-  name = ref(''),
-  language = ref('中文')
-const dragging = ref(false),
-  busy = ref(false),
-  error = ref(''),
-  upload = ref(0)
+const file = ref<File>()
+const name = ref('')
+const dragging = ref(false)
+const busy = ref(false)
+const error = ref('')
+const upload = ref(0)
 const input = ref<HTMLInputElement>()
+
 function choose(f?: File) {
   if (!f) return
   file.value = f
   if (!name.value) name.value = f.name.replace(/\.[^.]+$/, '')
 }
+
 function drop(event: DragEvent) {
   dragging.value = false
   if (!busy.value) choose(event.dataTransfer?.files[0])
 }
+
 async function submit() {
   error.value = ''
   busy.value = true
   upload.value = 0
   try {
-    if (!name.value.trim()) throw new Error('请填写项目名称')
-    let result: { id: string }
-    if (type.value === 'text')
-      result = await $fetch('/api/projects', {
-        method: 'POST',
-        body: { name: name.value, text: text.value, targetLanguage: language.value }
-      })
-    else {
-      if (!file.value) throw new Error('请先选择文件')
-      const data = new FormData()
-      data.append('file', file.value)
-      data.append('name', name.value)
-      data.append('targetLanguage', language.value)
-      result = await new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest()
-        xhr.open('POST', '/api/projects')
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) upload.value = Math.round((e.loaded / e.total) * 100)
+    if (!file.value) throw new Error('请先选择文件')
+    const projectName = name.value.trim() || file.value.name.replace(/\.[^.]+$/, '') || '未命名项目'
+    const data = new FormData()
+    data.append('file', file.value)
+    data.append('name', projectName)
+    data.append('targetLanguage', '中文')
+
+    const result = await new Promise<{ id: string }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open('POST', '/api/projects')
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) upload.value = Math.round((e.loaded / e.total) * 100)
+      }
+      xhr.onload = () => {
+        try {
+          const response = JSON.parse(xhr.responseText)
+          xhr.status < 300 ? resolve(response) : reject(new Error(response.statusMessage || '导入失败'))
+        } catch {
+          reject(new Error('导入失败，请检查文件'))
         }
-        xhr.onload = () => {
-          try {
-            const response = JSON.parse(xhr.responseText)
-            xhr.status < 300 ? resolve(response) : reject(new Error(response.statusMessage || '导入失败'))
-          } catch {
-            reject(new Error('导入失败，请检查文件'))
-          }
-        }
-        xhr.onerror = () => reject(new Error('连接中断，请重新导入'))
-        xhr.send(data)
-      })
-    }
+      }
+      xhr.onerror = () => reject(new Error('连接中断，请重新导入'))
+      xhr.send(data)
+    })
+
     emit('created', result.id)
   } catch (e) {
     error.value = errorMessage(e)
@@ -78,26 +71,8 @@ async function submit() {
         @click="emit('cancel')"
       />
     </header>
-    <div class="segmented" role="group" aria-label="导入方式">
-      <button
-        :class="{ active: type === 'file' }"
-        :aria-pressed="type === 'file'"
-        :disabled="busy"
-        @click="type = 'file'"
-      >
-        上传文件</button
-      ><button
-        :class="{ active: type === 'text' }"
-        :aria-pressed="type === 'text'"
-        :disabled="busy"
-        @click="type = 'text'"
-      >
-        粘贴台词
-      </button>
-    </div>
     <form @submit.prevent="submit">
       <div
-        v-if="type === 'file'"
         class="drop-area"
         :class="{ dragging }"
         @dragover.prevent="dragging = true"
@@ -124,23 +99,13 @@ async function submit() {
           @change="choose(($event.target as HTMLInputElement).files?.[0])"
         />
       </div>
-      <UFormField v-else label="原始台词"
-        ><UTextarea
-          v-model="text"
-          class="w-full"
-          :rows="7"
-          placeholder="每行一条台词，或粘贴 SRT / VTT"
-          :disabled="busy"
-      /></UFormField>
-      <div class="form-grid">
-        <UFormField label="项目名称" required
-          ><UInput v-model="name" class="w-full" placeholder="输入项目名称" :disabled="busy" /></UFormField
-        ><UFormField label="目标语言"
-          ><USelect v-model="language" class="w-full" :items="targetLanguages" :disabled="busy"
-        /></UFormField>
+      <div class="form-grid single-field">
+        <UFormField label="项目名称">
+          <UInput v-model="name" class="w-full" placeholder="选填，默认使用文件名" :disabled="busy" />
+        </UFormField>
       </div>
       <UAlert v-if="error" color="error" variant="soft" :title="error" />
-      <div v-if="busy && type === 'file'">
+      <div v-if="busy">
         <UProgress :model-value="upload" />
         <p class="help">{{ upload === 100 ? '文件已上传，正在读取素材…' : `正在导入 ${upload}%` }}</p>
       </div>

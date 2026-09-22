@@ -100,12 +100,13 @@ export function enqueue(projectId: string, stages?: Stage[], segmentId?: string,
     } else await assertIdle(projectId)
     if (!stages && !batch && p.kind === 'text') throw new Error('文本已导入，请手动选择翻译或生成配音')
     const lines = await getSegments(projectId)
-    const plan = batch
+    const plan: { stage: Stage; segmentId?: string }[] = batch
       ? batchPlan(p, lines, batch)
       : stages
-        ? stages.flatMap((stage) => {
-            if (!segmentId && (stage === 'translate' || stage === 'synthesize'))
+        ? stages.flatMap((stage): { stage: Stage; segmentId?: string }[] => {
+            if (!segmentId && stage === 'synthesize')
               return lines.filter((line) => line.enabled).map((line) => ({ stage, segmentId: line.id }))
+            if (!segmentId && stage === 'translate') return [{ stage }]
             return [{ stage, segmentId }]
           })
         : batchPlan(p, lines, { action: 'prepare', scope: 'missing' })
@@ -123,13 +124,13 @@ export function enqueue(projectId: string, stages?: Stage[], segmentId?: string,
       }
     }
     if (plan.some((item) => item.stage === 'translate')) {
-      if (
-        plan.some(
-          (item) =>
-            item.stage === 'translate' && !lines.find((line) => line.id === item.segmentId)?.text.trim()
-        )
-      )
-        throw new Error('请先识别或填写需要翻译的原文')
+      const hasInvalidLine = plan.some((item) => {
+        if (item.stage !== 'translate') return false
+        if (item.segmentId) return !lines.find((line) => line.id === item.segmentId)?.text.trim()
+        const enabled = lines.filter((line) => line.enabled)
+        return !enabled.length || enabled.some((line) => !line.text.trim())
+      })
+      if (hasInvalidLine) throw new Error('请先识别或填写需要翻译的原文')
       await getChannel((await getSettings()).translationChannelId)
     }
     const order = plan.map((item) => item.stage)

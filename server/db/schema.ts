@@ -1,5 +1,5 @@
 import { sqliteTable, text, integer, real, index } from 'drizzle-orm/sqlite-core'
-import type { MediaKind, Stage, JobStatus } from '../../shared/types'
+import type { MediaKind, Stage, JobStatus, TranslationVersion, AudioVersion } from '../../shared/types'
 
 export const projects = sqliteTable('projects', {
   id: text().primaryKey(),
@@ -11,6 +11,7 @@ export const projects = sqliteTable('projects', {
   targetLanguage: text().notNull().default('中文'),
   channelId: text().notNull().default('volcengine-default'),
   paused: integer({ mode: 'boolean' }).notNull().default(false),
+  pinned: integer({ mode: 'boolean' }).notNull().default(false),
   audioPath: text(),
   vocalsPath: text(),
   backgroundPath: text(),
@@ -51,7 +52,9 @@ export const segments = sqliteTable(
     generatedPath: text(),
     generatedHash: text(),
     generatedDuration: real(),
-    subtitle: text()
+    subtitle: text(),
+    translationHistory: text({ mode: 'json' }).$type<TranslationVersion[]>(),
+    audioHistory: text({ mode: 'json' }).$type<AudioVersion[]>()
   },
   (t) => [index('segments_project').on(t.projectId)]
 )

@@ -19,6 +19,7 @@ export function initDb() {
         id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, sourcePath TEXT, duration REAL NOT NULL DEFAULT 0,
         sourceLanguage TEXT NOT NULL DEFAULT 'auto', targetLanguage TEXT NOT NULL DEFAULT '中文',
         channelId TEXT NOT NULL DEFAULT 'volcengine-default', paused INTEGER NOT NULL DEFAULT 0,
+        pinned INTEGER NOT NULL DEFAULT 0,
         audioPath TEXT, vocalsPath TEXT, backgroundPath TEXT, mixedPath TEXT, outputPath TEXT,
         createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL
       );
@@ -31,7 +32,8 @@ export function initDb() {
         aiPitchRate INTEGER NOT NULL DEFAULT 0, aiSpeechRate INTEGER NOT NULL DEFAULT 0,
         aiLoudnessRate INTEGER NOT NULL DEFAULT 0, ttsVoice TEXT NOT NULL DEFAULT 'zh-CN-XiaoxiaoNeural',
         ttsRate INTEGER NOT NULL DEFAULT 0, ttsPitch INTEGER NOT NULL DEFAULT 0, ttsVolume INTEGER NOT NULL DEFAULT 0,
-        generatedPath TEXT, generatedHash TEXT, generatedDuration REAL, subtitle TEXT
+        generatedPath TEXT, generatedHash TEXT, generatedDuration REAL, subtitle TEXT,
+        translationHistory TEXT, audioHistory TEXT
       );
       CREATE INDEX IF NOT EXISTS segments_project ON segments(projectId);
       CREATE TABLE IF NOT EXISTS jobs (
@@ -64,6 +66,9 @@ export function initDb() {
     const columns = await client.execute('PRAGMA table_info(channels)')
     if (!columns.rows.some((row) => row.name === 'apiKey'))
       await client.execute('ALTER TABLE channels ADD COLUMN apiKey TEXT')
+    const projectColumns = await client.execute('PRAGMA table_info(projects)')
+    if (!projectColumns.rows.some((row) => row.name === 'pinned'))
+      await client.execute('ALTER TABLE projects ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0')
     const segmentColumns = await client.execute('PRAGMA table_info(segments)')
     const segmentColumnNames = new Set(segmentColumns.rows.map((row) => row.name))
     const segmentMigrations: Record<string, string> = {
@@ -81,7 +86,9 @@ export function initDb() {
       ttsVoice: "TEXT NOT NULL DEFAULT 'zh-CN-XiaoxiaoNeural'",
       ttsRate: 'INTEGER NOT NULL DEFAULT 0',
       ttsPitch: 'INTEGER NOT NULL DEFAULT 0',
-      ttsVolume: 'INTEGER NOT NULL DEFAULT 0'
+      ttsVolume: 'INTEGER NOT NULL DEFAULT 0',
+      translationHistory: 'TEXT',
+      audioHistory: 'TEXT'
     }
     for (const [name, definition] of Object.entries(segmentMigrations))
       if (!segmentColumnNames.has(name))

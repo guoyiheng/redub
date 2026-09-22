@@ -11,7 +11,7 @@ import { parseScript } from './text'
 import type { MediaKind } from '../../shared/types'
 
 const inputSchema = z.object({
-  name: z.string().trim().min(1).max(120),
+  name: z.string().trim().max(120).optional().default(''),
   text: z.string().max(200000).optional(),
   targetLanguage: z.string().trim().min(1).max(40).default('中文'),
   sourceLanguage: z.enum(['auto', 'zh', 'en', 'ja', 'ko', 'es', 'fr', 'de', 'ru']).default('auto')
@@ -40,7 +40,8 @@ export async function importProject(event: H3Event) {
     let data: z.infer<typeof inputSchema>,
       kind: MediaKind = 'text',
       sourcePath: string | null = null,
-      duration = 0
+      duration = 0,
+      originalFilename: string | undefined
     if (getRequestHeader(event, 'content-type')?.startsWith('multipart/form-data')) {
       const staging = join(dataDir, 'uploads')
       await mkdir(staging, { recursive: true })
@@ -56,6 +57,7 @@ export async function importProject(event: H3Event) {
       const [fields, files] = await form.parse(event.node.req)
       const file = files.file?.[0]
       if (!file) throw new Error('请选择一个媒体或文本文件')
+      originalFilename = file.originalFilename || undefined
       temp = file.filepath
       const extension = extname(file.originalFilename || '').toLowerCase()
       if (!extensions.includes(extension)) throw new Error('不支持此文件格式')
@@ -77,10 +79,12 @@ export async function importProject(event: H3Event) {
     const lines = kind === 'text' ? parseScript(data.text || '') : []
     if (lines.length > 2000) throw new Error('单个项目最多导入 2000 条台词')
     if (lines.length) duration = Math.max(...lines.map((s) => s.end))
+    const projectName =
+      data.name.trim() || (originalFilename ? originalFilename.replace(/\.[^.]+$/, '') : '') || '未命名项目'
     await db.transaction(async (tx) => {
       await tx.insert(projects).values({
         id,
-        name: data.name,
+        name: projectName,
         kind,
         sourcePath,
         duration,

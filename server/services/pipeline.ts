@@ -19,11 +19,12 @@ import {
 } from './media'
 import { synthesizeSpeech, synthesisHash, translateLines } from './providers'
 import { subtitleText } from './text'
-import type { Job, Segment } from '../../shared/types'
+import type { Job, Segment, TranslationVersion, AudioVersion } from '../../shared/types'
 import { exportProject } from './export'
 import { getPreviewTracks } from './preview-tracks'
 import { assertTimeline } from '../../shared/timeline'
 import { dubbedText } from '../../shared/voice'
+import { createVersionName } from '../../shared/version'
 
 export async function executeJob(job: Job, progress: (value: number, message: string) => Promise<void>) {
   const p = await getProject(job.projectId)
@@ -195,30 +196,38 @@ export async function executeJob(job: Job, progress: (value: number, message: st
       throw new Error('请先识别或填写所有启用片段的原文')
     const channel = await getChannel((await getSettings()).translationChannelId)
     if (channel.type !== 'openai') throw new Error('翻译渠道类型不正确')
-    await invalidateOutput(p.id)
-    for (let i = 0; i < lines.length; i += 20) {
-      const batch = lines.slice(i, i + 20)
-      const result = await translateLines(batch, p.targetLanguage, channel)
-      await db.transaction(async (tx) => {
-        for (const s of batch)
-          await tx
-            .update(segments)
-            .set({
-              translation: result.get(s.id)!,
-              generationPrompt: null,
-              generatedPath: null,
-              generatedHash: null,
-              generatedDuration: null,
-              subtitle: null
-            })
-            .where(eq(segments.id, s.id))
-      })
-      await progress(
-        Math.round((100 * Math.min(i + 20, lines.length)) / lines.length),
-        `已翻译 ${Math.min(i + 20, lines.length)} / ${lines.length}`
-      )
-    }
-    await invalidateOutput(p.id)
+    await progress(15, `正在翻译 ${lines.length} 句台词...`)
+    const result = await translateLines(lines, p.targetLanguage, channel, p.sourceLanguage)
+    await db.transaction(async (tx) => {
+      for (const s of lines) {
+        const newText = result.get(s.id)!
+        const history: TranslationVersion[] = [...(s.translationHistory || [])]
+        if (s.translation && s.translation.trim() && history.length === 0) {
+          history.push({
+            id: randomUUID(),
+            name: createVersionName([], new Date(Date.now() - 60000)),
+            text: s.translation,
+            createdAt: Date.now() - 60000
+          })
+        }
+        history.push({
+          id: randomUUID(),
+          name: createVersionName(history.map((v) => v.name)),
+          text: newText,
+          createdAt: Date.now()
+        })
+        await tx
+          .update(segments)
+          .set({
+            translation: newText,
+            translationHistory: history
+          })
+          .where(eq(segments.id, s.id))
+        s.translation = newText
+        s.translationHistory = history
+      }
+    })
+    await progress(100, `已完成全部 ${lines.length} 句台词翻译`)
   }
   if (job.stage === 'synthesize') {
     const lines = (await getSegments(p.id)).filter(
@@ -244,6 +253,20 @@ export async function executeJob(job: Job, progress: (value: number, message: st
       ) {
         const referencePath = rel(`reference-${s.id}-${randomUUID()}.wav`)
         await cutAudio(assetPath(p.vocalsPath!), assetPath(referencePath), s.start, s.end - s.start)
+        const audioHist: AudioVersion[] = [...(s.audioHistory || [])]
+        if (s.generatedPath && audioHist.length === 0) {
+          audioHist.push({
+            id: randomUUID(),
+            name: createVersionName([], new Date(Date.now() - 60000)),
+            audioPath: s.generatedPath,
+            duration: s.generatedDuration,
+            synthesisMode: s.synthesisMode,
+            speaker: s.synthesisMode === 'ai' ? s.aiSpeaker : s.ttsVoice,
+            generationPrompt: s.generationPrompt ?? null,
+            subtitle: s.subtitle ?? null,
+            createdAt: Date.now() - 60000
+          })
+        }
         await db
           .update(segments)
           .set({
@@ -251,12 +274,14 @@ export async function executeJob(job: Job, progress: (value: number, message: st
             generatedPath: null,
             generatedHash: null,
             generatedDuration: null,
-            subtitle: null
+            subtitle: null,
+            audioHistory: audioHist.length ? audioHist : undefined
           })
           .where(eq(segments.id, s.id))
         s.referencePath = referencePath
         s.generatedPath = null
         s.generatedHash = null
+        s.audioHistory = audioHist
       }
       const hash = synthesisHash(s, channel)
       if (s.generatedPath && s.generatedHash === hash && existsSync(assetPath(s.generatedPath))) continue
@@ -268,15 +293,46 @@ export async function executeJob(job: Job, progress: (value: number, message: st
         `voice-${s.id}-${randomUUID()}.${s.synthesisMode === 'ai' ? (s.aiFormat === 'wav' ? 'wav' : 'mp3') : 'mp3'}`
       )
       const result = await synthesizeSpeech(s, channel!, assetPath(output))
+      const audioHistory: AudioVersion[] = [...(s.audioHistory || [])]
+      if (s.generatedPath && audioHistory.length === 0) {
+        audioHistory.push({
+          id: randomUUID(),
+          name: createVersionName([], new Date(Date.now() - 60000)),
+          audioPath: s.generatedPath,
+          duration: s.generatedDuration,
+          synthesisMode: s.synthesisMode,
+          speaker: s.synthesisMode === 'ai' ? s.aiSpeaker : s.ttsVoice,
+          generationPrompt: s.generationPrompt ?? null,
+          subtitle: s.subtitle ?? null,
+          createdAt: Date.now() - 60000
+        })
+      }
+      audioHistory.push({
+        id: randomUUID(),
+        name: createVersionName(audioHistory.map((v) => v.name)),
+        audioPath: output,
+        duration: result.duration,
+        synthesisMode: s.synthesisMode,
+        speaker: s.synthesisMode === 'ai' ? s.aiSpeaker : s.ttsVoice,
+        generationPrompt: s.generationPrompt ?? null,
+        subtitle: result.subtitle ?? null,
+        createdAt: Date.now()
+      })
       await db
         .update(segments)
         .set({
           generatedPath: output,
           generatedHash: hash,
           generatedDuration: result.duration,
-          subtitle: result.subtitle
+          subtitle: result.subtitle,
+          audioHistory
         })
         .where(eq(segments.id, s.id))
+      s.generatedPath = output
+      s.generatedHash = hash
+      s.generatedDuration = result.duration
+      s.subtitle = result.subtitle
+      s.audioHistory = audioHistory
     }
   }
   if (job.stage === 'mix') {
