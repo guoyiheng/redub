@@ -6,6 +6,7 @@ import { getProject, getSegments } from './store'
 import { alignAudio, assetPath, audioPeaks, ffmpeg, projectDir } from './media'
 import type { PreviewTrack, PreviewTracks } from '../../shared/preview'
 import type { Project, Segment } from '../../shared/types'
+import { assertTimeline } from '../../shared/timeline'
 
 const pending = new Map<string, Promise<void>>()
 const peakCache = new Map<string, number[]>()
@@ -21,11 +22,13 @@ async function fileFingerprint(path: string | null | undefined) {
 }
 
 async function revisionFor(project: Project, lines: Segment[]) {
+  assertTimeline(lines, project.kind === 'text' ? undefined : project.duration)
   const source = project.audioPath || (project.kind === 'text' ? null : project.sourcePath)
   const fingerprints = await Promise.all([fileFingerprint(source), fileFingerprint(project.backgroundPath)])
   return createHash('sha256')
     .update(
       JSON.stringify({
+        mixVersion: 2,
         duration: project.duration,
         kind: project.kind,
         fingerprints,
@@ -128,9 +131,7 @@ async function buildDubbed(projectDirPath: string, output: string, duration: num
 
   try {
     for (const line of generated) {
-      const start = Math.max(cursor, Math.max(0, line.start))
-      const end = Math.min(duration, line.end)
-      if (end <= start) continue
+      const { start, end } = line
       await silence(start - cursor)
       const aligned = join(work, `aligned-${chunks.length}.wav`)
       await alignAudio(assetPath(line.generatedPath!), aligned, end - start)
@@ -266,9 +267,7 @@ async function buildOptimized(
   try {
     let cursor = 0
     for (const line of generated) {
-      const start = Math.max(cursor, Math.max(0, line.start))
-      const end = Math.min(duration, line.end)
-      if (end <= start) continue
+      const { start, end } = line
       await originalChunk(cursor, start)
       await replacementChunk(line, start, end)
       cursor = end
@@ -313,7 +312,7 @@ async function peaksFor(path: string | null, revision: string, key: string) {
 export async function getPreviewTracks(projectId: string): Promise<PreviewTracks> {
   const project = await getProject(projectId)
   const lines = await getSegments(projectId)
-  const duration = Math.max(0, project.duration, ...lines.map((line) => line.end))
+  const duration = project.kind === 'text' ? Math.max(0, ...lines.map((line) => line.end)) : project.duration
   if (duration <= 0) throw new Error('项目还没有可预览的时间轴')
   const revision = await revisionFor(project, lines)
   const dir = await projectDir(project.id)

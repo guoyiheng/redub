@@ -76,6 +76,40 @@ describe('批量处理范围与事务', () => {
     expect((await getSegments(id))[0]!.generatedPath).toBeNull()
     expect((await getSegments(id))[2]!.synthesisMode).toBe('ai')
   })
+  it('沿用各句参数批量生成，保留角色音色并清除重生成范围内的旧音频', async () => {
+    const id = await fixture()
+    await db
+      .update(segments)
+      .set({ ...voice, ttsVoice: 'zh-CN-YunxiNeural', ttsRate: 7 })
+      .where(eq(segments.id, `${id}-ready`))
+    await db
+      .update(segments)
+      .set({ ...voice, ttsVoice: 'zh-CN-XiaoxiaoNeural', ttsRate: -10 })
+      .where(eq(segments.id, `${id}-missing`))
+    const input = batchSchema.parse({
+      action: 'synthesize',
+      scope: 'all',
+      useSegmentVoices: true,
+      voice: { ...voice, ttsRate: 80 }
+    })
+    const queued = await enqueue(id, undefined, undefined, input)
+    expect(queued.map((job) => job.segmentId)).toEqual([`${id}-ready`, `${id}-missing`])
+    const lines = await getSegments(id)
+    expect(lines[0]).toMatchObject({ ttsVoice: 'zh-CN-YunxiNeural', ttsRate: 7, generatedPath: null })
+    expect(lines[1]).toMatchObject({ ttsVoice: 'zh-CN-XiaoxiaoNeural', ttsRate: -10, generatedPath: null })
+    expect(lines[2]!.synthesisMode).toBe('ai')
+    expect((await getProject(id)).outputPath).toBeNull()
+  })
+  it('沿用各句参数时检查实际原声参考和 AI 渠道，验证失败不创建任务', async () => {
+    const id = await fixture()
+    const input = batchSchema.parse({ action: 'synthesize', useSegmentVoices: true, voice })
+    await expect(enqueue(id, undefined, undefined, input)).rejects.toThrow('没有可用原声')
+    await db.update(segments).set({ aiUseReference: false }).where(eq(segments.projectId, id))
+    await db.update(projects).set({ channelId: 'missing-channel' }).where(eq(projects.id, id))
+    await expect(enqueue(id, undefined, undefined, input)).rejects.toThrow('渠道')
+    expect(await db.select().from(jobs).where(eq(jobs.projectId, id))).toHaveLength(0)
+    expect((await getSegments(id))[0]!.generatedPath).toBe('ready.mp3')
+  })
   it('参数、文本或渠道不可用时不修改片段、不创建任务', async () => {
     expect(batchSchema.safeParse({ action: 'synthesize', voice: { ...voice, ttsRate: 101 } }).success).toBe(
       false

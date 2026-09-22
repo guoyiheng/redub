@@ -22,6 +22,7 @@ import { subtitleText } from './text'
 import type { Job, Segment } from '../../shared/types'
 import { exportProject } from './export'
 import { getPreviewTracks } from './preview-tracks'
+import { assertTimeline } from '../../shared/timeline'
 
 export async function executeJob(job: Job, progress: (value: number, message: string) => Promise<void>) {
   const p = await getProject(job.projectId)
@@ -156,20 +157,33 @@ export async function executeJob(job: Job, progress: (value: number, message: st
       join(dir, 'transcript.json')
     )
     if (
+      !Array.isArray(result) ||
       result.length !== lines.length ||
       new Set(result.map((s) => s.id)).size !== lines.length ||
-      result.some((s) => typeof s.text !== 'string' || !s.text.trim())
+      result.some((s) => typeof s.text !== 'string' || !lines.some((line) => line.id === s.id))
     )
-      throw new Error('部分片段没有识别到台词，请调整片段或手动填写')
-    await invalidateOutput(p.id)
-    for (const row of result) {
-      if (!lines.some((s) => s.id === row.id)) throw new Error('识别返回未知片段')
-      await db
-        .update(segments)
-        .set({ text: row.text, translation: '', generatedPath: null, generatedHash: null })
-        .where(eq(segments.id, row.id))
-    }
-    await invalidateOutput(p.id)
+      throw new Error('识别结果片段不完整，请重试')
+    await db.transaction(async (tx) => {
+      for (const row of result) {
+        const text = row.text.trim()
+        await tx
+          .update(segments)
+          .set({
+            text,
+            translation: '',
+            generatedPath: null,
+            generatedHash: null,
+            generatedDuration: null,
+            subtitle: null,
+            ...(text ? {} : { enabled: false })
+          })
+          .where(eq(segments.id, row.id))
+      }
+      await tx
+        .update(projects)
+        .set({ mixedPath: null, outputPath: null, updatedAt: Date.now() })
+        .where(eq(projects.id, p.id))
+    })
   }
   if (job.stage === 'translate') {
     const lines = (await getSegments(p.id)).filter((s) => s.enabled)
@@ -256,6 +270,7 @@ export async function executeJob(job: Job, progress: (value: number, message: st
     const lines = await getSegments(p.id)
     const duration = p.kind === 'text' ? Math.max(0, ...lines.map((s) => s.end)) : p.duration
     if (duration <= 0) throw new Error('没有可合并的音轨')
+    assertTimeline(lines, duration)
     if (p.kind === 'text' && lines.some((s) => s.enabled && !s.generatedPath))
       throw new Error('文本项目没有原声，请先生成所有需要替换的配音')
     const enabled = lines.filter((s) => s.enabled && s.generatedPath)
@@ -326,11 +341,10 @@ export async function executeJob(job: Job, progress: (value: number, message: st
     }
     for (let i = 0; i < enabled.length; i++) {
       const line = enabled[i]!
-      if (line.start < cursor || line.end > duration + 0.01)
-        throw new Error('片段时间重叠或超出素材长度，请调整后重试')
-      await chunk(cursor, line.start)
-      await chunk(line.start, line.end, line)
-      cursor = line.end
+      const { start, end } = line
+      await chunk(cursor, start)
+      await chunk(start, end, line)
+      cursor = end
       await progress(
         Math.round(((i + 1) / enabled.length) * 90),
         `对齐并合并片段 ${i + 1} / ${enabled.length}`

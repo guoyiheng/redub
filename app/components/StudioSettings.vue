@@ -218,21 +218,34 @@ onBeforeUnmount(() => stopUpdateListener?.())
             <UButton icon="i-carbon-add" size="sm" @click="edit()">添加渠道</UButton>
           </div>
           <div v-if="channels.length" class="channel-list">
-            <button v-for="channel in channels" :key="channel.id" class="channel-row" @click="edit(channel)">
-              <UIcon
-                :name="channel.type === 'volcengine' ? 'i-carbon-microphone' : 'i-carbon-language'"
-                class="size-6"
-              />
-              <div>
-                <strong>{{ channel.name }}</strong
-                ><span>{{ channel.type === 'volcengine' ? '配音' : '翻译' }} · {{ channel.model }}</span>
+            <button
+              v-for="channel in channels"
+              :key="channel.id"
+              type="button"
+              class="channel-row"
+              @click="edit(channel)"
+            >
+              <div class="channel-icon-badge">
+                <UIcon
+                  :name="channel.type === 'volcengine' ? 'i-carbon-microphone' : 'i-carbon-language'"
+                />
               </div>
-              <UBadge
-                :color="!channel.enabled ? 'neutral' : channel.configured ? 'success' : 'warning'"
-                variant="soft"
-                >{{ !channel.enabled ? '已停用' : channel.configured ? '已配置' : '未配置' }}</UBadge
-              >
-              <UIcon name="i-carbon-chevron-right" />
+              <div class="channel-info">
+                <div class="channel-title-row">
+                  <strong class="channel-name">{{ channel.name }}</strong>
+                  <UBadge
+                    :color="!channel.enabled ? 'neutral' : channel.configured ? 'success' : 'warning'"
+                    variant="soft"
+                    size="sm"
+                  >{{ !channel.enabled ? '已停用' : channel.configured ? '已配置' : '未配置' }}</UBadge>
+                </div>
+                <div class="channel-meta-row">
+                  <span class="channel-type-tag">{{ channel.type === 'volcengine' ? '配音' : '翻译' }}</span>
+                  <span class="channel-meta-sep">·</span>
+                  <span class="channel-model-name" :title="channel.model">{{ channel.model }}</span>
+                </div>
+              </div>
+              <UIcon name="i-carbon-chevron-right" class="channel-chevron" />
             </button>
           </div>
           <div v-else class="settings-empty">
@@ -295,25 +308,29 @@ onBeforeUnmount(() => stopUpdateListener?.())
             <div class="engine-list">
               <article>
                 <div class="engine-icon"><UIcon name="i-carbon-video" /></div>
-                <div>
-                  <strong>FFmpeg</strong>
+                <div class="engine-info">
+                  <div class="engine-title-row">
+                    <strong>FFmpeg</strong>
+                    <UBadge :color="health?.ffmpeg ? 'success' : 'warning'" variant="soft" size="sm">{{
+                      health?.ffmpeg ? '已就绪' : '待安装'
+                    }}</UBadge>
+                  </div>
                   <p>解码与编码音视频，执行裁剪、拼接、混音、波形读取和最终封装。</p>
                   <small>{{ health?.versions?.ffmpeg || '尚未检测到版本' }}</small>
                 </div>
-                <UBadge :color="health?.ffmpeg ? 'success' : 'warning'" variant="soft">{{
-                  health?.ffmpeg ? '已就绪' : '待安装'
-                }}</UBadge>
               </article>
               <article>
                 <div class="engine-icon"><UIcon name="i-carbon-information" /></div>
-                <div>
-                  <strong>FFprobe</strong>
+                <div class="engine-info">
+                  <div class="engine-title-row">
+                    <strong>FFprobe</strong>
+                    <UBadge :color="health?.ffprobe ? 'success' : 'warning'" variant="soft" size="sm">{{
+                      health?.ffprobe ? '已就绪' : '待安装'
+                    }}</UBadge>
+                  </div>
                   <p>读取素材时长、编码格式、画面尺寸和音轨数量，为时间轴与导出提供准确信息。</p>
                   <small>{{ health?.versions?.ffprobe || '尚未检测到版本' }}</small>
                 </div>
-                <UBadge :color="health?.ffprobe ? 'success' : 'warning'" variant="soft">{{
-                  health?.ffprobe ? '已就绪' : '待安装'
-                }}</UBadge>
               </article>
             </div>
             <p class="settings-footnote">
@@ -335,40 +352,52 @@ onBeforeUnmount(() => stopUpdateListener?.())
             </div>
             <div class="model-list">
               <article>
-                <div>
-                  <strong>Demucs · htdemucs</strong>
+                <div class="model-icon"><UIcon name="i-carbon-voice-activate" /></div>
+                <div class="model-info">
+                  <div class="model-title-row">
+                    <strong>Demucs · htdemucs</strong>
+                    <UBadge :color="health?.modelStatus?.demucs ? 'success' : 'warning'" variant="soft" size="sm">{{
+                      health?.modelStatus?.demucs ? '已安装' : '待安装'
+                    }}</UBadge>
+                  </div>
                   <p>把原始音轨分离为人声和背景音。当前版本固定使用 htdemucs，页面中不可切换。</p>
                 </div>
-                <UBadge :color="health?.modelStatus?.demucs ? 'success' : 'warning'" variant="soft">{{
-                  health?.modelStatus?.demucs ? '已安装' : '待安装'
-                }}</UBadge>
               </article>
               <article>
-                <div>
-                  <strong>Faster Whisper · 可切换</strong>
+                <div class="model-icon"><UIcon name="i-carbon-speech-to-text" /></div>
+                <div class="model-info">
+                  <div class="model-title-row">
+                    <strong>Faster Whisper · 可切换</strong>
+                    <UBadge :color="health?.modelStatus?.fasterWhisper ? 'success' : 'warning'" variant="soft" size="sm">{{
+                      health?.modelStatus?.fasterWhisper ? '已安装' : '待安装'
+                    }}</UBadge>
+                  </div>
                   <p>把语音识别为文字。可在“任务与识别”中切换 tiny、base、small、medium 或 large-v3。</p>
                 </div>
-                <UBadge :color="health?.modelStatus?.fasterWhisper ? 'success' : 'warning'" variant="soft">{{
-                  health?.modelStatus?.fasterWhisper ? '已安装' : '待安装'
-                }}</UBadge>
               </article>
               <article>
-                <div>
-                  <strong>Silero VAD · 内置</strong>
+                <div class="model-icon"><UIcon name="i-carbon-audio-console" /></div>
+                <div class="model-info">
+                  <div class="model-title-row">
+                    <strong>Silero VAD · 内置</strong>
+                    <UBadge :color="health?.modelStatus?.fasterWhisper ? 'success' : 'warning'" variant="soft" size="sm">{{
+                      health?.modelStatus?.fasterWhisper ? '已安装' : '待安装'
+                    }}</UBadge>
+                  </div>
                   <p>检测人声起止位置，自动切分台词片段；随 Faster Whisper 环境提供，无需单独选择。</p>
                 </div>
-                <UBadge :color="health?.modelStatus?.fasterWhisper ? 'success' : 'warning'" variant="soft">{{
-                  health?.modelStatus?.fasterWhisper ? '已安装' : '待安装'
-                }}</UBadge>
               </article>
               <article>
-                <div>
-                  <strong>OpenCC · 内置</strong>
+                <div class="model-icon"><UIcon name="i-carbon-translate" /></div>
+                <div class="model-info">
+                  <div class="model-title-row">
+                    <strong>OpenCC · 内置</strong>
+                    <UBadge :color="health?.modelStatus?.opencc ? 'success' : 'warning'" variant="soft" size="sm">{{
+                      health?.modelStatus?.opencc ? '已安装' : '待安装'
+                    }}</UBadge>
+                  </div>
                   <p>把繁体识别结果转换为简体中文；不参与配音生成，也不需要切换。</p>
                 </div>
-                <UBadge :color="health?.modelStatus?.opencc ? 'success' : 'warning'" variant="soft">{{
-                  health?.modelStatus?.opencc ? '已安装' : '待安装'
-                }}</UBadge>
               </article>
             </div>
             <p v-if="desktop && health && !health.models" class="settings-footnote">
@@ -401,28 +430,30 @@ onBeforeUnmount(() => stopUpdateListener?.())
               act(() => $fetch('/api/settings', { method: 'PATCH', body: queueDraft }), '任务设置已保存')
             "
           >
-            <UFormField
-              label="全局并发任务数"
-              description="同时运行的任务总数；预处理、翻译、配音与合成共用此额度。数值越高越占用 CPU 和网络。"
-            >
-              <USelect v-model="queueDraft.concurrency" class="w-full" :items="[1, 2, 3, 4, 5, 6, 7, 8]" />
-            </UFormField>
-            <UFormField
-              label="本地识别模型"
-              description="Faster Whisper 模型越大越准确，但速度越慢、内存占用越高。"
-            >
-              <USelect
-                v-model="queueDraft.whisperModel"
-                class="w-full"
-                :items="[
-                  { label: 'Tiny · 最快', value: 'tiny' },
-                  { label: 'Base · 轻量', value: 'base' },
-                  { label: 'Small · 推荐', value: 'small' },
-                  { label: 'Medium · 更准确', value: 'medium' },
-                  { label: 'Large v3 · 最准确', value: 'large-v3' }
-                ]"
-              />
-            </UFormField>
+            <div class="settings-form-grid">
+              <UFormField
+                label="全局并发任务数"
+                description="同时运行的任务总数；预处理、翻译、配音与合成共用此额度。数值越高越占用 CPU 和网络。"
+              >
+                <USelect v-model="queueDraft.concurrency" class="w-full" :items="[1, 2, 3, 4, 5, 6, 7, 8]" />
+              </UFormField>
+              <UFormField
+                label="本地识别模型"
+                description="Faster Whisper 模型越大越准确，但速度越慢、内存占用越高。"
+              >
+                <USelect
+                  v-model="queueDraft.whisperModel"
+                  class="w-full"
+                  :items="[
+                    { label: 'Tiny · 最快', value: 'tiny' },
+                    { label: 'Base · 轻量', value: 'base' },
+                    { label: 'Small · 推荐', value: 'small' },
+                    { label: 'Medium · 更准确', value: 'medium' },
+                    { label: 'Large v3 · 最准确', value: 'large-v3' }
+                  ]"
+                />
+              </UFormField>
+            </div>
             <UFormField label="默认翻译渠道" description="只显示已启用的 OpenAI 兼容渠道。">
               <USelect
                 v-model="queueDraft.translationChannelId"
@@ -434,10 +465,12 @@ onBeforeUnmount(() => stopUpdateListener?.())
                 "
               />
             </UFormField>
-            <UCheckbox v-model="queueDraft.pauseOnFailure" label="任务失败后暂停队列" />
-            <UButton color="neutral" variant="outline" type="submit" class="settings-save"
-              >保存任务设置</UButton
-            >
+            <div class="settings-form-footer">
+              <UCheckbox v-model="queueDraft.pauseOnFailure" label="任务失败后暂停队列" />
+              <UButton color="neutral" variant="outline" type="submit" class="settings-save"
+                >保存任务设置</UButton
+              >
+            </div>
           </form>
         </section>
 
@@ -514,28 +547,32 @@ onBeforeUnmount(() => stopUpdateListener?.())
     <UModal v-model:open="modalOpen" :title="channelTitle" :ui="{ content: 'sm:max-w-xl' }">
       <template #body>
         <form v-if="draft" class="channel-editor" @submit.prevent="save">
-          <UFormField label="渠道名称"><UInput v-model="draft.name" class="w-full" /></UFormField>
-          <UFormField label="类型">
-            <USelect
-              v-model="draft.type"
-              class="w-full"
-              :items="[
-                { label: '火山 Audio 配音', value: 'volcengine' },
-                { label: 'OpenAI 兼容翻译', value: 'openai' }
-              ]"
-            />
-          </UFormField>
+          <div class="channel-editor-grid">
+            <UFormField label="渠道名称"><UInput v-model="draft.name" class="w-full" /></UFormField>
+            <UFormField label="类型">
+              <USelect
+                v-model="draft.type"
+                class="w-full"
+                :items="[
+                  { label: '火山 Audio 配音', value: 'volcengine' },
+                  { label: 'OpenAI 兼容翻译', value: 'openai' }
+                ]"
+              />
+            </UFormField>
+          </div>
+          <div class="channel-editor-grid">
+            <UFormField label="模型 ID"><UInput v-model="draft.model" class="w-full" /></UFormField>
+            <UFormField label="兼容环境变量名">
+              <UInput v-model="draft.keyEnv" class="w-full" placeholder="CUSTOM_API_KEY" />
+            </UFormField>
+          </div>
           <UFormField label="接口地址"><UInput v-model="draft.endpoint" class="w-full" /></UFormField>
-          <UFormField label="模型 ID"><UInput v-model="draft.model" class="w-full" /></UFormField>
           <UFormField label="API Key" description="只保存在本机；编辑已有渠道时留空表示不修改。">
             <UInput v-model="draft.apiKey" class="w-full" type="password" placeholder="输入 API Key" />
           </UFormField>
-          <UFormField label="兼容环境变量名">
-            <UInput v-model="draft.keyEnv" class="w-full" placeholder="CUSTOM_API_KEY" />
-          </UFormField>
           <details v-if="draft.type === 'volcengine'" class="advanced-options">
             <summary>声音参数</summary>
-            <div class="settings-form">
+            <div class="channel-voice-params">
               <UFormField label="音调">
                 <UInput v-model.number="draft.pitch" class="w-full" type="number" min="-12" max="12" />
               </UFormField>
@@ -547,10 +584,12 @@ onBeforeUnmount(() => stopUpdateListener?.())
               </UFormField>
             </div>
           </details>
-          <UCheckbox v-model="draft.enabled" label="启用渠道" />
-          <div class="modal-actions">
-            <UButton type="submit" :loading="saving">保存渠道</UButton>
-            <UButton color="neutral" variant="ghost" type="button" @click="modalOpen = false">取消</UButton>
+          <div class="channel-editor-footer">
+            <UCheckbox v-model="draft.enabled" label="启用渠道" />
+            <div class="modal-actions">
+              <UButton color="neutral" variant="ghost" type="button" @click="modalOpen = false">取消</UButton>
+              <UButton type="submit" :loading="saving">保存渠道</UButton>
+            </div>
           </div>
         </form>
       </template>

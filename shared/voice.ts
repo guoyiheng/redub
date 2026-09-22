@@ -26,6 +26,7 @@ export const voiceSettingsSchema = z.object({
   ttsVolume: z.number().int().min(-50).max(100).default(0)
 })
 export type VoiceSettings = z.infer<typeof voiceSettingsSchema>
+export const speakerName = (value: string | null | undefined) => value?.trim() || '角色 1'
 export const referenceVoicePrompt = '沿用原句的音色、语速和情绪，保持自然的节奏与停顿。'
 export const naturalVoicePrompt = '自然、清晰地朗读，保持流畅的节奏与停顿。'
 export const defaultVoicePrompt = (useReference: boolean) =>

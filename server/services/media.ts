@@ -189,12 +189,20 @@ export function tempoFilters(ratio: number) {
   return values.map((v) => `atempo=${v.toFixed(8)}`).join(',')
 }
 export async function alignAudio(source: string, target: string, duration: number) {
+  if (!Number.isFinite(duration) || duration <= 0) throw new Error('配音目标时长必须大于零')
   const info = await probe(source)
+  // Keep short speech at its natural rate. Reject speech that cannot fit at up to 1.2x.
+  const ratio = Math.max(1, info.duration / duration)
+  if (ratio > 1.2 + 1e-6)
+    throw new Error(
+      `配音时长 ${info.duration.toFixed(2)} 秒超过片段 ${duration.toFixed(2)} 秒可容纳的范围，请缩短台词并重新生成，或扩大时间范围`
+    )
+  const filter = ratio !== 1 ? `${tempoFilters(ratio)},` : ''
   await ffmpeg([
     '-i',
     source,
     '-af',
-    `${tempoFilters(info.duration / duration)},apad,atrim=0:${duration},afade=t=in:d=0.008,afade=t=out:st=${Math.max(0, duration - 0.008)}:d=0.008`,
+    `${filter}apad,atrim=0:${duration},afade=t=in:d=0.008,afade=t=out:st=${Math.max(0, duration - 0.008)}:d=0.008`,
     '-ar',
     '48000',
     '-ac',

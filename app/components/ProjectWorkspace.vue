@@ -3,6 +3,7 @@ import type { BatchInput } from '../../shared/batch'
 import type { ExportResult } from '../../shared/export'
 import type { PreviewTracks } from '../../shared/preview'
 import { languageOptions, normalizeLanguage } from '../../shared/languages'
+import { speakerName } from '../../shared/voice'
 
 type PreviewTrackKey = 'optimized' | 'original' | 'background' | 'dubbed'
 type ExportFormat = 'mkv' | 'mp4' | 'wav'
@@ -23,7 +24,7 @@ const trackDescriptions: Record<PreviewTrackKey, string> = {
 const { detail, channels, settingsProject, workspacePanels, act, toast, errorMessage, refresh } = useStudio()
 const taskWait = new AbortController()
 onBeforeUnmount(() => taskWait.abort())
-const batchAction = ref<BatchInput['action']>('synthesize')
+const batchAction = ref<BatchInput['action'] | 'speaker'>('synthesize')
 const current = ref<string>()
 const time = ref(0)
 const playing = ref(false)
@@ -63,6 +64,63 @@ const project = computed(() => detail.value!.project)
 const panel = computed(() => workspacePanels.value[project.value.id] || 'script')
 const lines = computed(() => detail.value?.segments || [])
 const selected = computed(() => lines.value.find((s) => s.id === current.value))
+const currentPage = ref(1)
+const pageSize = ref(50)
+const speakerFilter = ref<string | number>(0)
+const lastExportResult = ref<ExportResult>()
+
+const speakerOptions = computed(() => {
+  const counts = new Map<string, number>()
+  for (const line of lines.value) {
+    const name = speakerName(line.speaker)
+    counts.set(name, (counts.get(name) || 0) + 1)
+  }
+  return [
+    { label: `全部角色 (${lines.value.length})`, value: 0 },
+    ...Array.from(counts).map(([name, count]) => ({
+      label: `${name} (${count})`,
+      value: name
+    }))
+  ]
+})
+
+const pageSizeOptions = [
+  { label: '每页 30 句', value: 30 },
+  { label: '每页 50 句', value: 50 },
+  { label: '每页 100 句', value: 100 },
+  { label: '全部显示', value: 0 }
+]
+
+const filteredLines = computed(() => {
+  if (speakerFilter.value === 0) return lines.value
+  return lines.value.filter((l) => speakerName(l.speaker) === speakerFilter.value)
+})
+
+const totalPages = computed(() => {
+  if (!pageSize.value) return 1
+  return Math.max(1, Math.ceil(filteredLines.value.length / pageSize.value))
+})
+
+const pagedLines = computed(() => {
+  if (!pageSize.value) return filteredLines.value
+  const start = (currentPage.value - 1) * pageSize.value
+  return filteredLines.value.slice(start, start + pageSize.value)
+})
+
+const globalIndexes = computed(() => new Map(lines.value.map((line, index) => [line.id, index + 1])))
+const getGlobalIndex = (lineId: string) => globalIndexes.value.get(lineId) || 0
+
+watch([speakerFilter, pageSize], () => {
+  currentPage.value = 1
+})
+watch(speakerOptions, (items) => {
+  if (!items.some((item) => item.value === speakerFilter.value)) speakerFilter.value = 0
+})
+
+watch([filteredLines, pageSize], () => {
+  if (currentPage.value > totalPages.value) currentPage.value = totalPages.value
+  if (currentPage.value < 1) currentPage.value = 1
+})
 const locked = computed(
   () => detail.value?.jobs.some((j) => ['queued', 'running'].includes(j.status)) || false
 )
@@ -89,6 +147,19 @@ const previewSignature = computed(() =>
     }))
   })
 )
+const exportSignature = computed(() =>
+  JSON.stringify({
+    preview: previewSignature.value,
+    name: project.value.name,
+    text: lines.value.map((line) => [line.text, line.translation]),
+    tracks: exportTracks,
+    originalMode: exportOriginalMode.value,
+    format: exportFormat.value
+  })
+)
+watch(exportSignature, () => {
+  lastExportResult.value = undefined
+})
 const clockSource = computed(() => {
   if (project.value.kind === 'video' || project.value.kind === 'audio')
     return project.value.sourcePath || project.value.audioPath
@@ -186,7 +257,7 @@ const addReason = computed(() =>
 )
 const lineJob = (id: string) =>
   detail.value?.jobs.find((j) => j.segmentId === id && ['queued', 'running'].includes(j.status))
-function openBatch(action: BatchInput['action']) {
+function openBatch(action: BatchInput['action'] | 'speaker') {
   batchAction.value = action
   showBatch.value = true
 }
@@ -364,6 +435,7 @@ function applyOriginalGapsExport() {
 async function exportFilm() {
   if (exportReason.value || exporting.value) return
   exporting.value = true
+  const signature = exportSignature.value
   try {
     const task = await $fetch<{ jobId: string }>(`/api/projects/${project.value.id}/export`, {
       method: 'POST',
@@ -384,18 +456,28 @@ async function exportFilm() {
       color: 'success'
     })
     const result = await waitForJobResult<ExportResult>(task.jobId, taskWait.signal)
+    if (signature === exportSignature.value) lastExportResult.value = result
     const link = document.createElement('a')
     link.href = mediaUrl(result.path, true)
     link.download = result.filename
     document.body.appendChild(link)
     link.click()
     link.remove()
-    toast.add({
-      id: 'project-export-success',
-      title: '成片已导出',
-      description: result.filename,
-      color: 'success'
-    })
+    if (result.subtitlePath) {
+      toast.add({
+        id: 'project-export-success',
+        title: '成片已导出（包含外挂字幕）',
+        description: `${result.filename} 与 ${result.subtitleFilename || '配套字幕'}`,
+        color: 'success'
+      })
+    } else {
+      toast.add({
+        id: 'project-export-success',
+        title: '成片已导出',
+        description: result.filename,
+        color: 'success'
+      })
+    }
   } catch (error) {
     if (taskWait.signal.aborted) return
     toast.add({
@@ -465,6 +547,8 @@ watch(
   () => project.value.id,
   () => {
     current.value = undefined
+    speakerFilter.value = 0
+    currentPage.value = 1
     previewTracks.value = undefined
     pauseAll()
   },
@@ -565,6 +649,50 @@ async function addLine() {
     showEditor.value = true
   }, '台词已添加')
 }
+
+const translatingLineId = ref<string | null>(null)
+async function translateSingleLine(lineId: string) {
+  if (translatingLineId.value || locked.value) return
+  translatingLineId.value = lineId
+  try {
+    await act(async () => {
+      await $fetch(`/api/segments/${lineId}/translate`, { method: 'POST' })
+    }, '台词翻译完成')
+  } finally {
+    translatingLineId.value = null
+  }
+}
+
+const rendering = ref(false)
+const renderReason = computed(() => {
+  if (locked.value) return '请等待当前项目任务完成'
+  if (!lines.value.length) return '当前项目没有台词'
+  const enabled = lines.value.filter((s) => s.enabled)
+  if (project.value.kind === 'text' && enabled.some((s) => !s.generatedPath))
+    return '文本项目没有原声，请先生成所有需要替换的配音'
+  const generated = enabled.filter((s) => s.generatedPath)
+  if (
+    project.value.kind !== 'text' &&
+    (!project.value.audioPath || (generated.length && !project.value.backgroundPath))
+  )
+    return '请先分离人声与背景音'
+  return ''
+})
+
+async function renderFilm() {
+  if (rendering.value || renderReason.value) return
+  rendering.value = true
+  try {
+    await act(async () => {
+      await $fetch(`/api/projects/${project.value.id}/batch`, {
+        method: 'POST',
+        body: { action: 'render' }
+      })
+    }, '合成任务已加入队列')
+  } finally {
+    rendering.value = false
+  }
+}
 </script>
 <template>
   <section v-if="detail" class="workspace">
@@ -584,30 +712,13 @@ async function addLine() {
           >{{ project.paused ? '继续任务' : '暂停任务' }}</UButton
         >
         <StudioAction
-          v-if="panel === 'script'"
-          color="neutral"
-          variant="ghost"
-          icon="i-carbon-add"
-          :reason="addReason"
-          @click="addLine"
-          >添加台词</StudioAction
-        >
-        <StudioAction
           v-if="panel === 'script' && lines.length"
           color="neutral"
           variant="ghost"
           icon="i-carbon-language"
           :reason="dirty ? '请先保存台词修改' : ''"
           @click="openBatch('translate')"
-          >翻译台词</StudioAction
-        >
-        <StudioAction
-          v-if="panel === 'preview'"
-          color="neutral"
-          variant="soft"
-          icon="i-carbon-video"
-          @click="openBatch('render')"
-          >合成成片</StudioAction
+          >批量翻译</StudioAction
         >
         <StudioAction
           v-if="panel === 'script'"
@@ -616,8 +727,18 @@ async function addLine() {
           @click="openBatch(lines.length ? 'synthesize' : 'prepare')"
           >{{ lines.length ? '批量配音' : '处理素材' }}</StudioAction
         >
+        <StudioAction
+          v-if="panel === 'preview'"
+          color="neutral"
+          variant="soft"
+          icon="i-carbon-video"
+          :reason="renderReason"
+          :loading="rendering"
+          @click="renderFilm"
+          >合成成片</StudioAction
+        >
         <UButton
-          v-if="project.outputPath"
+          v-if="panel === 'preview' && project.outputPath"
           :href="mediaUrl(project.outputPath, true)"
           icon="i-carbon-download"
           color="neutral"
@@ -648,31 +769,48 @@ async function addLine() {
         </div>
       </div>
       <template v-else>
-        <details class="workspace-guide">
-          <summary>
-            <UIcon name="i-carbon-information" />处理指引<span>校对后逐句配音，翻译按需使用</span
-            ><UIcon name="i-carbon-chevron-down" />
-          </summary>
-          <div class="guide-content">
-            <p><strong>校对台词</strong>检查时间和原文，在右列填写希望说出的内容。</p>
-            <p><strong>按需翻译</strong>需要其他语言时，点击“翻译台词”。会使用翻译接口额度。</p>
-            <p><strong>生成配音</strong>每句可独立选择 AI 或免费 TTS；需要统一处理时使用“批量配音”。</p>
-            <p><strong>试听并合成</strong>左右对照试听，满意后到“预览成片”手动合成。</p>
+        <div class="script-toolbar">
+          <div class="toolbar-filters">
+            <USelect v-model="speakerFilter" class="w-48" :items="speakerOptions" aria-label="按角色筛选" />
+            <USelect v-model="pageSize" class="w-36" :items="pageSizeOptions" aria-label="每页显示条数" />
           </div>
-        </details>
+          <div v-if="totalPages > 1" class="toolbar-pagination">
+            <UButton
+              size="xs"
+              color="neutral"
+              variant="ghost"
+              icon="i-carbon-chevron-left"
+              :disabled="currentPage <= 1"
+              aria-label="上一页"
+              @click="currentPage--"
+            />
+            <span class="page-indicator"
+              >第 {{ currentPage }} / {{ totalPages }} 页（共 {{ filteredLines.length }} 句）</span
+            >
+            <UButton
+              size="xs"
+              color="neutral"
+              variant="ghost"
+              icon="i-carbon-chevron-right"
+              :disabled="currentPage >= totalPages"
+              aria-label="下一页"
+              @click="currentPage++"
+            />
+          </div>
+        </div>
         <div class="comparison-heading"><span>原文与原声</span><span>配音台词与新声音</span></div>
         <div class="comparison-list">
           <article
-            v-for="(line, i) in lines"
+            v-for="line in pagedLines"
             :key="line.id"
             class="comparison-row"
             :class="{ selected: current === line.id, 'not-replaced': !line.enabled }"
           >
             <header class="comparison-meta">
               <div class="line-meta">
-                <span class="line-number">{{ String(i + 1).padStart(2, '0') }}</span
+                <span class="line-number">{{ String(getGlobalIndex(line.id)).padStart(2, '0') }}</span
                 ><time>{{ formatTime(line.start) }} – {{ formatTime(line.end) }}</time
-                ><span>{{ line.speaker }}</span>
+                ><span>{{ speakerName(line.speaker) }}</span>
               </div>
               <div class="line-meta">
                 <span v-if="lineJob(line.id)" class="status-running">{{
@@ -686,15 +824,11 @@ async function addLine() {
             </header>
             <div class="comparison-source">
               <div class="dialogue-content">
-                <p class="dialogue-original">{{ line.text || '尚未填写原文' }}</p>
-                <UButton
-                  color="neutral"
-                  variant="ghost"
-                  size="xs"
-                  icon="i-carbon-edit"
-                  :aria-label="`编辑第 ${i + 1} 句原文与时间`"
+                <p
+                  class="dialogue-original"
+                  title="点击编辑原文与时间"
                   @click="selectLine(line.id)"
-                />
+                >{{ line.text || '尚未填写原文' }}</p>
               </div>
               <ClipAudio
                 :src="
@@ -702,49 +836,81 @@ async function addLine() {
                     ? `/api/segments/${line.id}/original?t=${line.start}-${line.end}`
                     : undefined
                 "
-                :label="`第 ${i + 1} 句原声`"
+                :label="`第 ${getGlobalIndex(line.id)} 句原声`"
                 :empty="project.kind === 'text' ? '文本台词，无原声音频' : '尚无可试听的原声素材'"
               />
             </div>
             <div class="comparison-generated">
               <div class="dialogue-content">
                 <div>
-                  <p class="dialogue-translation">
+                  <p
+                    class="dialogue-translation"
+                    title="点击编辑配音台词"
+                    @click="selectLine(line.id)"
+                  >
                     {{ line.translation || line.text || '填写要生成的配音台词' }}
                   </p>
                   <small v-if="!line.translation && line.text" class="help">使用原文配音</small>
                 </div>
-                <UButton
-                  color="neutral"
-                  variant="ghost"
-                  size="xs"
-                  icon="i-carbon-edit"
-                  :aria-label="`编辑第 ${i + 1} 句配音台词`"
-                  @click="selectLine(line.id)"
-                />
               </div>
               <div class="generated-output">
                 <ClipAudio
                   v-if="line.generatedPath"
                   :src="mediaUrl(line.generatedPath)"
-                  :label="`第 ${i + 1} 句生成配音`"
+                  :label="`第 ${getGlobalIndex(line.id)} 句生成配音`"
                 />
                 <div v-else class="audio-placeholder">
                   <UIcon name="i-carbon-waveform" /><span>{{
                     lineJob(line.id) ? '完成后可在此试听' : '生成后在此试听'
                   }}</span>
                 </div>
-                <UButton
-                  variant="soft"
-                  size="sm"
-                  icon="i-carbon-microphone"
-                  :aria-label="`第 ${i + 1} 句${lineJob(line.id) ? '配音设置' : line.generatedPath ? '重新生成' : '生成配音'}`"
-                  @click="generateLine(line.id)"
-                  >{{ lineJob(line.id) ? '配音设置' : line.generatedPath ? '重新生成' : '生成配音' }}</UButton
-                >
+                <div class="line-action-buttons">
+                  <UButton
+                    variant="soft"
+                    size="sm"
+                    icon="i-carbon-language"
+                    :loading="translatingLineId === line.id"
+                    :disabled="locked || !line.text?.trim()"
+                    :aria-label="`第 ${getGlobalIndex(line.id)} 句翻译`"
+                    @click="translateSingleLine(line.id)"
+                    >{{ line.translation ? '重新翻译' : '翻译' }}</UButton
+                  >
+                  <UButton
+                    variant="soft"
+                    size="sm"
+                    icon="i-carbon-microphone"
+                    :disabled="locked"
+                    :aria-label="`第 ${getGlobalIndex(line.id)} 句配音`"
+                    @click="generateLine(line.id)"
+                    >{{ lineJob(line.id) ? '配音设置' : line.generatedPath ? '重新配音' : '配音' }}</UButton
+                  >
+                </div>
               </div>
             </div>
           </article>
+        </div>
+        <div v-if="totalPages > 1" class="script-bottom-pagination">
+          <UButton
+            size="sm"
+            color="neutral"
+            variant="ghost"
+            icon="i-carbon-chevron-left"
+            :disabled="currentPage <= 1"
+            aria-label="上一页"
+            @click="currentPage--"
+            >上一页</UButton
+          >
+          <span class="page-indicator">第 {{ currentPage }} / {{ totalPages }} 页</span>
+          <UButton
+            size="sm"
+            color="neutral"
+            variant="ghost"
+            trailing-icon="i-carbon-chevron-right"
+            :disabled="currentPage >= totalPages"
+            aria-label="下一页"
+            @click="currentPage++"
+            >下一页</UButton
+          >
         </div>
       </template>
     </section>
@@ -991,12 +1157,12 @@ async function addLine() {
             </div>
             <div class="export-actions">
               <UButton
-                v-if="project.mixedPath"
-                :href="mediaUrl(`${project.id}/subtitles.srt`, true)"
-                color="neutral"
-                variant="ghost"
+                v-if="lastExportResult?.subtitlePath"
+                :href="mediaUrl(lastExportResult.subtitlePath, true)"
+                color="primary"
+                variant="soft"
                 icon="i-carbon-closed-caption"
-                >下载字幕 SRT</UButton
+                >下载配套外挂字幕 (.srt)</UButton
               >
               <StudioAction
                 icon="i-carbon-download"

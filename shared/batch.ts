@@ -6,9 +6,10 @@ export const batchSchema = z
     action: z.enum(['prepare', 'translate', 'synthesize', 'render']),
     scope: z.enum(['missing', 'all']).default('missing'),
     finish: z.boolean().default(false),
+    useSegmentVoices: z.boolean().optional(),
     voice: voiceSettingsSchema.optional()
   })
-  .refine((v) => v.action !== 'synthesize' || !!v.voice, '请配置配音参数')
+  .refine((v) => v.action !== 'synthesize' || v.useSegmentVoices || !!v.voice, '请配置配音参数')
 export type BatchInput = z.infer<typeof batchSchema>
 export function batchPlan(
   project: Project,
@@ -45,8 +46,10 @@ export function batchPlan(
   if (!targets.length) throw new Error('此范围内没有需要生成的台词')
   if (targets.some((s) => !(s.translation || s.text).trim())) throw new Error('请先填写要生成的台词')
   if (
-    input.voice?.synthesisMode === 'ai' &&
-    input.voice.aiUseReference &&
+    targets.some((line) => {
+      const voice = input.useSegmentVoices ? line : input.voice
+      return voice?.synthesisMode === 'ai' && voice.aiUseReference
+    }) &&
     (project.kind === 'text' || !project.vocalsPath)
   )
     throw new Error('没有可用原声，请选择指定音色')

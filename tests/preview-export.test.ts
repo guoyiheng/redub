@@ -183,16 +183,14 @@ describe('预览音轨与无损导出', () => {
   it('字幕跟随实际音轨，修改台词后生成新的同名视频与字幕', async () => {
     const options = { optimized: true, original: false, background: false, dubbed: false, format: 'mkv' }
     const missingId = `${id}-missing`
-    await db
-      .insert(segments)
-      .values({
-        id: missingId,
-        projectId: id,
-        start: 2,
-        end: 3,
-        text: '原声台词',
-        translation: '尚未配音的译文'
-      })
+    await db.insert(segments).values({
+      id: missingId,
+      projectId: id,
+      start: 2,
+      end: 3,
+      text: '原声台词',
+      translation: '尚未配音的译文'
+    })
     try {
       const first = await exportProject(id, options)
       const before = await readFile(assetPath(first.subtitlePath!), 'utf8')

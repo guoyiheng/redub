@@ -51,12 +51,22 @@ export function enqueue(projectId: string, stages?: Stage[], segmentId?: string,
     const p = await getProject(projectId)
     await assertIdle(projectId)
     if (!stages && !batch && p.kind === 'text') throw new Error('文本已导入，请手动选择翻译或生成配音')
+    const lines = await getSegments(projectId)
     const plan = batch
-      ? batchPlan(p, await getSegments(projectId), batch)
+      ? batchPlan(p, lines, batch)
       : stages
         ? stages.map((stage) => ({ stage, segmentId }))
-        : batchPlan(p, await getSegments(projectId), { action: 'prepare', scope: 'missing', finish: false })
-    if (batch?.action === 'synthesize' && batch.voice?.synthesisMode === 'ai') await getChannel(p.channelId)
+        : batchPlan(p, lines, { action: 'prepare', scope: 'missing', finish: false })
+    const targetIds = plan.flatMap((item) => (item.segmentId ? [item.segmentId] : []))
+    if (batch?.action === 'synthesize') {
+      const voices = batch.useSegmentVoices
+        ? lines.filter((line) => targetIds.includes(line.id))
+        : [batch.voice!]
+      if (voices.some((voice) => voice.synthesisMode === 'ai')) {
+        const channel = await getChannel(p.channelId)
+        if (channel.type !== 'volcengine') throw new Error('请在项目设置中选择 AI 配音渠道')
+      }
+    }
     if (batch?.action === 'translate') await getChannel((await getSettings()).translationChannelId)
     const order = plan.map((item) => item.stage)
     const rows: Job[] = []
@@ -76,18 +86,17 @@ export function enqueue(projectId: string, stages?: Stage[], segmentId?: string,
         updatedAt: Date.now()
       })
     await db.transaction(async (tx) => {
-      if (batch?.action === 'synthesize' && batch.voice) {
-        const ids = plan.flatMap((item) => (item.segmentId ? [item.segmentId] : []))
+      if (batch?.action === 'synthesize') {
         await tx
           .update(segments)
           .set({
-            ...batch.voice,
+            ...(batch.useSegmentVoices ? {} : batch.voice),
             generatedPath: null,
             generatedHash: null,
             generatedDuration: null,
             subtitle: null
           })
-          .where(and(eq(segments.projectId, projectId), inArray(segments.id, ids)))
+          .where(and(eq(segments.projectId, projectId), inArray(segments.id, targetIds)))
         await tx
           .update(projects)
           .set({ mixedPath: null, outputPath: null, updatedAt: Date.now() })

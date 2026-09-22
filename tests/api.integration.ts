@@ -18,8 +18,11 @@ let server: ChildProcess,
 let voice: Buffer
 let holdSynthesis: Promise<void> | undefined
 let holdTranslation: Promise<void> | undefined
-const synthesisRequests: { text_prompt: string; speaker?: string; audio_config: { speech_rate: number } }[] =
-  []
+const synthesisRequests: {
+  text_prompt: string
+  references?: { speaker?: string }[]
+  audio_config: { speech_rate: number }
+}[] = []
 let translationRequests = 0
 const mock = createServer(async (req, res) => {
   const parts: Buffer[] = []
@@ -49,6 +52,11 @@ const mock = createServer(async (req, res) => {
       })
     )
   } else {
+    if ('speaker' in body) {
+      res.writeHead(400)
+      res.end(JSON.stringify({ message: 'speaker 必须放在 references 中' }))
+      return
+    }
     synthesisRequests.push(body)
     await holdSynthesis
     res.end(
@@ -391,7 +399,7 @@ describe.sequential('production HTTP workflow', () => {
     expect(synthesisRequests.slice(requestOffset)).toHaveLength(2)
     expect(synthesisRequests[requestOffset]).toMatchObject({
       text_prompt: expect.stringContaining('第二句温柔自然'),
-      speaker: 'fixture-speaker',
+      references: [{ speaker: 'fixture-speaker' }],
       audio_config: { speech_rate: 17 }
     })
   })
@@ -543,6 +551,120 @@ describe.sequential('production HTTP workflow', () => {
     await expect(api('jobs/does-not-exist')).rejects.toThrow('404')
     const first = detail.requests[0]!
     await expect(api(`jobs/another-job/requests/${first.id}`)).rejects.toThrow('404')
+  })
+  it('rejects overlapping edits and out-of-bounds additions without changing saved sentences', async () => {
+    const project = await api('projects', 'POST', { name: '时间轴校验', text: 'First line.\nSecond line.' })
+    const before: ProjectDetail = await api(`projects/${project.id}`)
+    const first = before.segments[0]!,
+      second = before.segments[1]!
+    await expect(
+      api(`projects/${project.id}/segments`, 'POST', { ...first, start: first.start + 0.1 })
+    ).rejects.toThrow('重叠')
+    await expect(api(`segments/${second.id}`, 'PATCH', { ...second, start: first.start })).rejects.toThrow(
+      '重叠'
+    )
+    expect((await api(`projects/${project.id}`)).segments).toEqual(before.segments)
+    await api(`segments/${second.id}`, 'PATCH', { ...second, start: first.end })
+    const upload = new FormData()
+    upload.set('name', '媒体边界校验')
+    upload.set('file', new Blob([new Uint8Array(voice)], { type: 'audio/mp3' }), 'source.mp3')
+    const response = await fetch(`${base}/api/projects`, { method: 'POST', body: upload })
+    expect(response.status).toBe(200)
+    const audioId = (await response.json()).id
+    const media: ProjectDetail = await api(`projects/${audioId}`)
+    await expect(
+      api(`projects/${audioId}/segments`, 'POST', {
+        start: 0,
+        end: media.project.duration + 0.1,
+        text: 'Out of range',
+        translation: '',
+        speaker: '角色 1',
+        enabled: true
+      })
+    ).rejects.toThrow('超出')
+    expect((await api(`projects/${audioId}`)).segments).toEqual([])
+  })
+  it('saves normalized role voices locally and preserves them through batch synthesis', async () => {
+    const project = await api('projects', 'POST', {
+      name: '角色音色',
+      text: 'First role.\nSecond role.\nOriginal only.'
+    })
+    const before: ProjectDetail = await api(`projects/${project.id}`)
+    const [first, second, third] = before.segments
+    await api(`segments/${first!.id}`, 'PATCH', { ...first, speaker: ' 主角 ' })
+    await api(`segments/${second!.id}`, 'PATCH', { ...second, speaker: '配角' })
+    await api(`segments/${third!.id}`, 'PATCH', { ...third, speaker: '', enabled: false })
+    const male = { ...defaultVoiceSettings(false), aiSpeaker: 'male-fixture', aiSpeechRate: 5 }
+    const female = { ...defaultVoiceSettings(false), aiSpeaker: 'female-fixture', aiSpeechRate: -5 }
+    const offset = synthesisRequests.length
+    for (const [speaker, voiceSettings] of [
+      ['主角', male],
+      ['配角', female],
+      ['角色 1', female]
+    ] as const) {
+      expect(
+        await api(`projects/${project.id}/speaker-voice`, 'POST', { speaker, voice: voiceSettings })
+      ).toEqual({ ok: true, updated: 1 })
+    }
+    const configured: ProjectDetail = await api(`projects/${project.id}`)
+    expect(configured.jobs).toEqual([])
+    expect(synthesisRequests).toHaveLength(offset)
+    await expect(
+      api(`projects/${project.id}/speaker-voice`, 'POST', { speaker: '不存在', voice: male })
+    ).rejects.toThrow('没有可配置')
+    expect((await api(`projects/${project.id}`)).segments).toEqual(configured.segments)
+    let release!: () => void
+    holdSynthesis = new Promise((resolve) => {
+      release = resolve
+    })
+    let queued: Job[] = []
+    try {
+      queued = await api(`projects/${project.id}/batch`, 'POST', {
+        action: 'synthesize',
+        scope: 'all',
+        useSegmentVoices: true
+      })
+      await expect(
+        api(`projects/${project.id}/speaker-voice`, 'POST', { speaker: '主角', voice: female })
+      ).rejects.toThrow('409')
+    } finally {
+      holdSynthesis = undefined
+      release()
+    }
+    const done = await until(
+      (detail) =>
+        queued.every((job) => detail.jobs.find((item) => item.id === job.id)?.status === 'completed'),
+      project.id
+    )
+    expect(
+      synthesisRequests
+        .slice(offset)
+        .map((request) => [request.references?.[0]?.speaker, request.audio_config.speech_rate])
+    ).toEqual([
+      ['male-fixture', 5],
+      ['female-fixture', -5]
+    ])
+    expect(done.segments[0]!.generatedPath).toBeTruthy()
+    expect(done.segments[1]!.generatedPath).toBeTruthy()
+    expect(done.segments[2]!.generatedPath).toBeNull()
+    expect(
+      await api(`projects/${project.id}/speaker-voice`, 'POST', { speaker: '主角', voice: male })
+    ).toEqual({ ok: true, updated: 0 })
+    const unchanged: ProjectDetail = await api(`projects/${project.id}`)
+    expect(unchanged.segments).toEqual(done.segments)
+    expect(unchanged.project).toEqual(done.project)
+    await api(`projects/${project.id}/speaker-voice`, 'POST', {
+      speaker: '主角',
+      voice: { ...male, aiSpeechRate: 10 }
+    })
+    const changed: ProjectDetail = await api(`projects/${project.id}`)
+    expect(changed.segments[0]).toMatchObject({
+      generatedPath: null,
+      generatedHash: null,
+      generatedDuration: null,
+      subtitle: null
+    })
+    expect(changed.segments[1]).toEqual(done.segments[1])
   })
   it('serves signed web updates immediately without restarting the local API', async () => {
     const { installWebUpdate } = createRequire(import.meta.url)('../electron/web-update.cjs')

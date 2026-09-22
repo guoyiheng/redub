@@ -1,17 +1,18 @@
 import { normalizeLanguage } from '../../shared/languages'
-import { voiceSettingsSchema } from '../../shared/voice'
+import { speakerName, voiceSettingsSchema } from '../../shared/voice'
 import { batchSchema } from '../../shared/batch'
+import { assertTimeline } from '../../shared/timeline'
 import { originalClip } from '../services/original-clip'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { eq, and, desc, inArray, notInArray } from 'drizzle-orm'
 import { db, initDb } from '../db'
 import { projects, segments, jobs, channels, settings } from '../db/schema'
-import { getProject, getSegments, getSettings, assertIdle, invalidateOutput } from '../services/store'
+import { getProject, getSegments, getSettings, getChannel, assertIdle, invalidateOutput } from '../services/store'
 import { importProject } from '../services/importer'
 import { enqueue, enqueueOutput, generateSegment, serializeEnqueue, tick } from '../services/queue'
 import { mediaHealth, assetPath, cutAudio } from '../services/media'
-import { safeError } from '../services/providers'
+import { safeError, translateLines } from '../services/providers'
 import { stageLabels } from '../../shared/types'
 import { getJobDetail, getJobRequest, jobColumns } from '../services/job-requests'
 
@@ -217,6 +218,54 @@ export default defineEventHandler(async (event) => {
           void tick()
           return { ok: true }
         }
+        if (action === 'speaker-voice' && method === 'POST') {
+          return await serializeEnqueue(async () => {
+            await assertIdle(id)
+            const body = z
+              .object({
+                speaker: z.string().trim().min(1).max(80),
+                voice: voiceSettingsSchema
+              })
+              .parse(await readBody(event))
+            const targets = (await getSegments(id)).filter(
+              (line) => speakerName(line.speaker) === body.speaker
+            )
+            if (!targets.length) throw new Error('该角色没有可配置的台词')
+            const voice = {
+              ...body.voice,
+              aiSpeaker: body.voice.aiSpeaker ?? null,
+              aiPrompt: body.voice.aiPrompt ?? null
+            }
+            const changed = targets.filter((line) =>
+              Object.entries(voice).some(
+                ([key, value]) => (line[key as keyof typeof voice] ?? '') !== (value ?? '')
+              )
+            )
+            if (changed.length)
+              await db.transaction(async (tx) => {
+                await tx
+                  .update(segments)
+                  .set({
+                    ...voice,
+                    generatedPath: null,
+                    generatedHash: null,
+                    generatedDuration: null,
+                    subtitle: null
+                  })
+                  .where(
+                    inArray(
+                      segments.id,
+                      changed.map((line) => line.id)
+                    )
+                  )
+                await tx
+                  .update(projects)
+                  .set({ mixedPath: null, outputPath: null, updatedAt: Date.now() })
+                  .where(eq(projects.id, id))
+              })
+            return { ok: true, updated: changed.length }
+          })
+        }
         if (action === 'segments' && method === 'POST') {
           return await serializeEnqueue(async () => {
             await assertIdle(id)
@@ -247,6 +296,34 @@ export default defineEventHandler(async (event) => {
     if (resource === 'segments' && id && action === 'generate' && method === 'POST') {
       setResponseStatus(event, 202)
       return await generateSegment(id, voiceSettingsSchema.parse(await readBody(event)))
+    }
+    if (resource === 'segments' && id && action === 'translate' && method === 'POST') {
+      return await serializeEnqueue(async () => {
+        const [old] = await db.select().from(segments).where(eq(segments.id, id))
+        if (!old) throw createError({ statusCode: 404, statusMessage: '片段不存在' })
+        await assertIdle(old.projectId)
+        if (!old.text?.trim()) throw createError({ statusCode: 400, statusMessage: '台词原文为空，无法翻译' })
+        const p = await getProject(old.projectId)
+        const s = await getSettings()
+        if (!s.translationChannelId) {
+          throw createError({ statusCode: 400, statusMessage: '未配置默认翻译渠道，请前往设置配置' })
+        }
+        const channel = await getChannel(s.translationChannelId)
+        const resultMap = await translateLines([old], p.targetLanguage, channel)
+        const translation = resultMap.get(old.id) || ''
+        await db
+          .update(segments)
+          .set({
+            translation,
+            generatedPath: null,
+            generatedHash: null,
+            subtitle: null,
+            generatedDuration: null
+          })
+          .where(eq(segments.id, id))
+        await invalidateOutput(p.id)
+        return { ok: true, translation }
+      })
     }
     if (resource === 'segments' && id && method === 'PATCH') {
       return await serializeEnqueue(async () => {
@@ -397,8 +474,6 @@ async function validateTimeline(
   text: boolean,
   except?: string
 ) {
-  if (!text && data.end > duration + 0.01) throw new Error('片段不能超出素材时长')
   const all = await getSegments(projectId)
-  if (all.some((s) => s.id !== except && data.start < s.end && data.end > s.start))
-    throw new Error('片段不能重叠，请调整起止时间')
+  assertTimeline([...all.filter((line) => line.id !== except), data], text ? undefined : duration)
 }
