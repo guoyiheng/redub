@@ -1010,7 +1010,7 @@ async function onSegmentRestored(updated: Segment) {
               </div>
 
               <div class="row-actions-col">
-                <div class="status-wrapper">
+                <div v-if="lineJob(line.id) || !line.enabled || line.generatedPath" class="status-wrapper">
                   <UBadge v-if="lineJob(line.id)" color="warning" variant="subtle" size="xs">
                     <UIcon name="i-carbon-renew" class="animate-spin" />
                     <span>{{ lineJob(line.id)?.status === 'running' ? '生成中' : '排队中' }}</span>
@@ -1022,13 +1022,12 @@ async function onSegmentRestored(updated: Segment) {
                     <UIcon name="i-carbon-checkmark" />
                     <span>{{ line.synthesisMode === 'tts' ? '微软 TTS' : 'AI 配音' }}</span>
                   </UBadge>
-                  <UBadge v-else color="neutral" variant="subtle" size="xs"> 待配音 </UBadge>
                 </div>
 
                 <div class="action-buttons-group">
                   <UButton
-                    variant="soft"
-                    color="primary"
+                    variant="ghost"
+                    color="neutral"
                     size="xs"
                     icon="i-carbon-microphone"
                     :disabled="locked"
@@ -1046,9 +1045,6 @@ async function onSegmentRestored(updated: Segment) {
                     @click="openTranslation(line)"
                     >翻译</UButton
                   >
-                </div>
-
-                <div class="row-more-actions">
                   <UButton
                     variant="ghost"
                     color="neutral"
@@ -1057,7 +1053,8 @@ async function onSegmentRestored(updated: Segment) {
                     :aria-label="`第 ${getGlobalIndex(line.id)} 句历史版本`"
                     title="历史版本"
                     @click="openHistory(line)"
-                  />
+                    >历史</UButton
+                  >
                 </div>
               </div>
             </article>

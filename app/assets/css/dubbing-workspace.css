@@ -30,7 +30,7 @@
     font-variant-numeric: tabular-nums;
   }
   .studio-table {
-    --dialogue-columns: 136px minmax(0, 1fr) minmax(0, 1fr) 152px;
+    --dialogue-columns: 136px minmax(0, 1fr) minmax(0, 1fr) 208px;
     --dialogue-column-gap: 24px;
     background: var(--ui-bg-elevated);
     border: 1px solid var(--ui-border);
@@ -205,10 +205,11 @@
   .row-actions-col {
     grid-area: actions;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(28px, auto) auto;
     align-content: start;
     align-items: center;
-    gap: 14px 4px;
+    gap: 12px;
   }
   .status-wrapper {
     display: flex;
@@ -225,15 +226,7 @@
     align-items: center;
     gap: 4px;
   }
-  .row-more-actions {
-    grid-column: 2;
-    grid-row: 1;
-    display: flex;
-    align-items: center;
-    gap: 2px;
-  }
-  .action-buttons-group > button,
-  .row-more-actions > button {
+  .action-buttons-group > button {
     flex-shrink: 0;
     min-height: 30px;
     white-space: nowrap;
@@ -241,7 +234,7 @@
 
   @container dubbing-workspace (max-width: 1000px) {
     .studio-table {
-      --dialogue-columns: 120px minmax(0, 1fr) minmax(0, 1fr) 148px;
+      --dialogue-columns: 120px minmax(0, 1fr) minmax(0, 1fr) 204px;
       --dialogue-column-gap: 16px;
     }
     .studio-table-header,
@@ -309,13 +302,8 @@
       padding-top: 10px;
       border-top: 1px solid var(--ui-border);
     }
-    .action-buttons-group > button,
-    .row-more-actions > button {
+    .action-buttons-group > button {
       min-height: 44px;
-    }
-    .row-more-actions > button {
-      min-width: 44px;
-      justify-content: center;
     }
     .workspace-header {
       position: static;
