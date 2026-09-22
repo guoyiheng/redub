@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
+import { writeFile, rename, rm } from 'node:fs/promises'
 import { basename, join } from 'node:path'
-import { getProject } from './store'
+import { getProject, getSegments } from './store'
+import { exportSubtitles } from './subtitles'
 import { assetPath, ffmpeg, projectDir } from './media'
 import { getPreviewTracks } from './preview-tracks'
 import {
@@ -79,12 +81,32 @@ async function exportProjectInternal(projectId: string, options: ExportOptions):
 
   const chosen = selected.map((key) => ({ key, track: selectTrack(tracks, key, options) }))
   const revision = tracks.revision || 'current'
-  const key = exportKey(options, revision)
+  const subtitle = exportSubtitles(await getSegments(projectId), project.kind, options)
+  // Subtitle edits must create a new matching media/SRT pair, even if audio is unchanged.
+  const key = exportKey(options, `${revision}:${subtitle}`)
   const extension = options.format
   const filename = `${safeStem(project.name)}-${key}.${extension}`
   const relative = `${project.id}/${filename}`
   const output = assetPath(relative)
-  if (existsSync(output)) return { path: relative, filename }
+  const srtFilename = `${safeStem(project.name)}-${key}.srt`
+  const srtRelative = `${project.id}/${srtFilename}`
+  const srtOutput = assetPath(srtRelative)
+  const ensureSubtitle = async () => {
+    if (!subtitle) return {}
+    const temporarySubtitle = `${srtOutput}.partial`
+    try {
+      await writeFile(temporarySubtitle, subtitle, 'utf-8')
+      await rename(temporarySubtitle, srtOutput)
+    } finally {
+      await rm(temporarySubtitle, { force: true })
+    }
+    return { subtitlePath: srtRelative, subtitleFilename: srtFilename }
+  }
+
+  if (existsSync(output)) {
+    const sub = await ensureSubtitle()
+    return { path: relative, filename, ...sub }
+  }
   const dir = await projectDir(project.id)
   const temporary = join(dir, `.${safeStem(project.name)}-${key}.${process.pid}.partial.${extension}`)
   const source = project.kind === 'video' ? exportSourcePath(project.sourcePath) : null
@@ -107,14 +129,13 @@ async function exportProjectInternal(projectId: string, options: ExportOptions):
   try {
     await ffmpeg(args)
     // Rename only after ffmpeg closes, so an interrupted export never looks complete.
-    const { rename } = await import('node:fs/promises')
     await rename(temporary, output)
+    const sub = await ensureSubtitle()
+    return { path: relative, filename, ...sub }
   } catch (error) {
-    const { rm } = await import('node:fs/promises')
     await rm(temporary, { force: true }).catch(() => {})
     throw error
   }
-  return { path: relative, filename }
 }
 
 export function exportFilename(path: string) {

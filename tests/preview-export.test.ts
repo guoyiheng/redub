@@ -1,7 +1,8 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
+import { eq } from 'drizzle-orm'
 import { join } from 'node:path'
 import { db, initDb } from '../server/db'
 import { projects, segments } from '../server/db/schema'
@@ -177,5 +178,51 @@ describe('预览音轨与无损导出', () => {
         format: 'mkv'
       })
     ).rejects.toThrow('不能与其他音轨重复合并')
+  })
+
+  it('字幕跟随实际音轨，修改台词后生成新的同名视频与字幕', async () => {
+    const options = { optimized: true, original: false, background: false, dubbed: false, format: 'mkv' }
+    const missingId = `${id}-missing`
+    await db
+      .insert(segments)
+      .values({
+        id: missingId,
+        projectId: id,
+        start: 2,
+        end: 3,
+        text: '原声台词',
+        translation: '尚未配音的译文'
+      })
+    try {
+      const first = await exportProject(id, options)
+      const before = await readFile(assetPath(first.subtitlePath!), 'utf8')
+      expect(first.subtitleFilename).toBe(first.filename.replace(/\.mkv$/, '.srt'))
+      expect(before).toContain('你好')
+      expect(before).toContain('原声台词')
+      expect(before).not.toContain('尚未配音的译文')
+      await db.update(segments).set({ text: '校对后的原声台词' }).where(eq(segments.id, missingId))
+      const second = await exportProject(id, options)
+      expect(second.subtitlePath).not.toBe(first.subtitlePath)
+      expect(second.path).not.toBe(first.path)
+      expect(await readFile(assetPath(second.subtitlePath!), 'utf8')).toContain('校对后的原声台词')
+      expect(await readFile(assetPath(first.subtitlePath!), 'utf8')).toBe(before)
+      await writeFile(assetPath(second.subtitlePath!), 'interrupted subtitle')
+      await exportProject(id, options)
+      expect(await readFile(assetPath(second.subtitlePath!), 'utf8')).toContain('校对后的原声台词')
+
+      const original = await exportProject(id, {
+        ...options,
+        optimized: false,
+        original: true,
+        originalMode: 'full'
+      })
+      const originalSubtitle = await readFile(assetPath(original.subtitlePath!), 'utf8')
+      expect(originalSubtitle).toContain('Hello')
+      expect(originalSubtitle).not.toContain('你好')
+      const background = await exportProject(id, { ...options, optimized: false, background: true })
+      expect(background.subtitlePath).toBeUndefined()
+    } finally {
+      await db.delete(segments).where(eq(segments.id, missingId))
+    }
   })
 })

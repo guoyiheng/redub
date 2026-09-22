@@ -12,6 +12,8 @@ export type ExportOptions = z.infer<typeof exportSchema>
 export interface ExportResult {
   path: string
   filename: string
+  subtitlePath?: string
+  subtitleFilename?: string
 }
 
 export const exportTrackKeys = ['optimized', 'original', 'background', 'dubbed'] as const
