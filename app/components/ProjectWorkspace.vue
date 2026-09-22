@@ -85,6 +85,7 @@ const speakerOptions = computed(() => {
 })
 
 const pageSizeOptions = [
+  { label: '每页 10 句', value: 10 },
   { label: '每页 30 句', value: 30 },
   { label: '每页 50 句', value: 50 },
   { label: '每页 100 句', value: 100 },
@@ -695,6 +696,31 @@ async function renderFilm() {
         <span class="workspace-project-name">{{ project.name }}</span>
         <span class="help">{{ normalizeLanguage(project.targetLanguage) }} · {{ lines.length }} 句台词</span>
       </div>
+      <div v-if="panel === 'script' && lines.length" class="workspace-filters">
+        <USelect v-model="speakerFilter" class="w-44" :items="speakerOptions" aria-label="按角色筛选" />
+        <USelect v-model="pageSize" class="w-36" :items="pageSizeOptions" aria-label="每页显示条数" />
+        <div v-if="totalPages > 1" class="toolbar-pagination">
+          <UButton
+            size="xs"
+            color="neutral"
+            variant="ghost"
+            icon="i-carbon-chevron-left"
+            :disabled="currentPage <= 1"
+            aria-label="上一页"
+            @click="currentPage--"
+          />
+          <span class="page-indicator">{{ currentPage }} / {{ totalPages }}</span>
+          <UButton
+            size="xs"
+            color="neutral"
+            variant="ghost"
+            icon="i-carbon-chevron-right"
+            :disabled="currentPage >= totalPages"
+            aria-label="下一页"
+            @click="currentPage++"
+          />
+        </div>
+      </div>
       <div class="row-actions">
         <span v-if="lines.length" class="help">{{ completed }} / {{ enabledCount }} 句已配音</span>
         <UButton
@@ -763,35 +789,6 @@ async function renderFilm() {
         </div>
       </div>
       <template v-else>
-        <div class="script-toolbar">
-          <div class="toolbar-filters">
-            <USelect v-model="speakerFilter" class="w-48" :items="speakerOptions" aria-label="按角色筛选" />
-            <USelect v-model="pageSize" class="w-36" :items="pageSizeOptions" aria-label="每页显示条数" />
-          </div>
-          <div v-if="totalPages > 1" class="toolbar-pagination">
-            <UButton
-              size="xs"
-              color="neutral"
-              variant="ghost"
-              icon="i-carbon-chevron-left"
-              :disabled="currentPage <= 1"
-              aria-label="上一页"
-              @click="currentPage--"
-            />
-            <span class="page-indicator"
-              >第 {{ currentPage }} / {{ totalPages }} 页（共 {{ filteredLines.length }} 句）</span
-            >
-            <UButton
-              size="xs"
-              color="neutral"
-              variant="ghost"
-              icon="i-carbon-chevron-right"
-              :disabled="currentPage >= totalPages"
-              aria-label="下一页"
-              @click="currentPage++"
-            />
-          </div>
-        </div>
         <div class="comparison-heading"><span>原文与原声</span><span>配音台词与新声音</span></div>
         <div class="comparison-list">
           <article
