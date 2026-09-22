@@ -2,6 +2,7 @@
 import type { BatchInput } from '../../shared/batch'
 import type { ExportResult } from '../../shared/export'
 import type { PreviewTracks } from '../../shared/preview'
+import type { Segment } from '../../shared/types'
 import { languageOptions, normalizeLanguage } from '../../shared/languages'
 import { speakerName, dubbedText } from '../../shared/voice'
 
@@ -759,6 +760,10 @@ function generateLine(id: string) {
   current.value = id
   showGeneration.value = true
 }
+function editLine(id: string) {
+  current.value = id
+  showEditor.value = true
+}
 function openGeneration() {
   showEditor.value = false
   showGeneration.value = true
@@ -789,26 +794,41 @@ async function addLine() {
   }, '台词已添加')
 }
 
-const translatingLineId = ref<string | null>(null)
-async function translateSingleLine(lineId: string) {
-  if (translatingLineId.value || locked.value) return
-  translatingLineId.value = lineId
-  try {
-    await act(async () => {
-      await $fetch(`/api/segments/${lineId}/translate`, { method: 'POST' })
-    }, '翻译已加入队列')
-  } finally {
-    translatingLineId.value = null
+const showTranslation = ref(false)
+const translationSegment = ref<Segment | null>(null)
+const translationGlobalIndex = ref(1)
+
+function openTranslation(line: Segment) {
+  translationSegment.value = line
+  translationGlobalIndex.value = getGlobalIndex(line.id)
+  showTranslation.value = true
+}
+
+const historyModalOpen = ref(false)
+const historySegment = ref<Segment | null>(null)
+const historyGlobalIndex = ref(1)
+
+const currentHistorySegment = computed(() => {
+  if (!historySegment.value) return null
+  return lines.value.find((l) => l.id === historySegment.value?.id) || historySegment.value
+})
+
+function openHistory(line: Segment) {
+  historySegment.value = line
+  historyGlobalIndex.value = getGlobalIndex(line.id)
+  historyModalOpen.value = true
+}
+
+async function onSegmentRestored(updated: Segment) {
+  if (historySegment.value?.id === updated.id) {
+    historySegment.value = updated
   }
+  await refresh()
 }
 </script>
 <template>
   <section v-if="detail" class="workspace" :class="{ 'workspace-preview': panel === 'preview' }">
     <header class="workspace-header">
-      <div class="workspace-title">
-        <span class="workspace-project-name">{{ project.name }}</span>
-        <span class="help">{{ normalizeLanguage(project.targetLanguage) }} · {{ lines.length }} 句台词</span>
-      </div>
       <div v-if="panel === 'script' && lines.length" class="workspace-filters">
         <USelect v-model="speakerFilter" class="w-44" :items="speakerOptions" aria-label="按角色筛选" />
         <USelect v-model="pageSize" class="w-36" :items="pageSizeOptions" aria-label="每页显示条数" />
@@ -897,49 +917,109 @@ async function translateSingleLine(lineId: string) {
         </div>
       </div>
       <template v-else>
-        <div class="comparison-heading"><span>原文与原声</span><span>配音台词与新声音</span></div>
+        <div class="comparison-heading">
+          <div class="comparison-heading-col">
+            <UIcon name="i-carbon-volume-up" />
+            <span>原文与原声素材</span>
+          </div>
+          <div class="comparison-heading-col">
+            <UIcon name="i-carbon-microphone" />
+            <span>配音台词与新声音</span>
+          </div>
+        </div>
         <div class="comparison-list">
           <article
             v-for="line in pagedLines"
             :key="line.id"
-            class="comparison-row"
+            class="segment-card comparison-row"
             :class="{ selected: current === line.id, 'not-replaced': !line.enabled }"
           >
-            <header class="comparison-meta">
-              <div class="line-meta">
-                <span class="line-number">{{ String(getGlobalIndex(line.id)).padStart(2, '0') }}</span
-                ><time>{{ formatTime(line.start) }} – {{ formatTime(line.end) }}</time
-                ><span>{{ speakerName(line.speaker) }}</span>
+            <header class="segment-card-header">
+              <div class="header-left">
+                <span class="segment-idx">#{{ String(getGlobalIndex(line.id)).padStart(2, '0') }}</span>
+                <span class="segment-time">
+                  <UIcon name="i-carbon-time" />
+                  <time>{{ formatTime(line.start) }} – {{ formatTime(line.end) }}</time>
+                </span>
+                <span class="segment-speaker">{{ speakerName(line.speaker) }}</span>
               </div>
-              <div class="line-meta">
-                <span v-if="lineJob(line.id)" class="status-running">{{
-                  lineJob(line.id)?.status === 'running' ? '正在生成' : '等待生成'
-                }}</span
-                ><span v-else-if="!line.enabled">保留原声</span
-                ><span v-else-if="line.generatedPath" class="status-completed"
-                  >已生成 · {{ line.synthesisMode === 'tts' ? '微软 TTS' : 'AI 配音' }}</span
-                ><span v-else>待配音</span>
+              <div class="header-right">
+                <UBadge
+                  v-if="lineJob(line.id)"
+                  color="warning"
+                  variant="subtle"
+                  size="xs"
+                  class="status-badge"
+                >
+                  <UIcon name="i-carbon-renew" class="animate-spin" />
+                  <span>{{ lineJob(line.id)?.status === 'running' ? '正在生成' : '等待生成' }}</span>
+                </UBadge>
+                <UBadge
+                  v-else-if="!line.enabled"
+                  color="neutral"
+                  variant="subtle"
+                  size="xs"
+                  class="status-badge"
+                >
+                  保留原声
+                </UBadge>
+                <UBadge
+                  v-else-if="line.generatedPath"
+                  color="primary"
+                  variant="subtle"
+                  size="xs"
+                  class="status-badge"
+                >
+                  <UIcon name="i-carbon-checkmark" />
+                  <span>已生成 · {{ line.synthesisMode === 'tts' ? '微软 TTS' : 'AI 配音' }}</span>
+                </UBadge>
+                <UBadge v-else color="neutral" variant="subtle" size="xs" class="status-badge">
+                  待配音
+                </UBadge>
+
+                <div class="header-actions">
+                  <UButton
+                    variant="ghost"
+                    color="neutral"
+                    size="xs"
+                    icon="i-carbon-edit"
+                    :aria-label="`第 ${getGlobalIndex(line.id)} 句编辑`"
+                    @click="editLine(line.id)"
+                    >编辑</UButton
+                  >
+                  <UButton
+                    variant="ghost"
+                    color="neutral"
+                    size="xs"
+                    icon="i-carbon-time"
+                    :aria-label="`第 ${getGlobalIndex(line.id)} 句历史版本`"
+                    @click="openHistory(line)"
+                    >历史</UButton
+                  >
+                </div>
               </div>
             </header>
-            <div class="comparison-source">
-              <div class="dialogue-content">
-                <p class="dialogue-original">
-                  {{ line.text || '尚未填写原文' }}
-                </p>
+            <div class="segment-card-body">
+              <div class="segment-source-col comparison-source">
+                <div class="dialogue-content">
+                  <p class="dialogue-original">
+                    {{ line.text || '尚未填写原文' }}
+                  </p>
+                </div>
+                <div class="col-footer">
+                  <ClipAudio
+                    :src="
+                      project.kind !== 'text' && project.sourcePath
+                        ? `/api/segments/${line.id}/original?t=${line.start}-${line.end}`
+                        : undefined
+                    "
+                    :label="`第 ${getGlobalIndex(line.id)} 句原声`"
+                    :empty="project.kind === 'text' ? '文本台词，无原声音频' : '尚无可试听的原声素材'"
+                  />
+                </div>
               </div>
-              <ClipAudio
-                :src="
-                  project.kind !== 'text' && project.sourcePath
-                    ? `/api/segments/${line.id}/original?t=${line.start}-${line.end}`
-                    : undefined
-                "
-                :label="`第 ${getGlobalIndex(line.id)} 句原声`"
-                :empty="project.kind === 'text' ? '文本台词，无原声音频' : '尚无可试听的原声素材'"
-              />
-            </div>
-            <div class="comparison-generated">
-              <div class="dialogue-content">
-                <div>
+              <div class="segment-dub-col comparison-generated">
+                <div class="dialogue-content">
                   <p class="dialogue-translation">
                     {{
                       line.generatedPath
@@ -947,42 +1027,40 @@ async function translateSingleLine(lineId: string) {
                         : line.translation || line.text || '填写要生成的配音台词'
                     }}
                   </p>
-                  <small v-if="!line.generatedPath && !line.translation && line.text" class="help"
-                    >使用原文配音</small
-                  >
+                  <div class="line-action-buttons">
+                    <UButton
+                      variant="soft"
+                      size="xs"
+                      icon="i-carbon-language"
+                      :disabled="locked || !line.text?.trim()"
+                      :aria-label="`第 ${getGlobalIndex(line.id)} 句翻译`"
+                      @click="openTranslation(line)"
+                      >翻译</UButton
+                    >
+                  </div>
                 </div>
-              </div>
-              <div class="generated-output">
-                <ClipAudio
-                  v-if="line.generatedPath"
-                  :src="mediaUrl(line.generatedPath)"
-                  :label="`第 ${getGlobalIndex(line.id)} 句生成配音`"
-                />
-                <div v-else class="audio-placeholder">
-                  <UIcon name="i-carbon-waveform" /><span>{{
-                    lineJob(line.id) ? '完成后可在此试听' : '生成后在此试听'
-                  }}</span>
-                </div>
-                <div class="line-action-buttons">
-                  <UButton
-                    variant="soft"
-                    size="sm"
-                    icon="i-carbon-language"
-                    :loading="translatingLineId === line.id"
-                    :disabled="locked || !line.text?.trim()"
-                    :aria-label="`第 ${getGlobalIndex(line.id)} 句翻译`"
-                    @click="translateSingleLine(line.id)"
-                    >{{ line.translation ? '重新翻译' : '翻译' }}</UButton
-                  >
-                  <UButton
-                    variant="soft"
-                    size="sm"
-                    icon="i-carbon-microphone"
-                    :disabled="locked"
-                    :aria-label="`第 ${getGlobalIndex(line.id)} 句配音`"
-                    @click="generateLine(line.id)"
-                    >{{ lineJob(line.id) ? '配音设置' : line.generatedPath ? '重新配音' : '配音' }}</UButton
-                  >
+                <div class="col-footer generated-output">
+                  <ClipAudio
+                    v-if="line.generatedPath"
+                    :src="mediaUrl(line.generatedPath)"
+                    :label="`第 ${getGlobalIndex(line.id)} 句生成配音`"
+                  />
+                  <div v-else class="audio-placeholder">
+                    <UIcon name="i-carbon-waveform" /><span>{{
+                      lineJob(line.id) ? '完成后可在此试听' : '生成后在此试听'
+                    }}</span>
+                  </div>
+                  <div class="line-action-buttons">
+                    <UButton
+                      variant="soft"
+                      size="xs"
+                      icon="i-carbon-microphone"
+                      :disabled="locked"
+                      :aria-label="`第 ${getGlobalIndex(line.id)} 句配音`"
+                      @click="generateLine(line.id)"
+                      >配音</UButton
+                    >
+                  </div>
                 </div>
               </div>
             </div>
@@ -1232,6 +1310,24 @@ async function translateSingleLine(lineId: string) {
           @generate="openGeneration" /></template
     ></USlideover>
     <UDrawer
+      v-model:open="showTranslation"
+      direction="bottom"
+      :handle="false"
+      :inset="true"
+      :ui="{ content: 'generation-drawer ring-0', overlay: 'fixed inset-0 bg-black/30 backdrop-blur-[1px]' }"
+    >
+      <template #content>
+        <TranslationPanel
+          v-if="translationSegment"
+          :segment="translationSegment"
+          :segment-index="translationGlobalIndex"
+          :key="translationSegment.id"
+          @close="showTranslation = false"
+          @saved="showTranslation = false"
+        />
+      </template>
+    </UDrawer>
+    <UDrawer
       v-model:open="showGeneration"
       direction="bottom"
       :handle="false"
@@ -1256,44 +1352,12 @@ async function translateSingleLine(lineId: string) {
       ><template #body
         ><form class="project-options-form" @submit.prevent="saveOptions">
           <p class="help">
-            修改目标语言会清除译文、配音和成片；修改 AI 渠道会清除配音和成片。仅修改名称不影响结果。
+            在此修改项目名称。台词翻译语言可在翻译弹窗中切换；AI 配音渠道可在配音弹窗中指定。
           </p>
-          <UFormField label="项目名称"
-            ><UInput class="w-full" v-model="options.name" :disabled="locked" /></UFormField
-          ><UFormField label="原始语言"
-            ><USelect
-              v-model="options.sourceLanguage"
-              class="w-full"
-              :disabled="locked"
-              :items="[
-                { label: '自动检测', value: 'auto' },
-                { label: '中文', value: 'zh' },
-                { label: '英语', value: 'en' },
-                { label: '日语', value: 'ja' },
-                { label: '韩语', value: 'ko' },
-                { label: '西班牙语', value: 'es' },
-                { label: '法语', value: 'fr' },
-                { label: '德语', value: 'de' },
-                { label: '俄语', value: 'ru' }
-              ]" /></UFormField
-          ><UFormField label="目标语言"
-            ><USelect
-              v-model="options.targetLanguage"
-              class="w-full"
-              :disabled="locked"
-              :items="languageOptions(options.targetLanguage)"
-              aria-label="目标语言" /></UFormField
-          ><UFormField label="AI 配音渠道" description="密钥在左下角设置中配置；微软 TTS 无需密钥。"
-            ><USelect
-              v-model="options.channelId"
-              class="w-full"
-              :disabled="locked"
-              :items="
-                channels
-                  .filter((c) => c.type === 'volcengine' && c.enabled)
-                  .map((c) => ({ label: c.name, value: c.id }))
-              " /></UFormField
-          ><StudioAction
+          <UFormField label="项目名称">
+            <UInput class="w-full" v-model="options.name" :disabled="locked" />
+          </UFormField>
+          <StudioAction
             type="submit"
             :reason="locked ? '请等待当前项目任务完成' : !options.name.trim() ? '请填写项目名称' : ''"
             :loading="savingOptions"
@@ -1407,5 +1471,11 @@ async function translateSingleLine(lineId: string) {
         </div>
       </template>
     </UModal>
+    <VersionHistoryModal
+      v-model:open="historyModalOpen"
+      :segment="currentHistorySegment"
+      :global-index="historyGlobalIndex"
+      @restored="onSegmentRestored"
+    />
   </section>
 </template>
