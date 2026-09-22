@@ -45,6 +45,11 @@ let auditionAudio: HTMLAudioElement | null = null
 let auditionController: AbortController | null = null
 let auditionUrl = ''
 
+function selectVoice(voice: string) {
+  draft.value.ttsVoice = voice
+  voiceMenuOpen.value = false
+}
+
 function stopAudition() {
   auditionController?.abort()
   auditionController = null
@@ -194,10 +199,7 @@ onBeforeUnmount(() => {
                   class="min-w-0 flex-1"
                   :aria-pressed="draft.ttsVoice === voice.value"
                   :disabled="disabled"
-                  @click="
-                    draft.ttsVoice = voice.value
-                    voiceMenuOpen = false
-                  "
+                  @click="selectVoice(voice.value)"
                   >{{ voice.label }}</UButton
                 >
                 <UButton
