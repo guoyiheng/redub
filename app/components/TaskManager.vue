@@ -135,9 +135,39 @@ async function concurrency(value: number) {
     $fetch('/api/settings', { method: 'PATCH', body: { ...settings.value, concurrency: value } })
   )
 }
+let closeTimer: ReturnType<typeof setTimeout> | null = null
+
+function onMouseEnter() {
+  if (closeTimer) {
+    clearTimeout(closeTimer)
+    closeTimer = null
+  }
+  open.value = true
+}
+
+function onMouseLeave() {
+  if (closeTimer) clearTimeout(closeTimer)
+  closeTimer = setTimeout(() => {
+    const activePopper = document.querySelector(
+      '[data-reka-popper-content-wrapper], [data-radix-popper-content-wrapper], [role="listbox"]'
+    )
+    if (activePopper) return
+    open.value = false
+  }, 200)
+}
+
+onBeforeUnmount(() => {
+  if (closeTimer) clearTimeout(closeTimer)
+})
 </script>
 <template>
-  <aside class="task-manager" :class="{ expanded: open }" aria-label="任务管理器">
+  <aside
+    class="task-manager"
+    :class="{ expanded: open }"
+    aria-label="任务管理器"
+    @mouseenter="onMouseEnter"
+    @mouseleave="onMouseLeave"
+  >
     <button class="task-toggle" :aria-expanded="open" @click="open = !open">
       <span class="task-indicator" :class="{ live: running.length }" /><strong>任务</strong
       ><span>{{ taskSummary() }}</span

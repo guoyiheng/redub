@@ -22,7 +22,41 @@ const trackDescriptions: Record<PreviewTrackKey, string> = {
 }
 const { detail, channels, settingsProject, workspacePanels, act, toast, errorMessage, refresh } = useStudio()
 const taskWait = new AbortController()
-onBeforeUnmount(() => taskWait.abort())
+const timelineScrollRef = ref<HTMLElement>()
+const timelineContainerWidth = ref(800)
+const isDragging = ref(false)
+let timelineResizeObserver: ResizeObserver | undefined
+let isPointerDown = false
+let hasDragged = false
+let startClientX = 0
+let startScrollLeft = 0
+
+function updateTimelineWidth() {
+  if (timelineScrollRef.value) {
+    timelineContainerWidth.value = timelineScrollRef.value.clientWidth
+  }
+}
+
+onMounted(() => {
+  updateTimelineWidth()
+  if (typeof ResizeObserver !== 'undefined') {
+    timelineResizeObserver = new ResizeObserver(() => {
+      updateTimelineWidth()
+    })
+    if (timelineScrollRef.value) {
+      timelineResizeObserver.observe(timelineScrollRef.value)
+    }
+  }
+  window.addEventListener('resize', updateTimelineWidth)
+})
+
+onBeforeUnmount(() => {
+  taskWait.abort()
+  timelineResizeObserver?.disconnect()
+  window.removeEventListener('resize', updateTimelineWidth)
+  window.removeEventListener('mousemove', onTimelineMouseMove)
+  window.removeEventListener('mouseup', onTimelineMouseUp)
+})
 const batchAction = ref<BatchInput['action'] | 'speaker'>('synthesize')
 const current = ref<string>()
 const time = ref(0)
@@ -119,6 +153,19 @@ watch([filteredLines, pageSize], () => {
   if (currentPage.value > totalPages.value) currentPage.value = totalPages.value
   if (currentPage.value < 1) currentPage.value = 1
 })
+watch(panel, (newPanel) => {
+  if (newPanel === 'preview') {
+    nextTick(() => {
+      updateTimelineWidth()
+      if (timelineScrollRef.value && timelineResizeObserver) {
+        timelineResizeObserver.observe(timelineScrollRef.value)
+      }
+    })
+  }
+})
+watch(previewTracks, () => {
+  nextTick(() => updateTimelineWidth())
+})
 const locked = computed(
   () => detail.value?.jobs.some((j) => ['queued', 'running'].includes(j.status)) || false
 )
@@ -201,13 +248,72 @@ function downsample(values: number[], count = 96) {
   }
   return result
 }
+function formatRulerTime(seconds: number) {
+  const m = Math.floor(seconds / 60)
+  const s = Math.floor(seconds % 60)
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+}
+const pps = computed(() => {
+  const d = previewDuration.value
+  if (d <= 30) return 25
+  if (d <= 60) return 20
+  if (d <= 180) return 16
+  if (d <= 300) return 12
+  if (d <= 600) return 8
+  return 5
+})
+const timelineWidth = computed(() => {
+  const containerW = timelineContainerWidth.value || 800
+  const durationW = Math.round(previewDuration.value * pps.value)
+  return Math.max(containerW, durationW)
+})
+interface RulerMark {
+  time: number
+  label: string
+  percent: number
+}
+const rulerMarks = computed<RulerMark[]>(() => {
+  const duration = previewDuration.value
+  if (!duration || duration <= 0) return []
+  const width = timelineWidth.value || 800
+  const targetMarkCount = Math.max(3, Math.round(width / 120))
+  const rawStep = duration / targetMarkCount
+
+  const niceSteps = [1, 2, 5, 10, 15, 30, 60, 120, 180, 300, 600, 1200, 1800, 3600]
+  let step = niceSteps[niceSteps.length - 1]!
+  for (const s of niceSteps) {
+    if (s >= rawStep) {
+      step = s
+      break
+    }
+  }
+
+  const marks: RulerMark[] = []
+  for (let t = 0; t <= duration; t += step) {
+    marks.push({
+      time: t,
+      label: formatRulerTime(t),
+      percent: (t / duration) * 100
+    })
+  }
+  const lastMark = marks[marks.length - 1]
+  if (lastMark && duration - lastMark.time > step * 0.4) {
+    marks.push({
+      time: duration,
+      label: formatRulerTime(duration),
+      percent: 100
+    })
+  }
+  return marks
+})
 const waveforms = computed<Record<PreviewTrackKey, number[]>>(() => {
   const tracks = previewTracks.value?.tracks
+  const barCount = Math.max(96, Math.min(600, Math.round((timelineWidth.value || 800) / 4)))
   return {
-    optimized: downsample(tracks?.optimized.peaks || []),
-    original: downsample(tracks?.original.peaks || []),
-    background: downsample(tracks?.background.peaks || []),
-    dubbed: downsample(tracks?.dubbed.peaks || [])
+    optimized: downsample(tracks?.optimized.peaks || [], barCount),
+    original: downsample(tracks?.original.peaks || [], barCount),
+    background: downsample(tracks?.background.peaks || [], barCount),
+    dubbed: downsample(tracks?.dubbed.peaks || [], barCount)
   }
 })
 const exportTrackItems = computed(() =>
@@ -333,6 +439,7 @@ function onClockTimeUpdate() {
   const clock = clockPlayer.value
   if (!clock) return
   time.value = clock.currentTime
+  autoScrollTimeline()
   if (!playing.value) return
   syncAudios(clock.currentTime)
   for (const key of trackKeys) {
@@ -357,6 +464,7 @@ function seekTo(value: number) {
   }
   clock.currentTime = target
   syncAudios(target)
+  scrollToPlayhead()
 }
 function togglePlayback() {
   const clock = clockPlayer.value
@@ -377,11 +485,84 @@ function pauseAll() {
   for (const key of trackKeys) audioFor(key)?.pause()
   playing.value = false
 }
+function seekFromTimelineClick(e: MouseEvent) {
+  if (!timelineScrollRef.value || !timelineWidth.value || !previewDuration.value) return
+  const rect = timelineScrollRef.value.getBoundingClientRect()
+  const clickX = e.clientX - rect.left + timelineScrollRef.value.scrollLeft
+  const clampedX = Math.max(0, Math.min(timelineWidth.value, clickX))
+  const targetTime = (clampedX / timelineWidth.value) * previewDuration.value
+  seekTo(targetTime)
+}
 function seekFromLane(event: MouseEvent) {
-  const lane = event.currentTarget as HTMLElement
-  const rect = lane.getBoundingClientRect()
-  if (!rect.width) return
-  seekTo(((event.clientX - rect.left) / rect.width) * previewDuration.value)
+  seekFromTimelineClick(event)
+}
+function onTimelineMouseDown(e: MouseEvent) {
+  if (e.button !== 0) return
+  const target = e.target as HTMLElement
+  if (target.closest('button, input, a, .mixer-track-header')) return
+
+  isPointerDown = true
+  hasDragged = false
+  startClientX = e.clientX
+  if (timelineScrollRef.value) {
+    startScrollLeft = timelineScrollRef.value.scrollLeft
+  }
+  window.addEventListener('mousemove', onTimelineMouseMove)
+  window.addEventListener('mouseup', onTimelineMouseUp)
+}
+function onTimelineMouseMove(e: MouseEvent) {
+  if (!isPointerDown) return
+  const dx = e.clientX - startClientX
+  if (!hasDragged && Math.abs(dx) > 4) {
+    hasDragged = true
+    isDragging.value = true
+  }
+  if (hasDragged && timelineScrollRef.value) {
+    timelineScrollRef.value.scrollLeft = startScrollLeft - dx
+  }
+}
+function onTimelineMouseUp(e: MouseEvent) {
+  if (!isPointerDown) return
+  window.removeEventListener('mousemove', onTimelineMouseMove)
+  window.removeEventListener('mouseup', onTimelineMouseUp)
+  isPointerDown = false
+  const wasDragging = hasDragged
+  setTimeout(() => {
+    isDragging.value = false
+  }, 0)
+
+  if (!wasDragging) {
+    seekFromTimelineClick(e)
+  }
+}
+function onTimelineWheel(e: WheelEvent) {
+  if (!timelineScrollRef.value) return
+  if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return
+  if (e.deltaY !== 0) {
+    timelineScrollRef.value.scrollLeft += e.deltaY
+  }
+}
+function autoScrollTimeline() {
+  if (!playing.value || isDragging.value || !timelineScrollRef.value) return
+  const scrollEl = timelineScrollRef.value
+  const playheadX = (time.value / Math.max(previewDuration.value, 0.001)) * timelineWidth.value
+  const visibleLeft = scrollEl.scrollLeft
+  const visibleRight = visibleLeft + scrollEl.clientWidth
+  if (playheadX > visibleRight - 40) {
+    scrollEl.scrollLeft = playheadX - 40
+  } else if (playheadX < visibleLeft) {
+    scrollEl.scrollLeft = Math.max(0, playheadX - 40)
+  }
+}
+function scrollToPlayhead() {
+  if (!timelineScrollRef.value || isDragging.value) return
+  const scrollEl = timelineScrollRef.value
+  const playheadX = (time.value / Math.max(previewDuration.value, 0.001)) * timelineWidth.value
+  const visibleLeft = scrollEl.scrollLeft
+  const visibleRight = visibleLeft + scrollEl.clientWidth
+  if (playheadX < visibleLeft || playheadX > visibleRight) {
+    scrollEl.scrollLeft = Math.max(0, playheadX - scrollEl.clientWidth / 2)
+  }
 }
 function setTrackEnabled(key: PreviewTrackKey, value: boolean | 'indeterminate') {
   previewSelectionTouched = true
@@ -582,14 +763,6 @@ function openGeneration() {
   showEditor.value = false
   showGeneration.value = true
 }
-async function pause() {
-  await act(() =>
-    $fetch(`/api/projects/${project.value.id}/pause`, {
-      method: 'POST',
-      body: { paused: !project.value.paused }
-    })
-  )
-}
 async function saveOptions() {
   if (savingOptions.value || locked.value) return
   savingOptions.value = true
@@ -630,7 +803,7 @@ async function translateSingleLine(lineId: string) {
 }
 </script>
 <template>
-  <section v-if="detail" class="workspace">
+  <section v-if="detail" class="workspace" :class="{ 'workspace-preview': panel === 'preview' }">
     <header class="workspace-header">
       <div class="workspace-title">
         <span class="workspace-project-name">{{ project.name }}</span>
@@ -664,14 +837,6 @@ async function translateSingleLine(lineId: string) {
       <div class="row-actions">
         <template v-if="panel === 'script'">
           <span v-if="lines.length" class="help">{{ completed }} / {{ enabledCount }} 句已配音</span>
-          <UButton
-            v-if="locked || project.paused"
-            color="neutral"
-            variant="ghost"
-            :icon="project.paused ? 'i-carbon-play' : 'i-carbon-pause'"
-            @click="pause"
-            >{{ project.paused ? '继续任务' : '暂停任务' }}</UButton
-          >
           <StudioAction
             v-if="lines.length"
             color="neutral"
@@ -704,11 +869,7 @@ async function translateSingleLine(lineId: string) {
             @click="loadPreviewTracks"
             >刷新音轨</UButton
           >
-          <UButton
-            color="primary"
-            variant="solid"
-            icon="i-carbon-download"
-            @click="showExportModal = true"
+          <UButton color="primary" variant="solid" icon="i-carbon-download" @click="showExportModal = true"
             >导出</UButton
           >
         </template>
@@ -931,55 +1092,96 @@ async function translateSingleLine(lineId: string) {
           </section>
 
           <section class="preview-mixer">
-            <div class="mixer-ruler">
-              <span class="mixer-ruler-spacer" />
-              <div class="mixer-ruler-scale">
-                <span v-for="n in 6" :key="n">{{ formatTime((previewDuration * (n - 1)) / 5) }}</span>
-              </div>
-            </div>
-            <div
-              v-for="key in trackKeys"
-              :key="key"
-              class="mixer-track"
-              :class="[`track-${key}`, { disabled: !trackEnabled[key], unavailable: !trackAvailable(key) }]"
-            >
-              <div class="mixer-track-header">
-                <UCheckbox
-                  :model-value="trackEnabled[key]"
-                  :disabled="!trackAvailable(key)"
-                  :aria-label="`${trackEnabled[key] ? '关闭' : '开启'}${trackLabels[key]}试听`"
-                  @update:model-value="setTrackEnabled(key, $event)"
-                />
-                <div class="mixer-track-copy">
-                  <strong>{{ trackLabels[key] }}</strong>
-                  <span>{{ trackDescriptions[key] }}</span>
+            <div class="mixer-layout">
+              <div class="mixer-headers-col">
+                <div class="mixer-ruler-header">
+                  <span class="mixer-tracks-title">音轨</span>
+                </div>
+                <div
+                  v-for="key in trackKeys"
+                  :key="key"
+                  class="mixer-track-header-row"
+                  :class="[
+                    `track-${key}`,
+                    { disabled: !trackEnabled[key], unavailable: !trackAvailable(key) }
+                  ]"
+                >
+                  <div class="mixer-track-header">
+                    <UCheckbox
+                      :model-value="trackEnabled[key]"
+                      :disabled="!trackAvailable(key)"
+                      :aria-label="`${trackEnabled[key] ? '关闭' : '开启'}${trackLabels[key]}试听`"
+                      @update:model-value="setTrackEnabled(key, $event)"
+                    />
+                    <div class="mixer-track-copy">
+                      <strong>{{ trackLabels[key] }}</strong>
+                      <span>{{ trackDescriptions[key] }}</span>
+                    </div>
+                  </div>
                 </div>
               </div>
+
               <div
-                class="mixer-lane"
-                role="slider"
-                tabindex="0"
-                :aria-label="`${trackLabels[key]}轨道进度`"
-                :aria-valuemin="0"
-                :aria-valuemax="previewDuration"
-                :aria-valuenow="time"
-                :aria-valuetext="`${formatTime(time)} / ${formatTime(previewDuration)}`"
-                @click="seekFromLane"
-                @keydown.left.prevent="seekTo(time - 1)"
-                @keydown.right.prevent="seekTo(time + 1)"
-                @keydown.space.prevent="togglePlayback"
+                ref="timelineScrollRef"
+                class="mixer-timeline"
+                :class="{ 'is-dragging': isDragging }"
+                @mousedown="onTimelineMouseDown"
+                @wheel.passive="onTimelineWheel"
               >
-                <div class="mixer-waveform" aria-hidden="true">
-                  <span
-                    v-for="(peak, index) in waveforms[key]"
-                    :key="index"
-                    class="mixer-bar"
-                    :style="{ height: `${Math.max(8, peak * 100)}%` }"
-                  />
+                <div class="mixer-timeline-content" :style="{ width: `${timelineWidth}px` }">
+                  <div class="mixer-ruler-track">
+                    <div
+                      v-for="mark in rulerMarks"
+                      :key="mark.time"
+                      class="ruler-mark"
+                      :style="{ left: `${mark.percent}%` }"
+                    >
+                      <span class="ruler-mark-text">{{ mark.label }}</span>
+                      <span class="ruler-mark-tick" />
+                    </div>
+                    <span
+                      class="playhead-ruler-marker"
+                      :style="{ left: `${progress}%` }"
+                      aria-hidden="true"
+                    />
+                  </div>
+
+                  <div
+                    v-for="key in trackKeys"
+                    :key="key"
+                    class="mixer-lane-row"
+                    :class="[
+                      `track-${key}`,
+                      { disabled: !trackEnabled[key], unavailable: !trackAvailable(key) }
+                    ]"
+                  >
+                    <div
+                      class="mixer-lane"
+                      role="slider"
+                      tabindex="0"
+                      :aria-label="`${trackLabels[key]}轨道进度`"
+                      :aria-valuemin="0"
+                      :aria-valuemax="previewDuration"
+                      :aria-valuenow="time"
+                      :aria-valuetext="`${formatTime(time)} / ${formatTime(previewDuration)}`"
+                      @keydown.left.prevent="seekTo(time - 1)"
+                      @keydown.right.prevent="seekTo(time + 1)"
+                      @keydown.space.prevent="togglePlayback"
+                    >
+                      <div class="mixer-waveform" aria-hidden="true">
+                        <span
+                          v-for="(peak, index) in waveforms[key]"
+                          :key="index"
+                          class="mixer-bar"
+                          :style="{ height: `${Math.max(8, peak * 100)}%` }"
+                        />
+                      </div>
+                      <span class="mixer-progress" :style="{ width: `${progress}%` }" aria-hidden="true" />
+                      <span class="playhead" :style="{ left: `${progress}%` }" aria-hidden="true" />
+                      <span v-if="!trackAvailable(key)" class="mixer-empty">未生成</span>
+                    </div>
+                  </div>
                 </div>
-                <span class="mixer-progress" :style="{ width: `${progress}%` }" aria-hidden="true" />
-                <span class="playhead" :style="{ left: `${progress}%` }" aria-hidden="true" />
-                <span v-if="!trackAvailable(key)" class="mixer-empty">未生成</span>
               </div>
             </div>
           </section>
@@ -1033,21 +1235,17 @@ async function translateSingleLine(lineId: string) {
       v-model:open="showGeneration"
       direction="bottom"
       :handle="false"
-      title="生成配音"
       :inset="true"
-      :handle-only="true"
-      :ui="{ content: 'generation-drawer ring-0', overlay: 'bg-black/15' }"
+      :ui="{ content: 'generation-drawer ring-0', overlay: 'fixed inset-0 bg-black/30 backdrop-blur-[1px]' }"
     >
       <template #content>
-        <div class="generation-drawer-inner">
-          <VoiceGenerationPanel
-            v-if="selected"
-            :segment="selected"
-            :key="selected.id"
-            @close="showGeneration = false"
-            @generated="showGeneration = false"
-          />
-        </div>
+        <VoiceGenerationPanel
+          v-if="selected"
+          :segment="selected"
+          :key="selected.id"
+          @close="showGeneration = false"
+          @generated="showGeneration = false"
+        />
       </template>
     </UDrawer>
     <USlideover
@@ -1115,11 +1313,7 @@ async function translateSingleLine(lineId: string) {
           @close="showBatch = false"
           @submitted="showBatch = false" /></template
     ></UModal>
-    <UModal
-      v-model:open="showExportModal"
-      title="导出设置"
-      :ui="{ content: 'sm:max-w-xl ring-0' }"
-    >
+    <UModal v-model:open="showExportModal" title="导出设置" :ui="{ content: 'sm:max-w-xl ring-0' }">
       <template #body>
         <div class="export-modal-body">
           <div v-if="project.kind === 'video'" class="export-modal-section">
@@ -1169,7 +1363,9 @@ async function translateSingleLine(lineId: string) {
                 <div class="track-item-header">
                   <span class="track-item-title">{{ trackLabels[key] }}</span>
                   <UBadge v-if="key === 'optimized'" color="primary" variant="subtle" size="xs">推荐</UBadge>
-                  <UBadge v-else-if="!trackAvailable(key)" color="neutral" variant="subtle" size="xs">未就绪</UBadge>
+                  <UBadge v-else-if="!trackAvailable(key)" color="neutral" variant="subtle" size="xs"
+                    >未就绪</UBadge
+                  >
                 </div>
                 <p class="track-item-desc">{{ trackDescriptions[key] }}</p>
               </button>

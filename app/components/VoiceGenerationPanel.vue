@@ -33,6 +33,12 @@ const saving = ref(false)
 const uploading = ref(false)
 const picker = ref<HTMLInputElement>()
 const referenceOpen = ref(false)
+const audioRef = ref<HTMLAudioElement>()
+const isPlaying = ref(false)
+const currentTime = ref(0)
+const duration = ref(0)
+const audioError = ref(false)
+
 const referenceSrc = computed(() =>
   customReference.value
     ? mediaUrl(customReference.value)
@@ -42,6 +48,92 @@ const referenceSrc = computed(() =>
         : `/api/segments/${props.segment.id}/original?t=${props.segment.start}-${props.segment.end}`
       : ''
 )
+
+const progressPercent = computed(() =>
+  duration.value > 0 ? Math.min(100, (currentTime.value / duration.value) * 100) : 0
+)
+
+function togglePlay() {
+  if (!audioRef.value) return
+  if (isPlaying.value) {
+    audioRef.value.pause()
+  } else {
+    document.querySelectorAll('audio, video').forEach((el) => {
+      if (el !== audioRef.value) (el as HTMLMediaElement).pause()
+    })
+    audioRef.value.play().catch(() => {
+      isPlaying.value = false
+    })
+  }
+}
+
+function onTimeUpdate() {
+  if (audioRef.value) {
+    currentTime.value = audioRef.value.currentTime
+  }
+}
+
+function onLoadedMetadata() {
+  if (audioRef.value) {
+    duration.value = audioRef.value.duration || 0
+    audioError.value = false
+  }
+}
+
+function onAudioEnded() {
+  isPlaying.value = false
+  currentTime.value = 0
+  if (audioRef.value) {
+    audioRef.value.currentTime = 0
+  }
+}
+
+function onAudioPause() {
+  isPlaying.value = false
+}
+
+function onAudioPlay() {
+  isPlaying.value = true
+}
+
+function onAudioError() {
+  audioError.value = true
+  isPlaying.value = false
+}
+
+function seek(event: MouseEvent) {
+  if (!audioRef.value || !duration.value) return
+  const bar = event.currentTarget as HTMLElement
+  const rect = bar.getBoundingClientRect()
+  const clickX = Math.max(0, Math.min(event.clientX - rect.left, rect.width))
+  const pct = clickX / rect.width
+  audioRef.value.currentTime = pct * duration.value
+  currentTime.value = audioRef.value.currentTime
+}
+
+function formatAudioTime(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds < 0) return '0:00'
+  const mins = Math.floor(seconds / 60)
+  const secs = Math.floor(seconds % 60)
+  return `${mins}:${secs.toString().padStart(2, '0')}`
+}
+
+watch(referenceSrc, () => {
+  if (audioRef.value) {
+    audioRef.value.pause()
+  }
+  isPlaying.value = false
+  currentTime.value = 0
+  duration.value = 0
+  audioError.value = false
+})
+
+onBeforeUnmount(() => {
+  if (audioRef.value) {
+    audioRef.value.pause()
+  }
+})
+
 const busy = computed(() => saving.value || uploading.value)
 const submitLabel = computed(() => (props.segment.enabled ? '生成本句配音' : '生成并启用替换'))
 const unavailableReason = computed(() => {
@@ -58,6 +150,11 @@ const unavailableReason = computed(() => {
   return ''
 })
 function removeReference() {
+  if (audioRef.value) {
+    audioRef.value.pause()
+  }
+  isPlaying.value = false
+  currentTime.value = 0
   draft.value.aiUseReference = false
   customReference.value = null
   referenceName.value = '原声参考'
@@ -119,22 +216,6 @@ async function generate() {
 </script>
 <template>
   <form class="generation-panel" @submit.prevent="generate">
-    <header class="generation-composer-header">
-      <div class="generation-composer-title">
-        <span>生成配音</span><time>{{ formatTime(segment.start) }} – {{ formatTime(segment.end) }}</time>
-      </div>
-      <UButton
-        type="button"
-        icon="i-carbon-close"
-        color="neutral"
-        variant="ghost"
-        size="sm"
-        square
-        :disabled="busy"
-        aria-label="关闭配音弹窗"
-        @click="emit('close')"
-      />
-    </header>
     <VoiceParameters v-model="draft" :disabled="busy" :can-reference="canReference || !!customReference">
       <UTextarea
         v-model="content"
@@ -153,48 +234,64 @@ async function generate() {
         @keydown.ctrl.enter.prevent="generate"
       />
       <template #reference>
-        <div v-if="draft.synthesisMode === 'ai' && draft.aiUseReference" class="voice-attachment">
-          <UIcon name="i-carbon-waveform" />
-          <span :title="referenceName">{{ referenceName }}</span>
-          <UPopover :content="{ side: 'top', align: 'start' }">
-            <UButton
-              type="button"
-              color="neutral"
-              variant="ghost"
-              icon="i-carbon-play"
-              square
-              size="xs"
-              aria-label="试听参考音频"
-            />
-            <template #content
-              ><div class="voice-reference-preview"><ClipAudio :src="referenceSrc" label="参考音频" /></div
-            ></template>
-          </UPopover>
-          <UButton
+        <div
+          v-if="draft.synthesisMode === 'ai' && draft.aiUseReference && referenceSrc"
+          class="voice-reference-bar"
+        >
+          <audio
+            ref="audioRef"
+            :src="referenceSrc"
+            preload="metadata"
+            class="hidden"
+            @timeupdate="onTimeUpdate"
+            @loadedmetadata="onLoadedMetadata"
+            @ended="onAudioEnded"
+            @pause="onAudioPause"
+            @play="onAudioPlay"
+            @error="onAudioError"
+          />
+          <button
             type="button"
-            color="neutral"
-            variant="ghost"
-            size="xs"
-            :disabled="busy"
-            @click="picker?.click()"
-            >替换</UButton
+            class="voice-reference-play-btn"
+            :aria-label="isPlaying ? '暂停参考音频' : '播放参考音频'"
+            @click.stop="togglePlay"
           >
-          <UButton
+            <UIcon :name="isPlaying ? 'i-carbon-pause-filled' : 'i-carbon-play-filled-alt'" />
+          </button>
+          <div class="voice-reference-meta">
+            <span class="voice-reference-title" :title="referenceName">{{ referenceName }}</span>
+          </div>
+          <div
+            class="voice-reference-progress-track"
+            role="progressbar"
+            :aria-valuenow="progressPercent"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            @click.stop="seek"
+          >
+            <div class="voice-reference-progress-fill" :style="{ width: `${progressPercent}%` }" />
+          </div>
+          <div class="voice-reference-time">
+            {{ formatAudioTime(currentTime) }} / {{ formatAudioTime(duration) }}
+          </div>
+          <button
             type="button"
-            color="neutral"
-            variant="ghost"
-            size="xs"
-            icon="i-carbon-close"
-            square
+            class="voice-reference-del-btn"
             :disabled="busy"
             aria-label="移除参考音频"
-            @click="removeReference"
-          />
+            title="移除参考音频"
+            @click.stop="removeReference"
+          >
+            <UIcon name="i-carbon-close" />
+          </button>
         </div>
       </template>
       <template #reference-control>
+        <span class="voice-segment-time"
+          >{{ formatTime(segment.start) }} – {{ formatTime(segment.end) }}</span
+        >
         <UPopover
-          v-if="draft.synthesisMode === 'ai'"
+          v-if="draft.synthesisMode === 'ai' && !draft.aiUseReference"
           v-model:open="referenceOpen"
           :content="{ side: 'top', align: 'start' }"
         >
@@ -204,11 +301,13 @@ async function generate() {
             variant="ghost"
             size="sm"
             icon="i-carbon-add"
-            square
+            class="voice-add-reference-btn"
             :disabled="busy"
             :loading="uploading"
             aria-label="添加参考音频"
-          />
+          >
+            参考音频
+          </UButton>
           <template #content>
             <div class="voice-reference-menu">
               <UButton

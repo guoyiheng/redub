@@ -9,6 +9,13 @@ const view = ref<'home' | 'project' | 'settings'>('home'),
 const list = computed(() =>
   projects.value.filter((p) => p.name.toLowerCase().includes(query.value.toLowerCase()))
 )
+const isPreviewMode = computed(
+  () =>
+    view.value === 'project' &&
+    !importing.value &&
+    !!selected.value &&
+    workspacePanels.value[selected.value] === 'preview'
+)
 let timer: ReturnType<typeof setInterval> | undefined
 let refreshing = false
 let lastRefresh = 0
@@ -66,7 +73,7 @@ onMounted(async () => {
 onBeforeUnmount(() => clearInterval(timer))
 </script>
 <template>
-  <div class="studio-shell">
+  <div class="studio-shell" :class="{ 'preview-active': isPreviewMode }">
     <aside class="sidebar">
       <button class="wordmark" aria-label="ReDub 首页" @click="show('home')">
         <svg width="31" height="31" viewBox="0 0 31 31" fill="none" aria-hidden="true">
@@ -150,7 +157,13 @@ onBeforeUnmount(() => clearInterval(timer))
         </button>
       </div>
     </aside>
-    <main class="main-content" :class="{ 'project-main': view === 'project' && !importing }">
+    <main
+      class="main-content"
+      :class="{
+        'project-main': view === 'project' && !importing,
+        'preview-mode': isPreviewMode
+      }"
+    >
       <div v-if="error" class="page-error">
         <UAlert color="error" title="连接遇到问题" :description="error" /><UButton
           color="neutral"
