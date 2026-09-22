@@ -23,6 +23,7 @@ import { mediaHealth, assetPath, cutAudio } from '../services/media'
 import { safeError, translateLines } from '../services/providers'
 import { stageLabels } from '../../shared/types'
 import { getJobDetail, getJobRequest, jobColumns } from '../services/job-requests'
+import { getPreviewTracks } from '../services/preview-tracks'
 
 const channelSchema = z.object({
   name: z.string().trim().min(1).max(80),
@@ -257,6 +258,10 @@ export default defineEventHandler(async (event) => {
           const result = await enqueueOutput(id, 'export', await readBody(event))
           setResponseStatus(event, 202)
           return result
+        }
+        if (action === 'preview-tracks' && method === 'GET') {
+          setHeader(event, 'Cache-Control', 'no-store')
+          return await getPreviewTracks(id)
         }
         if (action === 'preview-tracks' && method === 'POST') {
           const result = await enqueueOutput(id, 'preview-tracks')

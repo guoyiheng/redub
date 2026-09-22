@@ -52,7 +52,10 @@ const exportTracks = reactive<Record<PreviewTrackKey, boolean>>({
 const exportOriginalMode = ref<'preserve-gaps' | 'full'>('preserve-gaps')
 const exportFormat = ref<ExportFormat>('mkv')
 let pendingSeek: number | undefined
+let resumeOnLoad = false
 let previewRequest = 0
+let previewPending = false
+let previewSelectionTouched = false
 const showOptions = ref(false),
   showEditor = ref(false),
   showGeneration = ref(false),
@@ -174,7 +177,11 @@ const clockSource = computed(() => {
 })
 const playbackPaths = computed<Record<PreviewTrackKey, string | null>>(() => {
   const tracks = previewTracks.value?.tracks
-  if (!tracks) return { optimized: null, original: null, background: null, dubbed: null }
+  if (!tracks) {
+    const original =
+      project.value.kind === 'text' ? null : project.value.audioPath || project.value.sourcePath
+    return { optimized: original, original, background: project.value.backgroundPath, dubbed: null }
+  }
   return {
     optimized: tracks.optimized.path,
     original: tracks.original.path,
@@ -266,7 +273,7 @@ function audioFor(key: PreviewTrackKey) {
   return audioElements.value[key]
 }
 function trackAvailable(key: PreviewTrackKey) {
-  return !!previewTracks.value?.tracks[key].path
+  return !!playbackPaths.value[key]
 }
 function hasSource(element: HTMLAudioElement | undefined) {
   return !!element?.getAttribute('src')
@@ -278,10 +285,21 @@ function syncAudios(target = clockPlayer.value?.currentTime || 0) {
     if (Math.abs(element!.currentTime - target) > 0.12) element!.currentTime = target
   }
 }
+function onTrackLoaded(key: PreviewTrackKey) {
+  syncAudios(time.value)
+  if (playing.value && trackEnabled[key])
+    void audioFor(key)
+      ?.play()
+      .catch(() => {})
+}
 async function playAudios() {
   const clock = clockPlayer.value
   if (!clock) return
   syncAudios(clock.currentTime)
+  if (resumeOnLoad) {
+    resumeOnLoad = false
+    void clock.play().catch(() => {})
+  }
   await Promise.all(
     trackKeys.map(async (key) => {
       if (!trackEnabled[key]) return
@@ -373,6 +391,7 @@ function seekFromLane(event: MouseEvent) {
   seekTo(((event.clientX - rect.left) / rect.width) * previewDuration.value)
 }
 function setTrackEnabled(key: PreviewTrackKey, value: boolean | 'indeterminate') {
+  previewSelectionTouched = true
   const enabled = value === true
   if (enabled && key === 'optimized') {
     for (const sourceKey of sourceTrackKeys) {
@@ -403,7 +422,7 @@ function setExportTrack(key: PreviewTrackKey, value: boolean | 'indeterminate') 
 }
 function trackState(key: PreviewTrackKey) {
   const track = previewTracks.value?.tracks[key]
-  if (!track?.path) return track?.reason || '尚未准备'
+  if (!trackAvailable(key)) return track?.reason || '尚未准备'
   if (!trackEnabled[key]) return '已关闭'
   if (key === 'optimized') return previewTracks.value?.missingDubs ? '未配音片段保留原声' : '最终成片效果'
   if (key === 'original') return '完整原声'
@@ -493,27 +512,24 @@ async function exportFilm() {
   }
 }
 async function loadPreviewTracks() {
-  if (
-    detail.value?.jobs.some(
-      (job) => ['queued', 'running'].includes(job.status) && job.stage !== 'preview-tracks'
-    )
-  ) {
-    previewError.value = '正在处理项目，任务完成后会自动准备预览音轨。'
+  if (previewLoading.value) {
+    previewPending = true
     return
   }
   const request = ++previewRequest
+  const projectId = project.value.id
   previewLoading.value = true
+  previewPending = false
   previewError.value = ''
   try {
-    const task = await $fetch<{ jobId: string }>(`/api/projects/${project.value.id}/preview-tracks`, {
-      method: 'POST'
+    const result = await $fetch<PreviewTracks>(`/api/projects/${projectId}/preview-tracks`, {
+      signal: taskWait.signal
     })
-    void refresh().catch(() => {})
-    const result = await waitForJobResult<PreviewTracks>(task.jobId, taskWait.signal)
-    if (request !== previewRequest) return
-    const changed = previewTracks.value?.revision !== result.revision
+    if (request !== previewRequest || projectId !== project.value.id) return
+    const firstReady =
+      !previewTracks.value || !Object.values(previewTracks.value.tracks).some((track) => track.path)
     previewTracks.value = result
-    if (changed) {
+    if (!previewSelectionTouched || firstReady) {
       const hasOptimized = !!result.tracks.optimized.path
       const hasOriginal = !!result.tracks.original.path
       const hasBackground = !!result.tracks.background.path
@@ -522,6 +538,11 @@ async function loadPreviewTracks() {
       trackEnabled.original = !hasOptimized && !hasBackground && !hasDubbed && hasOriginal
       trackEnabled.background = !hasOptimized && hasBackground
       trackEnabled.dubbed = !hasOptimized && hasDubbed
+    }
+    if (firstReady) {
+      const hasOptimized = !!result.tracks.optimized.path
+      const hasBackground = !!result.tracks.background.path
+      const hasDubbed = !!result.tracks.dubbed.path
       exportTracks.optimized = hasOptimized
       exportTracks.original = false
       exportTracks.background = !hasOptimized && hasBackground
@@ -539,9 +560,12 @@ async function loadPreviewTracks() {
     await nextTick()
     syncAudios()
   } catch (error) {
-    if (request === previewRequest) previewError.value = errorMessage(error)
+    if (request === previewRequest && !taskWait.signal.aborted) previewError.value = errorMessage(error)
   } finally {
-    if (request === previewRequest) previewLoading.value = false
+    if (request === previewRequest) {
+      previewLoading.value = false
+      if (previewPending && panel.value === 'preview' && !taskWait.signal.aborted) void loadPreviewTracks()
+    }
   }
 }
 watch(
@@ -550,8 +574,15 @@ watch(
     current.value = undefined
     speakerFilter.value = 0
     currentPage.value = 1
+    previewRequest++
+    previewLoading.value = false
+    previewPending = false
+    previewSelectionTouched = false
     previewTracks.value = undefined
     pauseAll()
+    pendingSeek = undefined
+    resumeOnLoad = false
+    time.value = 0
   },
   { immediate: true }
 )
@@ -571,23 +602,15 @@ watch(
   { immediate: true }
 )
 watch(
-  [
-    panel,
-    previewSignature,
-    () =>
-      detail.value?.jobs.some(
-        (job) => ['queued', 'running'].includes(job.status) && job.stage !== 'preview-tracks'
-      )
-  ],
+  [panel, previewSignature],
   ([currentPanel]) => {
     if (currentPanel === 'preview') void loadPreviewTracks()
   },
   { immediate: true }
 )
 watch(clockSource, () => {
-  pendingSeek = undefined
-  time.value = 0
-  playing.value = false
+  pendingSeek = time.value
+  resumeOnLoad = playing.value
 })
 watch(
   playbackPaths,
@@ -960,16 +983,13 @@ async function renderFilm() {
                 <span>此区域不播放原声；使用下方音轨开关试听最终混合效果。</span>
               </div>
             </template>
-            <div v-if="previewLoading" class="preview-loading">
-              <UIcon name="i-carbon-loading animate-spin" />
-              <span>正在准备波形与试听缓存…</span>
-            </div>
           </div>
           <audio
             v-if="project.kind !== 'video' && clockSource"
             ref="clockPlayer"
             class="mixer-hidden-audio"
             :src="mediaUrl(clockSource)"
+            muted
             preload="auto"
             @loadedmetadata="onClockLoaded"
             @play="onClockPlay"
@@ -985,7 +1005,7 @@ async function renderFilm() {
               square
               :icon="playing ? 'i-carbon-pause' : 'i-carbon-play'"
               :aria-label="playing ? '暂停' : '播放'"
-              :disabled="!clockSource || previewLoading"
+              :disabled="!clockSource"
               @click="togglePlayback"
             />
             <span class="preview-time">{{ formatTime(time) }}</span>
@@ -996,7 +1016,7 @@ async function renderFilm() {
               :max="previewDuration"
               step="0.01"
               :value="time"
-              :disabled="!clockSource || previewLoading"
+              :disabled="!clockSource"
               aria-label="播放进度"
               @input="seekTo(Number(($event.target as HTMLInputElement).value))"
             />
@@ -1170,24 +1190,28 @@ async function renderFilm() {
         ref="optimizedAudio"
         class="mixer-hidden-audio"
         :src="mediaUrl(playbackPaths.optimized)"
+        @loadedmetadata="onTrackLoaded('optimized')"
         preload="auto"
       />
       <audio
         ref="originalAudio"
         class="mixer-hidden-audio"
         :src="mediaUrl(playbackPaths.original)"
+        @loadedmetadata="onTrackLoaded('original')"
         preload="auto"
       />
       <audio
         ref="backgroundAudio"
         class="mixer-hidden-audio"
         :src="mediaUrl(playbackPaths.background)"
+        @loadedmetadata="onTrackLoaded('background')"
         preload="auto"
       />
       <audio
         ref="dubbedAudio"
         class="mixer-hidden-audio"
         :src="mediaUrl(playbackPaths.dubbed)"
+        @loadedmetadata="onTrackLoaded('dubbed')"
         preload="auto"
       />
     </section>

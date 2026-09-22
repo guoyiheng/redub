@@ -763,6 +763,45 @@ describe.sequential('production HTTP workflow', () => {
     }
     expect(await api(`projects/${project.id}`)).toEqual(original)
   })
+  it('previews completed clips while another dubbing task is still running', async () => {
+    const project = await api('projects', 'POST', { name: '边生成边预览', text: '第一句\n第二句' })
+    const initial: ProjectDetail = await api(`projects/${project.id}`)
+    const [first, second] = initial.segments
+    await api(`segments/${first!.id}/generate`, 'POST', defaultVoiceSettings(false))
+    await until((d) => d.jobs.every((job) => job.status === 'completed'), project.id)
+    let release!: () => void
+    holdSynthesis = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let revision = ''
+    try {
+      await api(`segments/${second!.id}/generate`, 'POST', defaultVoiceSettings(false))
+      await until((d) => d.jobs.some((job) => job.status === 'running'), project.id)
+      const response = await fetch(`${base}/api/projects/${project.id}/preview-tracks`, {
+        signal: AbortSignal.timeout(8000)
+      })
+      expect(response.status).toBe(200)
+      const preview = await response.json()
+      revision = preview.revision
+      expect(preview.missingDubs).toBe(1)
+      expect(preview.replacementRanges).toEqual([{ start: first!.start, end: first!.end }])
+      expect(preview.tracks.optimized.path).toBeTruthy()
+      expect(
+        (await fetch(`${base}/api/media?path=${encodeURIComponent(preview.tracks.optimized.path)}`)).status
+      ).toBe(200)
+      const during: ProjectDetail = await api(`projects/${project.id}`)
+      expect(during.jobs).toHaveLength(2)
+      expect(during.jobs.some((job) => job.status === 'running')).toBe(true)
+    } finally {
+      holdSynthesis = undefined
+      release()
+    }
+    await until((d) => d.jobs.every((job) => job.status === 'completed'), project.id)
+    const ready = await api(`projects/${project.id}/preview-tracks`)
+    expect(ready.missingDubs).toBe(0)
+    expect(ready.replacementRanges).toHaveLength(2)
+    expect(ready.revision).not.toBe(revision)
+  })
   it('serves signed web updates immediately without restarting the local API', async () => {
     const { installWebUpdate } = createRequire(import.meta.url)('../electron/web-update.cjs')
     const { publicKey, privateKey } = generateKeyPairSync('ed25519')
