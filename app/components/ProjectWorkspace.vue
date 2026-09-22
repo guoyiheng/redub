@@ -6,7 +6,6 @@ import { languageOptions, normalizeLanguage } from '../../shared/languages'
 import { speakerName, dubbedText } from '../../shared/voice'
 
 type PreviewTrackKey = 'optimized' | 'original' | 'background' | 'dubbed'
-type ExportFormat = 'mkv' | 'mp4' | 'wav'
 const trackKeys: PreviewTrackKey[] = ['optimized', 'original', 'background', 'dubbed']
 const sourceTrackKeys: PreviewTrackKey[] = ['original', 'background', 'dubbed']
 const trackLabels: Record<PreviewTrackKey, string> = {
@@ -43,14 +42,8 @@ const trackEnabled = reactive<Record<PreviewTrackKey, boolean>>({
   background: false,
   dubbed: false
 })
-const exportTracks = reactive<Record<PreviewTrackKey, boolean>>({
-  optimized: true,
-  original: false,
-  background: false,
-  dubbed: false
-})
-const exportOriginalMode = ref<'preserve-gaps' | 'full'>('preserve-gaps')
-const exportFormat = ref<ExportFormat>('mkv')
+const exportTrack = ref<PreviewTrackKey>('optimized')
+const exportTarget = ref<'audio' | 'video'>('audio')
 let pendingSeek: number | undefined
 let resumeOnLoad = false
 let previewRequest = 0
@@ -155,10 +148,9 @@ const exportSignature = computed(() =>
   JSON.stringify({
     preview: previewSignature.value,
     name: project.value.name,
-    text: lines.value.map((line) => [line.text, line.translation]),
-    tracks: exportTracks,
-    originalMode: exportOriginalMode.value,
-    format: exportFormat.value
+    text: lines.value.map((line) => [line.text, line.translation, line.generationPrompt, line.subtitle]),
+    track: exportTrack.value,
+    target: exportTarget.value
   })
 )
 watch(exportSignature, () => {
@@ -217,43 +209,22 @@ const waveforms = computed<Record<PreviewTrackKey, number[]>>(() => {
     dubbed: downsample(tracks?.dubbed.peaks || [])
   }
 })
-const exportFormatItems = computed(() =>
-  project.value.kind === 'video'
-    ? [
-        { label: 'MKV · FLAC 无损音频（推荐）', value: 'mkv' },
-        { label: 'MP4 · AAC 320k（兼容播放器）', value: 'mp4' }
-      ]
-    : [{ label: 'WAV · PCM 16 位无损', value: 'wav' }]
+const exportTrackItems = computed(() =>
+  trackKeys.map((key) => ({
+    label: trackLabels[key],
+    value: key,
+    disabled: !trackAvailable(key)
+  }))
 )
-const exportOriginalModeItems = [
-  { label: '保留未替换原声（推荐）', value: 'preserve-gaps' },
-  { label: '完整原声（可能与新配音重叠）', value: 'full' }
-]
-const selectedExportCount = computed(() => trackKeys.filter((key) => exportTracks[key]).length)
-const exportSummary = computed(() => {
-  const names = trackKeys.filter((key) => exportTracks[key]).map((key) => trackLabels[key])
-  const format = { mkv: 'MKV / FLAC 无损', mp4: 'MP4 / AAC 320k', wav: 'WAV / PCM 无损' }[exportFormat.value]
-  return names.length ? `${names.join(' + ')} → ${format}` : '尚未选择音轨'
-})
-const exportWarning = computed(() => {
-  if (exportTracks.optimized && selectedExportCount.value > 1)
-    return '优化合成已经包含完整成片音轨，不能与其他音轨重复合并。'
-  if (exportTracks.original && exportTracks.background && exportTracks.dubbed)
-    return '原声与背景音同时合并会叠加未替换区间的环境声；正式导出推荐“优化合成”。'
-  if (exportTracks.original && exportTracks.dubbed && exportOriginalMode.value === 'full')
-    return '完整原声会在替换区间保留旧人声，可能和新配音重叠。'
-  return ''
-})
+const exportSummary = computed(() =>
+  exportTarget.value === 'video'
+    ? `保留原视频与原有音轨，新增「${trackLabels[exportTrack.value]}」音轨`
+    : `导出「${trackLabels[exportTrack.value]}」音轨`
+)
 const exportReason = computed(() => {
   if (exporting.value) return '正在导出，请稍候'
   if (locked.value) return '请等待当前项目任务完成'
-  if (!previewTracks.value) return '预览音轨尚未准备好'
-  if (!selectedExportCount.value) return '至少选择一条音轨'
-  if (exportTracks.dubbed && previewTracks.value.missingDubs > 0)
-    return `还有 ${previewTracks.value.missingDubs} 句配音未生成，暂时不能导出配音音轨`
-  for (const key of trackKeys)
-    if (exportTracks[key] && !previewTracks.value.tracks[key].path)
-      return `所选音轨「${trackLabels[key]}」尚未准备好`
+  if (!trackAvailable(exportTrack.value)) return '所选音轨尚未准备好'
   return ''
 })
 const addReason = computed(() =>
@@ -411,15 +382,6 @@ function setTrackEnabled(key: PreviewTrackKey, value: boolean | 'indeterminate')
       if (playing.value) void playAudios()
     })
 }
-function setExportTrack(key: PreviewTrackKey, value: boolean | 'indeterminate') {
-  const enabled = value === true
-  if (enabled && key === 'optimized') {
-    for (const sourceKey of sourceTrackKeys) exportTracks[sourceKey] = false
-  } else if (enabled) {
-    exportTracks.optimized = false
-  }
-  exportTracks[key] = enabled
-}
 function trackState(key: PreviewTrackKey) {
   const track = previewTracks.value?.tracks[key]
   if (!trackAvailable(key)) return track?.reason || '尚未准备'
@@ -430,28 +392,6 @@ function trackState(key: PreviewTrackKey) {
     return `${previewTracks.value.missingDubs} 句未生成`
   return '参与试听'
 }
-function applyRecommendedExport() {
-  const hasOptimized = !!previewTracks.value?.tracks.optimized.path
-  exportTracks.optimized = hasOptimized
-  exportTracks.original = false
-  exportTracks.background = !hasOptimized && !!previewTracks.value?.tracks.background.path
-  exportTracks.dubbed = !hasOptimized && !!previewTracks.value?.tracks.dubbed.path
-  exportOriginalMode.value = 'preserve-gaps'
-  exportFormat.value = project.value.kind === 'video' ? 'mkv' : 'wav'
-}
-function applyDubbedOnlyExport() {
-  exportTracks.optimized = false
-  exportTracks.original = false
-  exportTracks.background = false
-  exportTracks.dubbed = !!previewTracks.value?.tracks.dubbed.path
-}
-function applyOriginalGapsExport() {
-  exportTracks.optimized = false
-  exportTracks.original = !!previewTracks.value?.tracks.original.path
-  exportTracks.background = false
-  exportTracks.dubbed = !!previewTracks.value?.tracks.dubbed.path
-  exportOriginalMode.value = 'preserve-gaps'
-}
 async function exportFilm() {
   if (exportReason.value || exporting.value) return
   exporting.value = true
@@ -460,19 +400,16 @@ async function exportFilm() {
     const task = await $fetch<{ jobId: string }>(`/api/projects/${project.value.id}/export`, {
       method: 'POST',
       body: {
-        optimized: exportTracks.optimized,
-        original: exportTracks.original,
-        background: exportTracks.background,
-        dubbed: exportTracks.dubbed,
-        originalMode: exportOriginalMode.value,
-        format: exportFormat.value
+        target: exportTarget.value,
+        ...Object.fromEntries(trackKeys.map((key) => [key, key === exportTrack.value])),
+        originalMode: 'full'
       }
     })
     await refresh()
     toast.add({
       id: 'project-export-queued',
       title: '导出任务已创建',
-      description: '刷新页面后可在任务详情中下载成片',
+      description: '完成后会自动下载，也可在任务详情中找回',
       color: 'success'
     })
     const result = await waitForJobResult<ExportResult>(task.jobId, taskWait.signal)
@@ -486,14 +423,14 @@ async function exportFilm() {
     if (result.subtitlePath) {
       toast.add({
         id: 'project-export-success',
-        title: '成片已导出（包含外挂字幕）',
+        title: '已导出，配套字幕可单独下载',
         description: `${result.filename} 与 ${result.subtitleFilename || '配套字幕'}`,
         color: 'success'
       })
     } else {
       toast.add({
         id: 'project-export-success',
-        title: '成片已导出',
+        title: '导出完成',
         description: result.filename,
         color: 'success'
       })
@@ -539,24 +476,11 @@ async function loadPreviewTracks() {
       trackEnabled.background = !hasOptimized && hasBackground
       trackEnabled.dubbed = !hasOptimized && hasDubbed
     }
-    if (firstReady) {
-      const hasOptimized = !!result.tracks.optimized.path
-      const hasBackground = !!result.tracks.background.path
-      const hasDubbed = !!result.tracks.dubbed.path
-      exportTracks.optimized = hasOptimized
-      exportTracks.original = false
-      exportTracks.background = !hasOptimized && hasBackground
-      exportTracks.dubbed = !hasOptimized && hasDubbed
-      exportOriginalMode.value = 'preserve-gaps'
-      exportFormat.value = project.value.kind === 'video' ? 'mkv' : 'wav'
-    } else {
-      for (const key of trackKeys) {
-        if (!result.tracks[key].path) {
-          trackEnabled[key] = false
-          exportTracks[key] = false
-        }
-      }
+    for (const key of trackKeys) {
+      if (!result.tracks[key].path) trackEnabled[key] = false
     }
+    if (firstReady && !result.tracks[exportTrack.value].path)
+      exportTrack.value = trackKeys.find((key) => result.tracks[key].path) || 'optimized'
     await nextTick()
     syncAudios()
   } catch (error) {
@@ -578,6 +502,8 @@ watch(
     previewLoading.value = false
     previewPending = false
     previewSelectionTouched = false
+    exportTarget.value = project.value.kind === 'video' ? 'video' : 'audio'
+    exportTrack.value = 'optimized'
     previewTracks.value = undefined
     pauseAll()
     pendingSeek = undefined
@@ -680,37 +606,6 @@ async function translateSingleLine(lineId: string) {
     translatingLineId.value = null
   }
 }
-
-const rendering = ref(false)
-const renderReason = computed(() => {
-  if (locked.value) return '请等待当前项目任务完成'
-  if (!lines.value.length) return '当前项目没有台词'
-  const enabled = lines.value.filter((s) => s.enabled)
-  if (project.value.kind === 'text' && enabled.some((s) => !s.generatedPath))
-    return '文本项目没有原声，请先生成所有需要替换的配音'
-  const generated = enabled.filter((s) => s.generatedPath)
-  if (
-    project.value.kind !== 'text' &&
-    (!project.value.audioPath || (generated.length && !project.value.backgroundPath))
-  )
-    return '请先分离人声与背景音'
-  return ''
-})
-
-async function renderFilm() {
-  if (rendering.value || renderReason.value) return
-  rendering.value = true
-  try {
-    await act(async () => {
-      await $fetch(`/api/projects/${project.value.id}/batch`, {
-        method: 'POST',
-        body: { action: 'render' }
-      })
-    }, '合成任务已加入队列')
-  } finally {
-    rendering.value = false
-  }
-}
 </script>
 <template>
   <section v-if="detail" class="workspace">
@@ -769,24 +664,6 @@ async function renderFilm() {
           :reason="dirty ? '请先保存台词修改' : ''"
           @click="openBatch(lines.length ? 'synthesize' : 'prepare')"
           >{{ lines.length ? '批量配音' : '处理素材' }}</StudioAction
-        >
-        <StudioAction
-          v-if="panel === 'preview'"
-          color="neutral"
-          variant="soft"
-          icon="i-carbon-video"
-          :reason="renderReason"
-          :loading="rendering"
-          @click="renderFilm"
-          >合成成片</StudioAction
-        >
-        <UButton
-          v-if="panel === 'preview' && project.outputPath"
-          :href="mediaUrl(project.outputPath, true)"
-          icon="i-carbon-download"
-          color="neutral"
-          variant="soft"
-          >导出成片</UButton
         >
       </div>
     </header>
@@ -1108,84 +985,64 @@ async function renderFilm() {
         <section class="export-panel">
           <header class="export-heading">
             <div>
-              <h3>合并导出</h3>
+              <h3>导出</h3>
               <p class="help">
-                选择要写入成片的音轨。视频流会直接复制，不会重新编码画质；音频按所选格式合并。
+                {{
+                  exportTarget === 'video'
+                    ? '保留原视频格式与已有音轨，新增一条音轨，可在播放器中切换。'
+                    : '将所选音轨保存为独立音频，便于试听或继续剪辑。'
+                }}
               </p>
             </div>
-            <UBadge color="success" variant="soft">{{
-              project.kind === 'video' ? '画面流复制' : 'PCM 无损'
-            }}</UBadge>
           </header>
-          <div class="export-presets">
-            <button type="button" class="export-preset recommended" @click="applyRecommendedExport">
-              <strong>优化合成（推荐）</strong>
-              <span>替换区间使用背景音 + 新配音，未配音片段保留原声，适合直接导出成片。</span>
+          <div class="export-choices" role="group" aria-label="导出内容">
+            <button
+              type="button"
+              class="export-choice"
+              :class="{ selected: exportTarget === 'audio' }"
+              :aria-pressed="exportTarget === 'audio'"
+              @click="exportTarget = 'audio'"
+            >
+              <UIcon name="i-carbon-waveform" />
+              <span><strong>仅音轨</strong><small>保存为 WAV 音频</small></span>
+              <UIcon v-if="exportTarget === 'audio'" name="i-carbon-checkmark" />
             </button>
-            <button type="button" class="export-preset" @click="applyDubbedOnlyExport">
-              <strong>仅配音</strong>
-              <span>只导出新配音，适合外部后期继续处理。</span>
-            </button>
-            <button type="button" class="export-preset" @click="applyOriginalGapsExport">
-              <strong>未替换原声 + 配音</strong>
-              <span>保留没有被新配音覆盖的原声区间，适合部分替换。</span>
+            <button
+              v-if="project.kind === 'video'"
+              type="button"
+              class="export-choice"
+              :class="{ selected: exportTarget === 'video' }"
+              :aria-pressed="exportTarget === 'video'"
+              @click="exportTarget = 'video'"
+            >
+              <UIcon name="i-carbon-video" />
+              <span><strong>视频成片</strong><small>原视频 · 追加可切换音轨</small></span>
+              <UIcon v-if="exportTarget === 'video'" name="i-carbon-checkmark" />
             </button>
           </div>
-          <div class="export-options">
-            <div
-              v-for="key in trackKeys"
-              :key="`export-${key}`"
-              class="export-option"
-              :class="{ recommended: key === 'optimized', unavailable: !trackAvailable(key) }"
-            >
-              <UCheckbox
-                :model-value="exportTracks[key]"
-                :disabled="!trackAvailable(key)"
-                @update:model-value="setExportTrack(key, $event)"
-              />
-              <div class="export-option-copy">
-                <strong>{{ trackLabels[key] }}</strong>
-                <span>{{ trackDescriptions[key] }}</span>
-                <small v-if="!trackAvailable(key)">{{ trackState(key) }}</small>
-              </div>
-            </div>
-          </div>
-          <div class="export-settings">
-            <UFormField
-              v-if="exportTracks.original"
-              label="原声处理方式"
-              description="推荐保留未替换原声，避免旧人声与新配音重叠。"
-            >
-              <USelect v-model="exportOriginalMode" class="w-full" :items="exportOriginalModeItems" />
-            </UFormField>
-            <UFormField
-              label="导出格式"
-              description="MKV 使用 FLAC 无损音频；MP4 兼容性更好，音频为 AAC 320k。"
-            >
-              <USelect v-model="exportFormat" class="w-full" :items="exportFormatItems" />
-            </UFormField>
-          </div>
+          <UFormField :label="exportTarget === 'video' ? '新增音轨' : '导出音轨'" class="export-track-field">
+            <USelect v-model="exportTrack" class="w-full" :items="exportTrackItems" />
+          </UFormField>
           <div class="export-summary">
             <div>
               <strong>{{ exportSummary }}</strong>
-              <p v-if="exportWarning">{{ exportWarning }}</p>
               <p v-if="exportReason" class="export-reason">{{ exportReason }}</p>
             </div>
             <div class="export-actions">
               <UButton
                 v-if="lastExportResult?.subtitlePath"
                 :href="mediaUrl(lastExportResult.subtitlePath, true)"
-                color="primary"
-                variant="soft"
+                color="neutral"
+                variant="ghost"
                 icon="i-carbon-closed-caption"
-                >下载配套外挂字幕 (.srt)</UButton
+                >配套字幕</UButton
               >
               <StudioAction
                 icon="i-carbon-download"
                 :reason="exportReason"
                 :loading="exporting"
                 @click="exportFilm"
-                >{{ project.kind === 'video' ? '导出视频成片' : '导出音频成片' }}</StudioAction
+                >{{ exportTarget === 'video' ? '导出视频成片' : '导出音轨' }}</StudioAction
               >
             </div>
           </div>

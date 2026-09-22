@@ -248,7 +248,7 @@ describe('电影配音优化专项测试', () => {
           original: false,
           background: false,
           dubbed: false,
-          format: 'mp4'
+          target: 'video'
         })
       ).rejects.toThrow(error)
     } finally {
@@ -263,7 +263,7 @@ describe('电影配音优化专项测试', () => {
       background: true,
       dubbed: true,
       originalMode: 'preserve-gaps',
-      format: 'mp4'
+      target: 'video'
     })
     expect(result.filename.endsWith('.mp4')).toBe(true)
     expect(result.subtitleFilename?.endsWith('.srt')).toBe(true)

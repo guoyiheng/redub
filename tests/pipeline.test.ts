@@ -305,7 +305,7 @@ describe.sequential('媒体处理与服务协议', () => {
       original: false,
       background: false,
       dubbed: false,
-      format: 'mkv'
+      target: 'video'
     })
     expect((await probe(assetPath(output.path))).duration).toBeCloseTo(4, 2)
   })

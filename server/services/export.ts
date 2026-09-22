@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { writeFile, rename, rm } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { writeFile, rename, rm, stat } from 'node:fs/promises'
+import { basename, join, extname } from 'node:path'
 import { getProject, getSegments } from './store'
 import { exportSubtitles } from './subtitles'
-import { assetPath, ffmpeg, projectDir } from './media'
+import { assetPath, ffmpeg, projectDir, probe } from './media'
 import { getPreviewTracks } from './preview-tracks'
 import {
   exportSchema,
@@ -28,7 +28,10 @@ function safeStem(value: string) {
 }
 
 export function exportSourcePath(path: string | null | undefined) {
-  if (!path || !/^[a-f0-9-]{36}\/[a-zA-Z0-9_.-]+\.(wav|mp3|m4a|flac|ogg|aac|mp4|mov|mkv|webm)$/i.test(path))
+  if (
+    !path ||
+    !/^[a-f0-9-]{36}\/[a-zA-Z0-9_.-]+\.(wav|mp3|m4a|flac|ogg|aac|mp4|mov|mkv|webm|avi)$/i.test(path)
+  )
     throw new Error('导出文件路径无效')
   const file = assetPath(path)
   if (!existsSync(file)) throw new Error('导出所需的音轨尚未生成')
@@ -49,20 +52,21 @@ function selectTrack(tracks: PreviewTracks, key: ExportTrackKey, options: Export
 
 export function exportKey(options: ExportOptions, revision: string) {
   return createHash('sha256')
-    .update(`${revision}:${JSON.stringify(options)}`)
+    .update(`multitrack-v1:${revision}:${JSON.stringify(options)}`)
     .digest('hex')
     .slice(0, 16)
 }
 
-/** Mix selected preview tracks while stream-copying the original video stream. */
+/** Export audio, or append it to the unchanged streams in the source container. */
 export async function exportProject(projectId: string, input: unknown): Promise<ExportResult> {
   const options = exportSchema.parse(input)
-  const previous = activeExports.get(projectId)
+  const requestKey = `${projectId}:${JSON.stringify(options)}`
+  const previous = activeExports.get(requestKey)
   if (previous) return previous
   const promise = exportProjectInternal(projectId, options).finally(() => {
-    activeExports.delete(projectId)
+    activeExports.delete(requestKey)
   })
-  activeExports.set(projectId, promise)
+  activeExports.set(requestKey, promise)
   return promise
 }
 
@@ -73,18 +77,21 @@ async function exportProjectInternal(projectId: string, options: ExportOptions):
   if (!selected.length) throw new Error('至少选择一条音轨')
   if (selected.includes('optimized') && selected.length > 1)
     throw new Error('“优化合成”已经包含完整成片音轨，不能与其他音轨重复合并')
-  if (options.dubbed && tracks.missingDubs > 0)
-    throw new Error(`还有 ${tracks.missingDubs} 句配音未生成，暂时不能导出配音音轨`)
-  if (project.kind === 'video' && !['mkv', 'mp4'].includes(options.format))
-    throw new Error('视频成片请选择 MKV 或 MP4 格式')
-  if (project.kind !== 'video' && options.format !== 'wav') throw new Error('音频项目请选择 WAV 格式')
+  if (options.target === 'video' && project.kind !== 'video') throw new Error('当前项目没有可导出的视频')
+  const source = options.target === 'video' ? exportSourcePath(project.sourcePath) : null
+  const extension = source ? extname(source).slice(1).toLowerCase() : 'wav'
+  if (source && !['mp4', 'mov', 'mkv', 'webm', 'avi'].includes(extension))
+    throw new Error('当前视频格式无法追加音轨')
 
   const chosen = selected.map((key) => ({ key, track: selectTrack(tracks, key, options) }))
   const revision = tracks.revision || 'current'
   const subtitle = exportSubtitles(await getSegments(projectId), project.kind, options)
   // Subtitle edits must create a new matching media/SRT pair, even if audio is unchanged.
-  const key = exportKey(options, `${revision}:${subtitle}`)
-  const extension = options.format
+  const sourceInfo = source ? await stat(source) : null
+  const key = exportKey(
+    options,
+    `${revision}:${subtitle}:${source}:${sourceInfo?.size}:${sourceInfo?.mtimeMs}`
+  )
   const filename = `${safeStem(project.name)}-${key}.${extension}`
   const relative = `${project.id}/${filename}`
   const output = assetPath(relative)
@@ -109,19 +116,40 @@ async function exportProjectInternal(projectId: string, options: ExportOptions):
   }
   const dir = await projectDir(project.id)
   const temporary = join(dir, `.${safeStem(project.name)}-${key}.${process.pid}.partial.${extension}`)
-  const source = project.kind === 'video' ? exportSourcePath(project.sourcePath) : null
   const args: string[] = []
   if (source) args.push('-i', source)
   for (const item of chosen) args.push('-i', exportSourcePath(item.track.path))
   const labels = chosen.map((_, index) => `[${index + (source ? 1 : 0)}:a:0]`)
   const filter = `${labels.join('')}amix=inputs=${labels.length}:duration=longest:normalize=0,alimiter=limit=0.98:latency=1,aresample=48000[mix]`
   args.push('-filter_complex', filter)
-  if (source) args.push('-map', '0:v:0')
+  // Chapter data tracks are rebuilt from map_chapters; copying them as data can break MOV muxing.
+  if (source) args.push('-map', '0', '-map', '-0:d')
   args.push('-map', '[mix]')
   if (source) {
-    args.push('-c:v', 'copy', '-t', String(project.duration))
-    if (options.format === 'mkv') args.push('-c:a', 'flac')
-    else args.push('-c:a', 'aac', '-b:a', '320k', '-movflags', '+faststart')
+    const audioIndex = (await probe(source)).audioStreams
+    const codec =
+      extension === 'mkv'
+        ? 'flac'
+        : extension === 'webm'
+          ? 'libopus'
+          : extension === 'avi'
+            ? 'libmp3lame'
+            : 'aac'
+    args.push('-c', 'copy', `-c:a:${audioIndex}`, codec)
+    if (codec !== 'flac') args.push(`-b:a:${audioIndex}`, codec === 'libopus' ? '192k' : '320k')
+    args.push(
+      '-map_metadata',
+      '0',
+      '-map_chapters',
+      '0',
+      `-metadata:s:a:${audioIndex}`,
+      `title=ReDub · ${chosen.map(({ track }) => track.label).join(' + ')}`,
+      `-metadata:s:a:${audioIndex}`,
+      'handler_name=ReDub',
+      `-disposition:a:${audioIndex}`,
+      '0'
+    )
+    if (extension === 'mp4' || extension === 'mov') args.push('-movflags', '+faststart')
   } else {
     args.push('-c:a', 'pcm_s16le')
   }

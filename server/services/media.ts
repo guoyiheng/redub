@@ -153,7 +153,12 @@ export async function probe(path: string) {
   if (!Number.isFinite(duration) || duration <= 0) throw new Error('无法读取素材时长，请检查文件是否损坏')
   if (!result.streams.some((s: { codec_type: string }) => s.codec_type === 'audio'))
     throw new Error('素材中没有可用音轨')
-  return { duration, video: result.streams.some((s: { codec_type: string }) => s.codec_type === 'video') }
+  return {
+    duration,
+    video: result.streams.some((s: { codec_type: string }) => s.codec_type === 'video'),
+    audioStreams: result.streams.filter((s: { codec_type: string }) => s.codec_type === 'audio')
+      .length as number
+  }
 }
 export async function extractAudio(source: string, target: string) {
   await ffmpeg(['-i', source, '-vn', '-ar', '48000', '-ac', '2', '-c:a', 'pcm_s16le', target])

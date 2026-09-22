@@ -379,36 +379,9 @@ export async function executeJob(job: Job, progress: (value: number, message: st
   if (job.stage === 'preview') {
     if (!p.mixedPath) throw new Error('请先合并音轨')
     if (p.kind === 'video') {
-      const output = rel(`dubbed-${job.id}.mp4`)
-      await progress(10, '正在生成可预览的视频')
-      await ffmpeg([
-        '-i',
-        assetPath(p.sourcePath!),
-        '-i',
-        assetPath(p.mixedPath),
-        '-map',
-        '0:v:0',
-        '-map',
-        '1:a:0',
-        '-c:v',
-        'libx264',
-        '-preset',
-        'fast',
-        '-crf',
-        '18',
-        '-pix_fmt',
-        'yuv420p',
-        '-c:a',
-        'aac',
-        '-b:a',
-        '256k',
-        '-movflags',
-        '+faststart',
-        '-t',
-        String(p.duration),
-        assetPath(output)
-      ])
-      await update({ outputPath: output })
+      await progress(10, '正在为原视频追加配音音轨')
+      const output = await exportProject(p.id, { target: 'video', optimized: true })
+      await update({ outputPath: output.path })
     } else {
       const output = rel(`dubbed-${job.id}.mp3`)
       await ffmpeg(['-i', assetPath(p.mixedPath), '-c:a', 'libmp3lame', '-b:a', '256k', assetPath(output)])

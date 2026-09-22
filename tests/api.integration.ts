@@ -523,7 +523,7 @@ describe.sequential('production HTTP workflow', () => {
       original: false,
       background: false,
       dubbed: false,
-      format: 'wav'
+      target: 'audio'
     })
     await until((d) => d.jobs.find((job) => job.id === exported.jobId)?.status === 'completed', project.id)
     await stop()
@@ -718,7 +718,7 @@ describe.sequential('production HTTP workflow', () => {
       original: false,
       background: false,
       dubbed: false,
-      format: 'wav'
+      target: 'audio'
     })
     await until((d) => d.jobs.find((j) => j.id === exported.jobId)?.status === 'completed', project.id)
     const exportDetail: JobDetail = await api(`jobs/${exported.jobId}`)
