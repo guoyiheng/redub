@@ -948,7 +948,7 @@ async function onSegmentRestored(updated: Segment) {
             </div>
             <div class="th-col">
               <UIcon name="i-carbon-microphone" />
-              <span>配音</span>
+              <span>翻译与配音</span>
             </div>
             <div class="th-actions">状态与操作</div>
           </div>
@@ -984,7 +984,7 @@ async function onSegmentRestored(updated: Segment) {
               </div>
 
               <div class="row-dub-text">
-                <span class="comparison-label">配音</span>
+                <span class="comparison-label">翻译与配音</span>
                 <p
                   class="dialogue-translation"
                   :class="{ 'is-empty': !line.translation.trim() && !line.generatedPath }"
