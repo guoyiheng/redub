@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { segmentTaskReason } from '../../shared/job-policy'
 import type { BatchInput } from '../../shared/batch'
 import type { ExportResult } from '../../shared/export'
 import type { PreviewTracks } from '../../shared/preview'
@@ -170,6 +171,7 @@ watch(previewTracks, () => {
 const locked = computed(
   () => detail.value?.jobs.some((j) => ['queued', 'running'].includes(j.status)) || false
 )
+const lineTaskReason = (id: string) => segmentTaskReason(detail.value?.jobs || [], id)
 const completed = computed(() => lines.value.filter((s) => s.enabled && s.generatedPath).length)
 const enabledCount = computed(() => lines.value.filter((s) => s.enabled).length)
 const totalDuration = computed(() => Math.max(project.value.duration, ...lines.value.map((s) => s.end), 1))
@@ -1034,7 +1036,8 @@ async function onSegmentRestored(updated: Segment) {
                     color="neutral"
                     size="md"
                     icon="i-carbon-microphone"
-                    :disabled="locked"
+                    :disabled="!!lineTaskReason(line.id)"
+                    :title="lineTaskReason(line.id) || undefined"
                     :aria-label="`第 ${getGlobalIndex(line.id)} 句配音`"
                     @click="generateLine(line.id)"
                     >配音</UButton
@@ -1044,7 +1047,8 @@ async function onSegmentRestored(updated: Segment) {
                     color="neutral"
                     size="md"
                     icon="i-carbon-language"
-                    :disabled="locked || !line.text?.trim()"
+                    :disabled="!!lineTaskReason(line.id) || !line.text?.trim()"
+                    :title="lineTaskReason(line.id) || undefined"
                     :aria-label="`第 ${getGlobalIndex(line.id)} 句翻译`"
                     @click="openTranslation(line)"
                     >翻译</UButton
@@ -1350,7 +1354,7 @@ async function onSegmentRestored(updated: Segment) {
       ><template #body
         ><form class="project-options-form" @submit.prevent="saveOptions">
           <p class="help">
-            在此修改项目名称。台词翻译语言可在翻译弹窗中切换；AI 配音渠道可在配音弹窗中指定。
+            在此修改项目名称。台词翻译语言可在翻译弹窗中切换；配音和翻译渠道统一在设置页面配置。
           </p>
           <UFormField label="项目名称">
             <UInput class="w-full" v-model="options.name" :disabled="locked" />

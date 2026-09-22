@@ -69,3 +69,8 @@ export const defaultVoiceSettings = (useReference = true) =>
 
 export const voiceLanguageInstruction = (language: string) =>
   `配音语言：${normalizeLanguage(language.trim() || '中文')}。请使用该语言朗读台词，参考音频仅用于音色、语气和情绪，不沿用参考音频的语言。`
+
+export function withVoiceLanguage(prompt: string, language: string) {
+  const content = prompt.replace(/^配音语言：[^\n]*不沿用参考音频的语言。(?:\r?\n)?/gm, '').trim()
+  return `${voiceLanguageInstruction(language)}\n${content}`
+}

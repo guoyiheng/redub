@@ -73,6 +73,7 @@ export function initDb() {
     const segmentColumns = await client.execute('PRAGMA table_info(segments)')
     const segmentColumnNames = new Set(segmentColumns.rows.map((row) => row.name))
     const segmentMigrations: Record<string, string> = {
+      translationLanguage: 'TEXT',
       customReferencePath: 'TEXT',
       generationPrompt: 'TEXT',
       synthesisMode: "TEXT NOT NULL DEFAULT 'ai'",

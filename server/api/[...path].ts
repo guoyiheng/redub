@@ -11,24 +11,18 @@ import { z } from 'zod'
 import { eq, and, desc, inArray, notInArray } from 'drizzle-orm'
 import { db, initDb } from '../db'
 import { projects, segments, jobs, channels, settings } from '../db/schema'
-import {
-  getProject,
-  getSegments,
-  getSettings,
-  getActiveChannel,
-  assertIdle,
-  invalidateOutput
-} from '../services/store'
+import { getProject, getSegments, getSettings, assertIdle, invalidateOutput } from '../services/store'
 import { importProject } from '../services/importer'
 import { enqueue, enqueueOutput, generateSegment, serializeEnqueue, tick } from '../services/queue'
 import { mediaHealth, assetPath, cutAudio } from '../services/media'
-import { safeError, translateLines } from '../services/providers'
+import { safeError } from '../services/providers'
 import { stageLabels } from '../../shared/types'
 import type { TranslationVersion, AudioVersion } from '../../shared/types'
 import { createVersionName } from '../../shared/version'
 import { getJobDetail, getJobRequest, jobColumns } from '../services/job-requests'
 import { getPreviewTracks } from '../services/preview-tracks'
 import { edgeSpeech } from '../services/edge-speech'
+import { translationTaskSchema } from '../../shared/translation'
 
 const segmentSchema = z
   .object({
@@ -241,7 +235,7 @@ export default defineEventHandler(async (event) => {
                   generatedHash: null,
                   ...(normalizeLanguage(currentProject.targetLanguage) !==
                   normalizeLanguage(data.targetLanguage)
-                    ? { translation: '', generationPrompt: null }
+                    ? { translation: '', translationLanguage: null, generationPrompt: null }
                     : {})
                 })
                 .where(eq(segments.projectId, id))
@@ -383,58 +377,17 @@ export default defineEventHandler(async (event) => {
       if (!line) throw createError({ statusCode: 404, statusMessage: '片段不存在' })
       return await uploadReference(event, line.projectId)
     }
-    if (resource === 'segments' && id && action === 'translate' && method === 'POST') {
+    if (
+      resource === 'segments' &&
+      id &&
+      ['translate', 'translate-direct'].includes(action || '') &&
+      method === 'POST'
+    ) {
       const [line] = await db.select().from(segments).where(eq(segments.id, id))
       if (!line) throw createError({ statusCode: 404, statusMessage: '片段不存在' })
+      const input = translationTaskSchema.parse((await readBody(event)) || {})
       setResponseStatus(event, 202)
-      return { jobs: await enqueue(line.projectId, ['translate'], id) }
-    }
-    if (resource === 'segments' && id && action === 'translate-direct' && method === 'POST') {
-      const [line] = await db.select().from(segments).where(eq(segments.id, id))
-      if (!line) throw createError({ statusCode: 404, statusMessage: '片段不存在' })
-      const body = (await readBody(event)) || {}
-      const [p] = await db.select().from(projects).where(eq(projects.id, line.projectId))
-      if (!p) throw createError({ statusCode: 404, statusMessage: '项目不存在' })
-      const sourceLanguage = body.sourceLanguage || p.sourceLanguage
-      const targetLanguage = body.targetLanguage || p.targetLanguage
-      const channel = await getActiveChannel('openai')
-      if (channel.type !== 'openai') throw new Error('翻译渠道类型不正确，请在设置中配置')
-      const textToTranslate = typeof body.text === 'string' && body.text.trim() ? body.text.trim() : line.text
-      const lineToTranslate = { ...line, text: textToTranslate }
-      const customPrompt = typeof body.prompt === 'string' ? body.prompt.trim() : undefined
-      const result = await translateLines(
-        [lineToTranslate],
-        targetLanguage,
-        channel,
-        sourceLanguage,
-        customPrompt
-      )
-      const newText = result.get(line.id) || line.translation || ''
-      const history: TranslationVersion[] = [...(line.translationHistory || [])]
-      if (line.translation && line.translation.trim() && history.length === 0) {
-        history.push({
-          id: randomUUID(),
-          name: createVersionName([], new Date(Date.now() - 60000)),
-          text: line.translation,
-          createdAt: Date.now() - 60000
-        })
-      }
-      history.push({
-        id: randomUUID(),
-        name: createVersionName(history.map((v) => v.name)),
-        text: newText,
-        createdAt: Date.now()
-      })
-      await db
-        .update(segments)
-        .set({
-          ...(textToTranslate !== line.text ? { text: textToTranslate } : {}),
-          translation: newText,
-          translationHistory: history
-        })
-        .where(eq(segments.id, line.id))
-      const [updated] = await db.select().from(segments).where(eq(segments.id, line.id))
-      return { ok: true, translation: newText, segment: updated }
+      return { jobs: await enqueue(line.projectId, ['translate'], id, undefined, input) }
     }
     if (resource === 'segments' && id && action === 'restore-version' && method === 'POST') {
       return await serializeEnqueue(async () => {
@@ -445,7 +398,10 @@ export default defineEventHandler(async (event) => {
           const versions = old.translationHistory || []
           const target = versions.find((v) => v.id === body.versionId || v.name === body.versionId)
           if (!target) throw createError({ statusCode: 404, statusMessage: '未找到对应译文版本' })
-          await db.update(segments).set({ translation: target.text }).where(eq(segments.id, id))
+          await db
+            .update(segments)
+            .set({ translation: target.text, translationLanguage: target.language ?? null })
+            .where(eq(segments.id, id))
           const [updated] = await db.select().from(segments).where(eq(segments.id, id))
           return { ok: true, segment: updated }
         }
@@ -591,7 +547,7 @@ export default defineEventHandler(async (event) => {
                   !(
                     ['synthesize', 'translate'].includes(job.stage) &&
                     job.segmentId &&
-                    item.stage === job.stage &&
+                    ['synthesize', 'translate'].includes(item.stage) &&
                     item.segmentId &&
                     item.segmentId !== job.segmentId
                   )

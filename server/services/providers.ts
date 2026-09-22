@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Channel, Segment } from '../../shared/types'
-import { speakerName, voiceLanguageInstruction } from '../../shared/voice'
+import { speakerName, withVoiceLanguage } from '../../shared/voice'
 import { assetPath, cutAudio, probe } from './media'
 import { edgeSpeech } from './edge-speech'
 import { jobFetch, requestRedactor } from './job-requests'
@@ -205,8 +205,7 @@ export async function synthesizeSpeech(
   const content = segment.generationPrompt?.trim()
     ? `${referenceHint}目标时长约${duration.toFixed(2)}秒。\n${segment.generationPrompt.trim()}`
     : `${segment.aiPrompt?.trim() ? `${segment.aiPrompt.trim()}\n` : ''}${referenceHint}${hasAudioRef ? '请严格以@音频1相同的音色、语气与情感感觉，朗读以下台词' : '只朗读以下台词，保持自然语气'}（目标时长约${duration.toFixed(2)}秒）：\n${text}`
-  const languageInstruction = voiceLanguageInstruction(targetLanguage)
-  const prompt = `${languageInstruction}\n${content.replace(languageInstruction, '').trim()}`
+  const prompt = withVoiceLanguage(content, targetLanguage)
   if (prompt.length > 3000) throw new Error('配音文本超过 3000 字限制')
   const result = await responseJson(
     await jobFetch(

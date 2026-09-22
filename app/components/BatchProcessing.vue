@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { segmentTaskReason } from '../../shared/job-policy'
 import { batchPlan, type BatchInput } from '../../shared/batch'
 import { defaultVoiceSettings, speakerName, voiceSettingsSchema } from '../../shared/voice'
 import { languageOptions } from '../../shared/languages'
@@ -26,7 +27,9 @@ const input = computed<BatchInput>(() => ({
   action: action.value === 'speaker' ? 'synthesize' : action.value,
   scope: scope.value,
   useSegmentVoices: useSegmentVoices.value,
-  voice: voice.value
+  voice: voice.value,
+  sourceLanguage: sourceLanguage.value,
+  targetLanguage: targetLanguage.value
 }))
 const speakerLines = computed(() => lines.value.filter((s) => speakerName(s.speaker) === targetSpeaker.value))
 watch(
@@ -37,8 +40,11 @@ watch(
   },
   { immediate: true }
 )
+const availableLines = computed(() =>
+  lines.value.filter((line) => !segmentTaskReason(detail.value!.jobs, line.id))
+)
 const targets = computed(() =>
-  lines.value.filter((s) => s.enabled && (scope.value === 'all' || !s.generatedPath))
+  availableLines.value.filter((s) => s.enabled && (scope.value === 'all' || !s.generatedPath))
 )
 const needsAi = computed(() =>
   useSegmentVoices.value
@@ -46,14 +52,23 @@ const needsAi = computed(() =>
     : voice.value.synthesisMode === 'ai'
 )
 const reason = computed(() => {
-  if (detail.value!.jobs.some((j) => ['queued', 'running'].includes(j.status)))
+  if (
+    !['translate', 'synthesize'].includes(action.value) &&
+    detail.value!.jobs.some((j) => ['queued', 'running'].includes(j.status))
+  )
     return '请等待当前项目任务完成'
   if (action.value === 'speaker') {
     if (!speakerLines.value.length) return '当前项目没有可配置的台词角色'
     return ''
   }
   try {
-    batchPlan(project.value, lines.value, input.value)
+    if (!['prepare', 'render'].includes(action.value) && !availableLines.value.some((line) => line.enabled))
+      return '所选台词已有任务，请完成并核对后再创建任务'
+    batchPlan(
+      project.value,
+      ['translate', 'synthesize'].includes(action.value) ? availableLines.value : lines.value,
+      input.value
+    )
   } catch (e) {
     return (e as Error).message
   }
@@ -80,9 +95,9 @@ const steps = computed(() => {
     ]
   if (action.value === 'translate')
     return [
-      `将 ${lines.value.filter((s) => s.enabled).length} 句需替换台词翻译为${targetLanguage.value}`,
+      `将 ${availableLines.value.filter((s) => s.enabled).length} 句需替换台词翻译为${targetLanguage.value}`,
       '覆盖这些台词的现有译文，保留已有配音与成片',
-      '翻译完成后核对译文，再手动生成配音'
+      '已在排队或处理中的台词自动跳过；完成后核对译文，再手动生成配音'
     ]
   if (action.value === 'render')
     return [
@@ -95,25 +110,12 @@ const steps = computed(() => {
     useSegmentVoices.value
       ? '优先使用各句已保存的配音要求；未设置时使用译文或原文'
       : '按译文生成声音；没有译文时使用原文',
-    '生成完成后逐句试听核对，再手动合成或导出'
+    '已在排队或处理中的台词自动跳过；完成后试听核对，再手动合成或导出'
   ]
 })
 async function submit() {
   if (reason.value || saving.value) return
   saving.value = true
-  if (action.value === 'translate') {
-    if (
-      sourceLanguage.value !== project.value.sourceLanguage ||
-      targetLanguage.value !== project.value.targetLanguage
-    ) {
-      await $fetch(`/api/projects/${project.value.id}`, {
-        method: 'PATCH',
-        body: { sourceLanguage: sourceLanguage.value, targetLanguage: targetLanguage.value }
-      })
-      project.value.sourceLanguage = sourceLanguage.value
-      project.value.targetLanguage = targetLanguage.value
-    }
-  }
   if (action.value === 'speaker') {
     const ok = await act(
       () =>

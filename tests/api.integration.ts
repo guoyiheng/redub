@@ -451,6 +451,62 @@ describe.sequential('production HTTP workflow', () => {
     for (const job of done.jobs) expect((await api(`jobs/${job.id}`)).requests).toHaveLength(1)
     await api('settings', 'PATCH', defaults)
   })
+  it('keeps accepting mixed single tasks and batches while the same project has a running voice', async () => {
+    const project = await api('projects', 'POST', {
+      name: 'Mixed live queue',
+      text: 'First.\nSecond.\nThird.\nFourth.'
+    })
+    const before: ProjectDetail = await api(`projects/${project.id}`)
+    const voiceInput = { ...defaultVoiceSettings(false), ttsRate: 11 }
+    let release!: () => void
+    holdSynthesis = new Promise((resolve) => {
+      release = resolve
+    })
+    try {
+      await api(`segments/${before.segments[0]!.id}/generate`, 'POST', voiceInput)
+      await until(
+        (d) => d.jobs.some((job) => job.stage === 'synthesize' && job.status === 'running'),
+        project.id
+      )
+      const translated = await api(`segments/${before.segments[1]!.id}/translate`, 'POST', {
+        targetLanguage: '日语',
+        text: 'Temporary text.',
+        prompt: '保持简洁'
+      })
+      const done = await until(
+        (d) => d.jobs.find((job) => job.id === translated.jobs[0].id)?.status === 'completed',
+        project.id
+      )
+      expect(done.segments[1]).toMatchObject({ text: 'Second.', translationLanguage: '日语' })
+      expect(done.project.targetLanguage).toBe(before.project.targetLanguage)
+      const detail: JobDetail = await api(`jobs/${translated.jobs[0].id}`)
+      const request: JobRequest = await api(
+        `jobs/${translated.jobs[0].id}/requests/${detail.requests[0]!.id}`
+      )
+      expect(request.requestBody).toContain('日语')
+      expect(request.requestBody).toContain('保持简洁')
+      expect(request.requestBody).toContain('Temporary text.')
+      const other = await api(`segments/${before.segments[2]!.id}/generate`, 'POST', voiceInput)
+      expect(other.jobs).toHaveLength(1)
+      const batch: Job[] = await api(`projects/${project.id}/batch`, 'POST', {
+        action: 'synthesize',
+        scope: 'all',
+        voice: voiceInput
+      })
+      expect(batch.map((job) => job.segmentId).sort()).toEqual(
+        [before.segments[1]!.id, before.segments[3]!.id].sort()
+      )
+      await expect(api(`segments/${before.segments[0]!.id}/generate`, 'POST', voiceInput)).rejects.toThrow(
+        '409'
+      )
+    } finally {
+      holdSynthesis = undefined
+      release()
+    }
+    const completed = await until((d) => d.jobs.every((job) => job.status === 'completed'), project.id)
+    expect(completed.jobs).toHaveLength(5)
+    expect(completed.segments.every((line) => line.generatedPath)).toBe(true)
+  })
   it('requires translation to finish and be reviewed before voice generation can be submitted', async () => {
     const project = await api('projects', 'POST', {
       name: 'Manual review',

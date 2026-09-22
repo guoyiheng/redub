@@ -64,8 +64,25 @@ describe('批量处理范围与事务', () => {
     expect(await getSegments(id)).toEqual(before)
     expect((await getProject(id)).outputPath).toBe('old.mp3')
     expect((await db.select().from(jobs).where(eq(jobs.projectId, id))).map((job) => job.stage)).toEqual([
+      'translate',
       'translate'
     ])
+  })
+  it('单句处理中可继续创建其他片段的翻译和配音，批量提交跳过已有任务', async () => {
+    const id = await fixture()
+    const first = await generateSegment(`${id}-ready`, { ...voice, ttsRate: 11 })
+    await db.update(jobs).set({ status: 'running' }).where(eq(jobs.id, first.jobs[0]!.id))
+    await enqueue(id, ['translate'], `${id}-disabled`, undefined, {
+      targetLanguage: '日语',
+      prompt: '语气简洁'
+    })
+    const batch = await enqueue(id, undefined, undefined, { action: 'synthesize', scope: 'all', voice })
+    expect(batch.map((job) => job.segmentId)).toEqual([`${id}-missing`])
+    expect((await getSegments(id))[0]!.ttsRate).toBe(11)
+    expect(await db.select().from(jobs).where(eq(jobs.projectId, id))).toHaveLength(3)
+    await expect(generateSegment(`${id}-ready`, voice)).rejects.toThrow('任务')
+    await expect(enqueue(id, ['translate'], `${id}-missing`)).rejects.toThrow('任务')
+    await db.update(jobs).set({ status: 'completed' }).where(eq(jobs.projectId, id))
   })
   it('取消旧自动链的全部待执行后代，保留历史、片段与手动任务，且可重复执行', async () => {
     const id = await fixture()
@@ -129,10 +146,19 @@ describe('批量处理范围与事务', () => {
     expect(lines[1]!.ttsRate).toBe(20)
     expect(lines[2]!.ttsRate).toBe(0)
     expect((await getProject(id)).outputPath).toBeNull()
-    await expect(
-      enqueue(id, undefined, undefined, { action: 'synthesize', scope: 'all', finish: false, voice })
-    ).rejects.toThrow('任务')
-    expect((await getSegments(id))[0]!.generatedPath).toBe('ready.mp3')
+    const additional = await enqueue(id, undefined, undefined, {
+      action: 'synthesize',
+      scope: 'all',
+      finish: false,
+      voice
+    })
+    expect(additional.map((job) => job.segmentId)).toEqual([`${id}-ready`])
+    expect((await getSegments(id))[0]!.generatedPath).toBeNull()
+    expect(
+      (await db.select().from(jobs).where(eq(jobs.projectId, id))).filter(
+        (job) => job.segmentId === `${id}-missing`
+      )
+    ).toHaveLength(1)
   })
   it('全部重生成仅作用于开启替换的台词', async () => {
     const id = await fixture()

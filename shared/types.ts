@@ -36,6 +36,7 @@ export interface TranslationVersion {
   id: string
   name: string
   text: string
+  language?: string | null
   createdAt: number
 }
 export interface AudioVersion {
@@ -56,6 +57,7 @@ export interface Segment {
   end: number
   text: string
   translation: string
+  translationLanguage?: string | null
   speaker: string
   enabled: boolean
   referencePath: string | null

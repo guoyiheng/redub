@@ -43,3 +43,12 @@ export function parseTranslationPrompt(input: string, fallbackText: string = '')
   // 4. Fallback: entire input is treated as text to translate if no specific structure found
   return { text: trimmed, prompt: '' }
 }
+import { z } from 'zod'
+
+export const translationTaskSchema = z.object({
+  sourceLanguage: z.string().trim().min(1).max(40).optional(),
+  targetLanguage: z.string().trim().min(1).max(40).optional(),
+  text: z.string().trim().min(1).max(2800).optional(),
+  prompt: z.string().trim().max(2800).optional()
+})
+export type TranslationTaskInput = z.infer<typeof translationTaskSchema>

@@ -31,6 +31,7 @@ export const segments = sqliteTable(
     end: real().notNull(),
     text: text().notNull().default(''),
     translation: text().notNull().default(''),
+    translationLanguage: text(),
     speaker: text().notNull().default('角色 1'),
     enabled: integer({ mode: 'boolean' }).notNull().default(true),
     referencePath: text(),

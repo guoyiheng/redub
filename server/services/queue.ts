@@ -10,12 +10,13 @@ import { executeJob } from './pipeline'
 import { safeError } from './providers'
 import { assetPath } from './media'
 import type { GenerationInput } from '../../shared/voice'
+import type { TranslationTaskInput } from '../../shared/translation'
 import type { Job, MediaKind, Stage, Settings } from '../../shared/types'
 import { jobContext, interruptJobRequests, jobColumns } from './job-requests'
 import { exportSchema } from '../../shared/export'
 import { previewRevision } from './preview-tracks'
 import type { PreviewTracks } from '../../shared/preview'
-import { automaticFollowups, canChainStages } from '../../shared/job-policy'
+import { automaticFollowups, canChainStages, segmentTaskReason } from '../../shared/job-policy'
 
 export function workflowStages(kind: MediaKind): Stage[] {
   if (kind === 'text') return []
@@ -87,26 +88,41 @@ export function serializeEnqueue<T>(action: () => Promise<T>): Promise<T> {
   )
   return task
 }
-export function enqueue(projectId: string, stages?: Stage[], segmentId?: string, batch?: BatchInput) {
+export function enqueue(
+  projectId: string,
+  stages?: Stage[],
+  segmentId?: string,
+  batch?: BatchInput,
+  translation?: TranslationTaskInput
+) {
   return serializeEnqueue(async () => {
     const p = await getProject(projectId)
-    if (segmentId && stages?.length === 1 && stages[0] === 'translate') {
-      const active = await db
-        .select(jobColumns)
-        .from(jobs)
-        .where(and(eq(jobs.projectId, projectId), inArray(jobs.status, ['queued', 'running'])))
-      if (active.some((job) => job.stage !== 'translate' || !job.segmentId || job.segmentId === segmentId))
-        throw createError({ statusCode: 409, statusMessage: '当前有冲突任务，请等待完成并核对后再翻译' })
-    } else await assertIdle(projectId)
+    const active = await db
+      .select(jobColumns)
+      .from(jobs)
+      .where(and(eq(jobs.projectId, projectId), inArray(jobs.status, ['queued', 'running'])))
+    const remote = batch
+      ? ['translate', 'synthesize'].includes(batch.action)
+      : stages?.every((stage) => ['translate', 'synthesize'].includes(stage))
+    if (!remote) await assertIdle(projectId)
+    if (remote && segmentId) {
+      const reason = segmentTaskReason(active, segmentId)
+      if (reason) throw createError({ statusCode: 409, statusMessage: reason })
+    }
     if (!stages && !batch && p.kind === 'text') throw new Error('文本已导入，请手动选择翻译或生成配音')
     const lines = await getSegments(projectId)
+    const availableLines =
+      remote && !segmentId ? lines.filter((line) => !segmentTaskReason(active, line.id)) : lines
+    if (remote && !availableLines.some((line) => (segmentId ? line.id === segmentId : line.enabled)))
+      throw createError({ statusCode: 409, statusMessage: '所选台词已有任务，请完成并核对后再创建任务' })
     const plan: { stage: Stage; segmentId?: string }[] = batch
-      ? batchPlan(p, lines, batch)
+      ? batchPlan(p, availableLines, batch)
       : stages
         ? stages.flatMap((stage): { stage: Stage; segmentId?: string }[] => {
-            if (!segmentId && stage === 'synthesize')
-              return lines.filter((line) => line.enabled).map((line) => ({ stage, segmentId: line.id }))
-            if (!segmentId && stage === 'translate') return [{ stage }]
+            if (!segmentId && ['synthesize', 'translate'].includes(stage))
+              return availableLines
+                .filter((line) => line.enabled)
+                .map((line) => ({ stage, segmentId: line.id }))
             return [{ stage, segmentId }]
           })
         : batchPlan(p, lines, { action: 'prepare', scope: 'missing' })
@@ -134,7 +150,7 @@ export function enqueue(projectId: string, stages?: Stage[], segmentId?: string,
       await getActiveChannel('openai')
     }
     const order = plan.map((item) => item.stage)
-    const rows: Job[] = []
+    const rows: (Job & { input?: unknown })[] = []
     const batchId = randomUUID()
     for (const item of plan)
       rows.push({
@@ -143,6 +159,18 @@ export function enqueue(projectId: string, stages?: Stage[], segmentId?: string,
         stage: item.stage,
         segmentId: item.segmentId || null,
         batchId,
+        ...(item.stage === 'translate'
+          ? {
+              input: {
+                translation: {
+                  sourceLanguage: translation?.sourceLanguage || batch?.sourceLanguage || p.sourceLanguage,
+                  targetLanguage: translation?.targetLanguage || batch?.targetLanguage || p.targetLanguage,
+                  ...(translation?.text ? { text: translation.text } : {}),
+                  ...(translation?.prompt ? { prompt: translation.prompt } : {})
+                }
+              }
+            }
+          : {}),
         status: 'queued',
         progress: 0,
         message: '等待执行',
@@ -224,10 +252,8 @@ export function generateSegment(segmentId: string, input: GenerationInput) {
         .from(jobs)
         .where(and(eq(jobs.projectId, project.id), inArray(jobs.status, ['running', 'queued'])))
         .orderBy(desc(jobs.createdAt))
-      if (active.some((item) => item.stage === 'synthesize' && item.segmentId === segmentId))
-        throw createError({ statusCode: 409, statusMessage: '这句配音已在排队或生成中，请等待完成' })
-      if (active.some((item) => item.stage !== 'synthesize'))
-        throw createError({ statusCode: 409, statusMessage: '请等待当前步骤完成，核对结果后再生成配音' })
+      const reason = segmentTaskReason(active, segmentId)
+      if (reason) throw createError({ statusCode: 409, statusMessage: reason })
       job = {
         id: randomUUID(),
         projectId: project.id,

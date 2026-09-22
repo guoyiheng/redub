@@ -13,7 +13,7 @@ import type { Job, Stage } from '../shared/types'
 import { getPreviewTracks } from '../server/services/preview-tracks'
 import { exportProject } from '../server/services/export'
 import { edgeSpeech } from '../server/services/edge-speech'
-import { dubbedText } from '../shared/voice'
+import { dubbedText, voiceLanguageInstruction } from '../shared/voice'
 vi.mock('../server/services/edge-speech', () => ({ edgeSpeech: vi.fn() }))
 
 let id: string, dir: string, voice: Buffer
@@ -120,11 +120,18 @@ describe.sequential('媒体处理与服务协议', () => {
       expect(body.text_prompt).not.toContain('@音频1')
       expect(body.text_prompt).toContain(line.translation)
       expect(body.text_prompt).toContain('配音语言：日语')
+      expect(body.text_prompt).not.toContain('配音语言：英语')
+      expect(body.text_prompt.match(/配音语言：/g)).toHaveLength(1)
       return new Response(JSON.stringify({ audio: voice.toString('base64') }))
     })
     vi.stubGlobal('fetch', fetcher)
     const result = await synthesizeSpeech(
-      { ...line, aiUseReference: false, aiSpeaker: ' fixture-voice ' },
+      {
+        ...line,
+        aiUseReference: false,
+        aiSpeaker: ' fixture-voice ',
+        aiPrompt: voiceLanguageInstruction('英语')
+      },
       await getChannel('volcengine-default'),
       join(dir, 'specified-voice.mp3'),
       '日语'

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { segmentTaskReason } from '../../shared/job-policy'
 import { languageOptions } from '../../shared/languages'
 import {
   defaultTranslationDirection,
@@ -13,7 +14,7 @@ const { channels, detail, toast, errorMessage, refresh } = useStudio()
 
 const project = computed(() => detail.value?.project)
 const sourceLanguage = ref(project.value?.sourceLanguage || 'auto')
-const targetLanguage = ref(project.value?.targetLanguage || '中文')
+const targetLanguage = ref(props.segment.translationLanguage || project.value?.targetLanguage || '中文')
 
 const activeChannel = computed(() => channels.value.find((c) => c.type === 'openai' && c.enabled))
 
@@ -33,7 +34,9 @@ const translating = ref(false)
 const busy = computed(() => translating.value)
 
 const unavailableReason = computed(() => {
-  if (busy.value) return '正在翻译台词…'
+  if (busy.value) return '正在提交翻译任务…'
+  const reason = segmentTaskReason(detail.value?.jobs || [], props.segment.id)
+  if (reason) return reason
   const parsed = parseTranslationPrompt(content.value, props.segment.text)
   if (!parsed.text.trim()) return '请输入要翻译的原台词'
   if (!activeChannel.value?.configured) return '请在设置中启用并配置翻译渠道'
@@ -56,39 +59,20 @@ async function translate() {
   if (unavailableReason.value) return
   translating.value = true
   try {
-    if (
-      project.value &&
-      (sourceLanguage.value !== project.value.sourceLanguage ||
-        targetLanguage.value !== project.value.targetLanguage)
-    ) {
-      await $fetch(`/api/projects/${project.value.id}`, {
-        method: 'PATCH',
-        body: { sourceLanguage: sourceLanguage.value, targetLanguage: targetLanguage.value }
-      })
-      project.value.sourceLanguage = sourceLanguage.value
-      project.value.targetLanguage = targetLanguage.value
-    }
-
     const { text, prompt } = parseTranslationPrompt(content.value, props.segment.text)
 
-    const res = await $fetch<{ ok: boolean; translation: string; segment: Segment }>(
-      `/api/segments/${props.segment.id}/translate-direct`,
-      {
-        method: 'POST',
-        body: {
-          sourceLanguage: sourceLanguage.value,
-          targetLanguage: targetLanguage.value,
-          text,
-          prompt
-        }
+    await $fetch(`/api/segments/${props.segment.id}/translate`, {
+      method: 'POST',
+      body: {
+        sourceLanguage: sourceLanguage.value,
+        targetLanguage: targetLanguage.value,
+        text,
+        prompt
       }
-    )
-
-    if (res.translation) {
-      await refresh()
-      toast.add({ id: 'translate-success', title: '台词翻译完成', color: 'success' })
-      emit('saved')
-    }
+    })
+    await refresh()
+    toast.add({ id: 'translate-success', title: '翻译已加入队列', color: 'success' })
+    emit('saved')
   } catch (err) {
     toast.add({
       id: 'translate-error',

@@ -1,10 +1,11 @@
 <script setup lang="ts">
+import { segmentTaskReason } from '../../shared/job-policy'
 import {
   voiceSettingsSchema,
   naturalVoicePrompt,
   referenceVoicePrompt,
   dubbedText,
-  voiceLanguageInstruction
+  withVoiceLanguage
 } from '../../shared/voice'
 import type { Segment } from '../../shared/types'
 const props = defineProps<{ segment: Segment }>()
@@ -29,10 +30,11 @@ const direction = props.segment.aiPrompt?.trim()
   : hasReference
     ? referenceVoicePrompt
     : naturalVoicePrompt
-const languageInstruction = voiceLanguageInstruction(detail.value?.project.targetLanguage || '中文')
-const savedPrompt = props.segment.generationPrompt || `${direction}\n朗读：「${originalText}」`
 const aiContent = ref(
-  savedPrompt.startsWith(languageInstruction) ? savedPrompt : `${languageInstruction}\n${savedPrompt}`
+  withVoiceLanguage(
+    props.segment.generationPrompt || `${direction}\n朗读：「${originalText}」`,
+    props.segment.translationLanguage || detail.value?.project.targetLanguage || '中文'
+  )
 )
 const ttsContent = ref(dubbedText(props.segment) || originalText)
 const content = computed({
@@ -151,9 +153,8 @@ const busy = computed(() => saving.value || uploading.value)
 const submitLabel = computed(() => (props.segment.enabled ? '生成本句配音' : '生成并启用替换'))
 const unavailableReason = computed(() => {
   if (busy.value) return uploading.value ? '正在准备参考音频' : '正在提交配音任务'
-  const active = detail.value?.jobs.filter((job) => ['queued', 'running'].includes(job.status)) || []
-  if (active.some((job) => job.stage !== 'synthesize')) return '请等待当前步骤完成，核对后再生成配音'
-  if (active.some((job) => job.segmentId === props.segment.id)) return '这句配音正在生成，请等待完成'
+  const reason = segmentTaskReason(detail.value?.jobs || [], props.segment.id)
+  if (reason) return reason
   if (!content.value.trim()) return '请输入配音内容'
   if (draft.value.synthesisMode === 'ai' && !activeChannel.value?.configured)
     return '请在设置中启用并配置 AI 配音渠道'

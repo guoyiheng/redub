@@ -25,6 +25,7 @@ import { getPreviewTracks } from './preview-tracks'
 import { assertTimeline } from '../../shared/timeline'
 import { dubbedText } from '../../shared/voice'
 import { createVersionName } from '../../shared/version'
+import { translationTaskSchema } from '../../shared/translation'
 
 export async function executeJob(job: Job, progress: (value: number, message: string) => Promise<void>) {
   const p = await getProject(job.projectId)
@@ -37,9 +38,12 @@ export async function executeJob(job: Job, progress: (value: number, message: st
     await progress(10, '正在准备预览音轨与波形')
     return getPreviewTracks(p.id)
   }
+  const [savedJob] = await db.select({ input: jobs.input }).from(jobs).where(eq(jobs.id, job.id))
+  const savedInput = savedJob?.input as { translation?: unknown } | undefined
+  const translation = translationTaskSchema.parse(savedInput?.translation || {})
   await db
     .update(jobs)
-    .set({ input: { project: p, segments: await getSegments(p.id) } })
+    .set({ input: { project: p, segments: await getSegments(p.id), translation } })
     .where(eq(jobs.id, job.id))
   const dir = await projectDir(p.id)
   const rel = (name: string) => `${p.id}/${name}`
@@ -197,7 +201,16 @@ export async function executeJob(job: Job, progress: (value: number, message: st
     const channel = await getActiveChannel('openai')
     if (channel.type !== 'openai') throw new Error('翻译渠道类型不正确')
     await progress(15, `正在翻译 ${lines.length} 句台词...`)
-    const result = await translateLines(lines, p.targetLanguage, channel, p.sourceLanguage)
+    const targetLanguage = translation.targetLanguage || p.targetLanguage
+    const inputLines =
+      translation.text && job.segmentId ? lines.map((line) => ({ ...line, text: translation.text! })) : lines
+    const result = await translateLines(
+      inputLines,
+      targetLanguage,
+      channel,
+      translation.sourceLanguage || p.sourceLanguage,
+      translation.prompt
+    )
     await db.transaction(async (tx) => {
       for (const s of lines) {
         const newText = result.get(s.id)!
@@ -207,6 +220,7 @@ export async function executeJob(job: Job, progress: (value: number, message: st
             id: randomUUID(),
             name: createVersionName([], new Date(Date.now() - 60000)),
             text: s.translation,
+            language: s.translationLanguage,
             createdAt: Date.now() - 60000
           })
         }
@@ -214,12 +228,14 @@ export async function executeJob(job: Job, progress: (value: number, message: st
           id: randomUUID(),
           name: createVersionName(history.map((v) => v.name)),
           text: newText,
+          language: targetLanguage,
           createdAt: Date.now()
         })
         await tx
           .update(segments)
           .set({
             translation: newText,
+            translationLanguage: targetLanguage,
             translationHistory: history
           })
           .where(eq(segments.id, s.id))
@@ -283,7 +299,7 @@ export async function executeJob(job: Job, progress: (value: number, message: st
         s.generatedHash = null
         s.audioHistory = audioHist
       }
-      const hash = synthesisHash(s, channel, p.targetLanguage)
+      const hash = synthesisHash(s, channel, s.translationLanguage || p.targetLanguage)
       if (s.generatedPath && s.generatedHash === hash && existsSync(assetPath(s.generatedPath))) continue
       await progress(
         Math.round((i / lines.length) * 100),
@@ -292,7 +308,12 @@ export async function executeJob(job: Job, progress: (value: number, message: st
       const output = rel(
         `voice-${s.id}-${randomUUID()}.${s.synthesisMode === 'ai' ? (s.aiFormat === 'wav' ? 'wav' : 'mp3') : 'mp3'}`
       )
-      const result = await synthesizeSpeech(s, channel!, assetPath(output), p.targetLanguage)
+      const result = await synthesizeSpeech(
+        s,
+        channel!,
+        assetPath(output),
+        s.translationLanguage || p.targetLanguage
+      )
       const audioHistory: AudioVersion[] = [...(s.audioHistory || [])]
       if (s.generatedPath && audioHistory.length === 0) {
         audioHistory.push({

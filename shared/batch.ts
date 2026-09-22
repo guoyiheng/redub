@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { voiceSettingsSchema } from './voice'
+import { translationTaskSchema } from './translation'
 import type { Project, Segment, Stage } from './types'
 export const batchSchema = z
   .object({
@@ -8,7 +9,9 @@ export const batchSchema = z
     // 兼容旧客户端的 false；明确拒绝继续自动合成的请求。
     finish: z.literal(false, { error: '配音后请先试听核对，再手动合成或导出' }).optional(),
     useSegmentVoices: z.boolean().optional(),
-    voice: voiceSettingsSchema.optional()
+    voice: voiceSettingsSchema.optional(),
+    sourceLanguage: translationTaskSchema.shape.sourceLanguage,
+    targetLanguage: translationTaskSchema.shape.targetLanguage
   })
   .refine((v) => v.action !== 'synthesize' || v.useSegmentVoices || !!v.voice, '请配置配音参数')
 export type BatchInput = z.infer<typeof batchSchema>
@@ -33,7 +36,7 @@ export function batchPlan(
   if (input.action === 'translate') {
     if (!enabled.length || enabled.some((s) => !s.text.trim()))
       throw new Error('请先识别或填写需要替换的台词')
-    return [{ stage: 'translate' }]
+    return enabled.map((line) => ({ stage: 'translate', segmentId: line.id }))
   }
   if (input.action === 'render') {
     if (!lines.length) throw new Error('请先添加台词')
