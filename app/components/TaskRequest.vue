@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import type { JobRequest, JobRequestSummary } from '../../shared/types'
-const props = defineProps<{ request: JobRequestSummary }>()
+const props = defineProps<{ request: JobRequestSummary; defaultOpen?: boolean }>()
 const { toast, errorMessage } = useStudio()
-const expanded = ref(false)
+const expanded = ref(!!props.defaultOpen)
 const detail = shallowRef<JobRequest>()
 const loading = ref(false)
 const error = ref('')
@@ -20,9 +20,13 @@ async function load() {
     if (current === version) loading.value = false
   }
 }
-watch([expanded, () => props.request.finishedAt], ([open]) => {
-  if (open) void load()
-})
+watch(
+  [expanded, () => props.request.finishedAt],
+  ([open]) => {
+    if (open) void load()
+  },
+  { immediate: true }
+)
 async function copyCurl() {
   if (!detail.value) return
   try {
@@ -44,7 +48,11 @@ function download() {
 }
 </script>
 <template>
-  <details class="request-entry" @toggle="expanded = ($event.target as HTMLDetailsElement).open">
+  <details
+    class="request-entry"
+    :open="expanded"
+    @toggle="expanded = ($event.target as HTMLDetailsElement).open"
+  >
     <summary>
       <span
         ><strong>{{ request.label }}</strong> · 第 {{ request.attempt }} 次执行</span
@@ -74,17 +82,24 @@ function download() {
           {{ new Date(detail.startedAt).toLocaleString('zh-CN') }} · 请求 ID：{{ detail.id }}
         </p>
         <p v-if="detail.error" class="error-text">{{ detail.error }}</p>
-        <TaskLogBlock title="curl 请求" :value="detail.curl" />
-        <TaskLogBlock title="请求头" :value="JSON.stringify(detail.requestHeaders, null, 2)" />
         <TaskLogBlock title="请求体" :value="detail.requestBody ?? '无请求体'" />
-        <TaskLogBlock
-          title="响应头"
-          :value="detail.responseHeaders ? JSON.stringify(detail.responseHeaders, null, 2) : '尚未收到响应头'"
-        />
         <TaskLogBlock
           :title="`响应体${detail.responseEncoding === 'base64' ? '（二进制 Base64）' : ''}`"
           :value="detail.responseBody ?? '尚未收到响应体'"
         />
+        <details>
+          <summary>请求头、响应头与 curl</summary>
+          <div class="request-content">
+            <TaskLogBlock title="curl 请求" :value="detail.curl" />
+            <TaskLogBlock title="请求头" :value="JSON.stringify(detail.requestHeaders, null, 2)" />
+            <TaskLogBlock
+              title="响应头"
+              :value="
+                detail.responseHeaders ? JSON.stringify(detail.responseHeaders, null, 2) : '尚未收到响应头'
+              "
+            />
+          </div>
+        </details>
       </template>
     </div>
   </details>

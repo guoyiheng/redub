@@ -291,7 +291,7 @@ onUnmounted(() => {
   <USlideover
     v-model:open="detailOpen"
     title="任务详情"
-    description="查看执行状态、任务结果与完整网络请求"
+    description="查看完整网络请求、响应内容与执行状态"
     :ui="{ content: 'sm:max-w-3xl ring-0', body: 'min-w-0' }"
   >
     <template #body

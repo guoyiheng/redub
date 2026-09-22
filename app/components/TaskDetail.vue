@@ -79,46 +79,6 @@ onBeforeUnmount(() => {
         <h3>{{ stageLabels[detail.job.stage] }}</h3>
         <span :class="`status-${detail.job.status}`">{{ labels[detail.job.status] }}</span>
       </div>
-      <dl>
-        <dt>任务 ID</dt>
-        <dd>
-          <code>{{ detail.job.id }}</code
-          ><UButton
-            aria-label="复制任务 ID"
-            color="neutral"
-            variant="ghost"
-            size="xs"
-            icon="i-carbon-copy"
-            @click="copyId"
-          />
-        </dd>
-        <dt>项目</dt>
-        <dd>{{ detail.projectName }}</dd>
-        <dt>创建时间</dt>
-        <dd>{{ new Date(detail.job.createdAt).toLocaleString('zh-CN') }}</dd>
-        <dt>更新时间</dt>
-        <dd>{{ new Date(detail.job.updatedAt).toLocaleString('zh-CN') }}</dd>
-        <dt>执行次数</dt>
-        <dd>{{ detail.job.attempts }}</dd>
-        <template v-if="detail.job.segmentId"
-          ><dt>片段 ID</dt>
-          <dd>
-            <code>{{ detail.job.segmentId }}</code>
-          </dd></template
-        >
-        <template v-if="detail.job.dependsOn"
-          ><dt>前置任务</dt>
-          <dd>
-            <UButton
-              size="xs"
-              color="neutral"
-              variant="link"
-              @click="emit('select', detail.job.dependsOn!)"
-              >{{ detail.job.dependsOn }}</UButton
-            >
-          </dd></template
-        >
-      </dl>
       <UProgress :model-value="detail.job.progress" />
       <p class="help">{{ detail.job.message }} · {{ detail.job.progress }}%</p>
       <UAlert v-if="detail.job.error" color="error" title="任务执行失败" :description="detail.job.error" />
@@ -146,17 +106,9 @@ onBeforeUnmount(() => {
           >下载成片</UButton
         >
       </div>
-      <details v-if="detail.input">
-        <summary>任务参数</summary>
-        <TaskLogBlock title="参数" :value="JSON.stringify(detail.input, null, 2)" />
-      </details>
-      <details v-if="detail.result">
-        <summary>任务结果</summary>
-        <TaskLogBlock title="结果" :value="JSON.stringify(detail.result, null, 2)" />
-      </details>
       <section>
         <h3>
-          网络请求 <span class="help">{{ detail.requests.length }} 条</span>
+          网络请求与返回值 <span class="help">{{ detail.requests.length }} 条</span>
         </h3>
         <p class="help request-note">请求按执行次数保留。密钥已隐藏，curl 中的密钥变量需在本机设置。</p>
         <p v-if="!detail.requests.length" class="help">
@@ -166,8 +118,64 @@ onBeforeUnmount(() => {
               : '此任务没有网络请求记录。本地处理与此前完成的历史任务不会补录请求。'
           }}
         </p>
-        <TaskRequest v-for="request in detail.requests" :key="request.id" :request="request" />
+        <TaskRequest
+          v-for="(request, index) in detail.requests"
+          :key="request.id"
+          :request="request"
+          :default-open="index === detail.requests.length - 1"
+        />
       </section>
+      <details>
+        <summary>任务信息</summary>
+        <dl>
+          <dt>任务 ID</dt>
+          <dd>
+            <code>{{ detail.job.id }}</code
+            ><UButton
+              aria-label="复制任务 ID"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              icon="i-carbon-copy"
+              @click="copyId"
+            />
+          </dd>
+          <dt>项目</dt>
+          <dd>{{ detail.projectName }}</dd>
+          <dt>创建时间</dt>
+          <dd>{{ new Date(detail.job.createdAt).toLocaleString('zh-CN') }}</dd>
+          <dt>更新时间</dt>
+          <dd>{{ new Date(detail.job.updatedAt).toLocaleString('zh-CN') }}</dd>
+          <dt>执行次数</dt>
+          <dd>{{ detail.job.attempts }}</dd>
+          <template v-if="detail.job.segmentId"
+            ><dt>片段 ID</dt>
+            <dd>
+              <code>{{ detail.job.segmentId }}</code>
+            </dd></template
+          >
+          <template v-if="detail.job.dependsOn"
+            ><dt>前置任务</dt>
+            <dd>
+              <UButton
+                size="xs"
+                color="neutral"
+                variant="link"
+                @click="emit('select', detail.job.dependsOn!)"
+                >{{ detail.job.dependsOn }}</UButton
+              >
+            </dd></template
+          >
+        </dl>
+      </details>
+      <details v-if="detail.input">
+        <summary>任务参数</summary>
+        <TaskLogBlock title="参数" :value="JSON.stringify(detail.input, null, 2)" />
+      </details>
+      <details v-if="detail.result">
+        <summary>任务结果</summary>
+        <TaskLogBlock title="结果" :value="JSON.stringify(detail.result, null, 2)" />
+      </details>
     </template>
   </div>
 </template>
