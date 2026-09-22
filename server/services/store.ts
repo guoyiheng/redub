@@ -29,7 +29,11 @@ export async function getSettings(): Promise<Settings> {
   await initDb()
   const rows = await db.select().from(settings)
   const values = Object.fromEntries(rows.map((r) => [r.key, JSON.parse(r.value)]))
-  return settingsSchema.parse(values)
+  const [translation] = await db
+    .select()
+    .from(channels)
+    .where(and(eq(channels.type, 'openai'), eq(channels.enabled, true)))
+  return settingsSchema.parse({ ...values, translationChannelId: translation?.id || '' })
 }
 export async function getChannel(id: string) {
   const [channel] = await db.select().from(channels).where(eq(channels.id, id))
@@ -43,4 +47,14 @@ export async function invalidateOutput(projectId: string) {
     .update(projects)
     .set({ mixedPath: null, outputPath: null, updatedAt: Date.now() })
     .where(eq(projects.id, projectId))
+}
+
+export async function getActiveChannel(type: 'openai' | 'volcengine') {
+  await initDb()
+  const [channel] = await db
+    .select()
+    .from(channels)
+    .where(and(eq(channels.type, type), eq(channels.enabled, true)))
+  if (!channel) throw new Error(`请先在设置中启用${type === 'openai' ? '翻译' : 'AI 配音'}渠道`)
+  return getChannel(channel.id)
 }

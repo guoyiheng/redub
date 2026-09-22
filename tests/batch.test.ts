@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { db, initDb } from '../server/db'
-import { projects, segments, jobs } from '../server/db/schema'
+import { projects, segments, jobs, channels } from '../server/db/schema'
 import { enqueue, generateSegment, cancelAutomaticFollowups } from '../server/services/queue'
 import { getProject, getSegments } from '../server/services/store'
 import { batchPlan, batchSchema } from '../shared/batch'
@@ -179,7 +179,12 @@ describe('批量处理范围与事务', () => {
     await expect(enqueue(id, undefined, undefined, input)).rejects.toThrow('没有可用原声')
     await db.update(segments).set({ aiUseReference: false }).where(eq(segments.projectId, id))
     await db.update(projects).set({ channelId: 'missing-channel' }).where(eq(projects.id, id))
-    await expect(enqueue(id, undefined, undefined, input)).rejects.toThrow('渠道')
+    await db.update(channels).set({ enabled: false }).where(eq(channels.id, 'volcengine-default'))
+    try {
+      await expect(enqueue(id, undefined, undefined, input)).rejects.toThrow('渠道')
+    } finally {
+      await db.update(channels).set({ enabled: true }).where(eq(channels.id, 'volcengine-default'))
+    }
     expect(await db.select().from(jobs).where(eq(jobs.projectId, id))).toHaveLength(0)
     expect((await getSegments(id))[0]!.generatedPath).toBe('ready.mp3')
   })

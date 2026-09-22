@@ -3,6 +3,7 @@ import { speakerName, voiceSettingsSchema, generationSchema } from '../../shared
 import { uploadReference } from '../services/reference-upload'
 import { batchSchema } from '../../shared/batch'
 import { settingsSchema } from '../../shared/settings'
+import { saveChannel } from '../services/channels'
 import { assertTimeline } from '../../shared/timeline'
 import { originalClip } from '../services/original-clip'
 import { randomUUID } from 'node:crypto'
@@ -14,7 +15,7 @@ import {
   getProject,
   getSegments,
   getSettings,
-  getChannel,
+  getActiveChannel,
   assertIdle,
   invalidateOutput
 } from '../services/store'
@@ -29,20 +30,6 @@ import { getJobDetail, getJobRequest, jobColumns } from '../services/job-request
 import { getPreviewTracks } from '../services/preview-tracks'
 import { edgeSpeech } from '../services/edge-speech'
 
-const channelSchema = z.object({
-  name: z.string().trim().min(1).max(80),
-  type: z.enum(['volcengine', 'openai']),
-  endpoint: z
-    .url()
-    .refine((v) => ['http:', 'https:'].includes(new URL(v).protocol), '渠道地址需为 HTTP 或 HTTPS'),
-  model: z.string().trim().min(1).max(100),
-  keyEnv: z.string().regex(/^[A-Z][A-Z0-9_]*_API_KEY$/, '密钥环境变量名需以 _API_KEY 结尾'),
-  enabled: z.boolean(),
-  pitch: z.number().int().min(-12).max(12).optional().default(0),
-  speed: z.number().int().min(-50).max(100).optional().default(0),
-  loudness: z.number().int().min(-50).max(100).optional().default(0),
-  apiKey: z.string().max(10000).optional()
-})
 const segmentSchema = z
   .object({
     start: z.number().finite().min(0),
@@ -101,17 +88,8 @@ export default defineEventHandler(async (event) => {
       if (method === 'GET') return await getSettings()
       if (method === 'PATCH') {
         const data = settingsSchema.parse(await readBody(event))
-        const [translationChannel] = await db
-          .select()
-          .from(channels)
-          .where(
-            and(
-              eq(channels.id, data.translationChannelId),
-              eq(channels.type, 'openai'),
-              eq(channels.enabled, true)
-            )
-          )
-        if (!translationChannel) throw new Error('请选择已启用的翻译渠道')
+        // 渠道启用状态只在渠道设置中管理，旧客户端传入的默认渠道不覆盖它。
+        data.translationChannelId = (await getSettings()).translationChannelId
         for (const [key, value] of Object.entries(data))
           await db
             .insert(settings)
@@ -196,33 +174,13 @@ export default defineEventHandler(async (event) => {
         }))
       if (method === 'POST' || (method === 'PATCH' && id)) {
         return await serializeEnqueue(async () => {
-          const input = channelSchema.parse(await readBody(event))
-          const { apiKey, ...data } = input
           const active = await db
             .select()
             .from(jobs)
             .where(inArray(jobs.status, ['running', 'queued']))
           if (active.length)
             throw createError({ statusCode: 409, statusMessage: '请等待任务完成后再修改渠道' })
-          const channelId = id || randomUUID()
-          const existing = id ? (await db.select().from(channels).where(eq(channels.id, id)))[0] : undefined
-          const values = {
-            ...data,
-            ...(apiKey?.trim() ? { apiKey: apiKey.trim() } : existing ? {} : { apiKey: null })
-          }
-          await db
-            .insert(channels)
-            .values({ id: channelId, ...values })
-            .onConflictDoUpdate({ target: channels.id, set: values })
-          const affected = await db.select().from(projects).where(eq(projects.channelId, channelId))
-          for (const p of affected) {
-            await db
-              .update(segments)
-              .set({ generatedPath: null, generatedHash: null })
-              .where(eq(segments.projectId, p.id))
-            await invalidateOutput(p.id)
-          }
-          return { id: channelId }
+          return await saveChannel(id, await readBody(event))
         })
       }
     }
@@ -439,8 +397,7 @@ export default defineEventHandler(async (event) => {
       if (!p) throw createError({ statusCode: 404, statusMessage: '项目不存在' })
       const sourceLanguage = body.sourceLanguage || p.sourceLanguage
       const targetLanguage = body.targetLanguage || p.targetLanguage
-      const channelId = body.channelId || (await getSettings()).translationChannelId
-      const channel = await getChannel(channelId)
+      const channel = await getActiveChannel('openai')
       if (channel.type !== 'openai') throw new Error('翻译渠道类型不正确，请在设置中配置')
       const textToTranslate = typeof body.text === 'string' && body.text.trim() ? body.text.trim() : line.text
       const lineToTranslate = { ...line, text: textToTranslate }

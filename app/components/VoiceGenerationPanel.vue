@@ -21,8 +21,7 @@ const draft = ref(
     aiUseReference: props.segment.aiUseReference && (canReference.value || !!customReference.value)
   })
 )
-const aiChannels = computed(() => channels.value.filter((c) => c.type === 'volcengine' && c.enabled))
-const selectedChannelId = ref(detail.value?.project.channelId || aiChannels.value[0]?.id || '')
+const activeChannel = computed(() => channels.value.find((c) => c.type === 'volcengine' && c.enabled))
 const originalText = (props.segment.translation || props.segment.text || '').trim()
 const hasReference = draft.value.aiUseReference && (canReference.value || !!customReference.value)
 const direction = props.segment.aiPrompt?.trim()
@@ -156,11 +155,8 @@ const unavailableReason = computed(() => {
   if (active.some((job) => job.stage !== 'synthesize')) return '请等待当前步骤完成，核对后再生成配音'
   if (active.some((job) => job.segmentId === props.segment.id)) return '这句配音正在生成，请等待完成'
   if (!content.value.trim()) return '请输入配音内容'
-  if (
-    draft.value.synthesisMode === 'ai' &&
-    !channels.value.some((c) => c.id === selectedChannelId.value && c.enabled && c.configured)
-  )
-    return '请选择已配置的 AI 配音渠道'
+  if (draft.value.synthesisMode === 'ai' && !activeChannel.value?.configured)
+    return '请在设置中启用并配置 AI 配音渠道'
   return ''
 })
 function removeReference() {
@@ -208,18 +204,6 @@ async function generate() {
   if (unavailableReason.value) return
   saving.value = true
   try {
-    if (
-      draft.value.synthesisMode === 'ai' &&
-      selectedChannelId.value &&
-      detail.value?.project &&
-      selectedChannelId.value !== detail.value.project.channelId
-    ) {
-      await $fetch(`/api/projects/${detail.value.project.id}`, {
-        method: 'PATCH',
-        body: { channelId: selectedChannelId.value }
-      })
-      detail.value.project.channelId = selectedChannelId.value
-    }
     const ok = await act(
       () =>
         $fetch(`/api/segments/${props.segment.id}/generate`, {
@@ -318,18 +302,6 @@ async function generate() {
         <span class="voice-segment-time"
           >{{ formatTime(segment.start) }} – {{ formatTime(segment.end) }}</span
         >
-        <USelect
-          v-if="draft.synthesisMode === 'ai' && aiChannels.length"
-          v-model="selectedChannelId"
-          class="voice-channel-select"
-          color="neutral"
-          variant="outline"
-          size="sm"
-          icon="i-carbon-flow"
-          :items="aiChannels.map((c) => ({ label: c.name, value: c.id }))"
-          aria-label="AI 配音渠道"
-          :disabled="busy"
-        />
         <UPopover
           v-if="draft.synthesisMode === 'ai' && !draft.aiUseReference"
           v-model:open="referenceOpen"

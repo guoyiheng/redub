@@ -4,7 +4,7 @@ import { defaultVoiceSettings, speakerName, voiceSettingsSchema } from '../../sh
 import { languageOptions } from '../../shared/languages'
 const props = defineProps<{ initialAction?: BatchInput['action'] | 'speaker' }>()
 const emit = defineEmits<{ close: []; submitted: [] }>()
-const { detail, channels, settings, act } = useStudio()
+const { detail, channels, act } = useStudio()
 const project = computed(() => detail.value!.project)
 const lines = computed(() => detail.value!.segments)
 const speakers = computed(() => {
@@ -22,8 +22,6 @@ const voice = ref(defaultVoiceSettings(!!project.value.vocalsPath))
 const useSegmentVoices = ref(true)
 const sourceLanguage = ref(project.value.sourceLanguage || 'auto')
 const targetLanguage = ref(project.value.targetLanguage || '中文')
-const aiChannels = computed(() => channels.value.filter((c) => c.type === 'volcengine' && c.enabled))
-const channelId = ref(project.value.channelId || aiChannels.value[0]?.id || '')
 const input = computed<BatchInput>(() => ({
   action: action.value === 'speaker' ? 'synthesize' : action.value,
   scope: scope.value,
@@ -59,10 +57,10 @@ const reason = computed(() => {
   } catch (e) {
     return (e as Error).message
   }
-  const activeChannelId = action.value === 'translate' ? settings.value.translationChannelId : channelId.value
+  const channelType = action.value === 'translate' ? 'openai' : 'volcengine'
   if (
     (action.value === 'translate' || (action.value === 'synthesize' && needsAi.value)) &&
-    !channels.value.some((c) => c.id === activeChannelId && c.enabled && c.configured)
+    !channels.value.some((c) => c.type === channelType && c.enabled && c.configured)
   )
     return '请先在左下角设置中配置对应渠道和密钥'
   return ''
@@ -114,14 +112,6 @@ async function submit() {
       })
       project.value.sourceLanguage = sourceLanguage.value
       project.value.targetLanguage = targetLanguage.value
-    }
-  } else if (action.value === 'synthesize' && needsAi.value) {
-    if (channelId.value && channelId.value !== project.value.channelId) {
-      await $fetch(`/api/projects/${project.value.id}`, {
-        method: 'PATCH',
-        body: { channelId: channelId.value }
-      })
-      project.value.channelId = channelId.value
     }
   }
   if (action.value === 'speaker') {
@@ -216,19 +206,6 @@ async function submit() {
       </section>
     </template>
     <template v-if="action === 'synthesize'">
-      <UFormField
-        v-if="needsAi"
-        label="AI 配音渠道"
-        description="密钥在左下角设置中配置；微软 TTS 无需密钥。"
-      >
-        <USelect
-          v-model="channelId"
-          class="w-full"
-          :disabled="saving"
-          :items="aiChannels.map((c) => ({ label: c.name, value: c.id }))"
-          placeholder="选择 AI 配音渠道"
-        />
-      </UFormField>
       <UFormField label="应用范围"
         ><USelect
           v-model="scope"

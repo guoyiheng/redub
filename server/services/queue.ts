@@ -5,7 +5,7 @@ import { eq, and, asc, desc, inArray } from 'drizzle-orm'
 import { db, initDb } from '../db'
 import { jobs, projects, segments } from '../db/schema'
 import { batchPlan, type BatchInput } from '../../shared/batch'
-import { getSegments, getChannel, getSettings, getProject, assertIdle } from './store'
+import { getSegments, getActiveChannel, getSettings, getProject, assertIdle } from './store'
 import { executeJob } from './pipeline'
 import { safeError } from './providers'
 import { assetPath } from './media'
@@ -119,8 +119,8 @@ export function enqueue(projectId: string, stages?: Stage[], segmentId?: string,
         ? lines.filter((line) => targetIds.includes(line.id))
         : [batch.voice!]
       if (voices.some((voice) => voice.synthesisMode === 'ai')) {
-        const channel = await getChannel(p.channelId)
-        if (channel.type !== 'volcengine') throw new Error('请在项目设置中选择 AI 配音渠道')
+        const channel = await getActiveChannel('volcengine')
+        if (channel.type !== 'volcengine') throw new Error('请在设置中启用 AI 配音渠道')
       }
     }
     if (plan.some((item) => item.stage === 'translate')) {
@@ -131,7 +131,7 @@ export function enqueue(projectId: string, stages?: Stage[], segmentId?: string,
         return !enabled.length || enabled.some((line) => !line.text.trim())
       })
       if (hasInvalidLine) throw new Error('请先识别或填写需要翻译的原文')
-      await getChannel((await getSettings()).translationChannelId)
+      await getActiveChannel('openai')
     }
     const order = plan.map((item) => item.stage)
     const rows: Job[] = []
@@ -208,8 +208,8 @@ export function generateSegment(segmentId: string, input: GenerationInput) {
     )
       throw new Error('参考音频不可用，请重新上传')
     if (voice.synthesisMode === 'ai') {
-      const channel = await getChannel(project.channelId)
-      if (channel.type !== 'volcengine') throw new Error('请在项目设置中选择 AI 配音渠道')
+      const channel = await getActiveChannel('volcengine')
+      if (channel.type !== 'volcengine') throw new Error('请在设置中启用 AI 配音渠道')
       if (
         voice.aiUseReference &&
         !reference &&

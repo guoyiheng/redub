@@ -15,8 +15,7 @@ const project = computed(() => detail.value?.project)
 const sourceLanguage = ref(project.value?.sourceLanguage || 'auto')
 const targetLanguage = ref(project.value?.targetLanguage || '中文')
 
-const openaiChannels = computed(() => channels.value.filter((c) => c.type === 'openai' && c.enabled))
-const selectedChannelId = ref(openaiChannels.value[0]?.id || '')
+const activeChannel = computed(() => channels.value.find((c) => c.type === 'openai' && c.enabled))
 
 const initialDirection = defaultTranslationDirection(targetLanguage.value)
 const content = ref(composeTranslationPrompt(initialDirection, props.segment.text || ''))
@@ -37,10 +36,7 @@ const unavailableReason = computed(() => {
   if (busy.value) return '正在翻译台词…'
   const parsed = parseTranslationPrompt(content.value, props.segment.text)
   if (!parsed.text.trim()) return '请输入要翻译的原台词'
-  if (openaiChannels.value.length > 0 && selectedChannelId.value) {
-    const ch = openaiChannels.value.find((c) => c.id === selectedChannelId.value)
-    if (ch && (!ch.enabled || !ch.configured)) return '请选择已配置的翻译渠道'
-  }
+  if (!activeChannel.value?.configured) return '请在设置中启用并配置翻译渠道'
   return ''
 })
 
@@ -82,7 +78,6 @@ async function translate() {
         body: {
           sourceLanguage: sourceLanguage.value,
           targetLanguage: targetLanguage.value,
-          channelId: selectedChannelId.value || undefined,
           text,
           prompt
         }
@@ -149,18 +144,6 @@ async function translate() {
             size="sm"
             :items="languageOptions(targetLanguage)"
             aria-label="目标语言"
-            :disabled="busy"
-          />
-          <USelect
-            v-if="openaiChannels.length > 1"
-            v-model="selectedChannelId"
-            class="voice-channel-select"
-            color="neutral"
-            variant="outline"
-            size="sm"
-            icon="i-carbon-flow"
-            :items="openaiChannels.map((c) => ({ label: c.name, value: c.id }))"
-            aria-label="AI 翻译渠道"
             :disabled="busy"
           />
         </div>

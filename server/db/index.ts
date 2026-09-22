@@ -1,5 +1,6 @@
 import { createClient } from '@libsql/client'
 import { drizzle } from 'drizzle-orm/libsql'
+import { eq, and, ne } from 'drizzle-orm'
 import { mkdirSync } from 'node:fs'
 import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -114,5 +115,24 @@ export function initDb() {
         }
       ])
       .onConflictDoNothing()
+    // 兼容旧库中的多个启用渠道，优先保留已选择且已配置的渠道。
+    const existingChannels = await db.select().from(schema.channels)
+    const savedSettings = await db.select().from(schema.settings)
+    const savedTranslation = savedSettings.find((row) => row.key === 'translationChannelId')
+    const preferredTranslation = savedTranslation ? JSON.parse(savedTranslation.value) : ''
+    for (const type of ['openai', 'volcengine'] as const) {
+      const enabled = existingChannels.filter((channel) => channel.type === type && channel.enabled)
+      if (enabled.length < 2) continue
+      const configured = enabled.filter((channel) => channel.apiKey || process.env[channel.keyEnv])
+      const candidates = configured.length ? configured : enabled
+      const selected = candidates.find((channel) => channel.id === preferredTranslation) || candidates[0]!
+      await db
+        .update(schema.channels)
+        .set({ enabled: false })
+        .where(and(eq(schema.channels.type, type), ne(schema.channels.id, selected.id)))
+    }
+    await client.execute(
+      'CREATE UNIQUE INDEX IF NOT EXISTS channels_enabled_type ON channels(type) WHERE enabled = 1'
+    )
   })())
 }

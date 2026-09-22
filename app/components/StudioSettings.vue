@@ -343,7 +343,7 @@ onBeforeUnmount(() => stopUpdateListener?.())
                     :color="!channel.enabled ? 'neutral' : channel.configured ? 'success' : 'warning'"
                     variant="soft"
                     size="sm"
-                    >{{ !channel.enabled ? '已停用' : channel.configured ? '已配置' : '未配置' }}</UBadge
+                    >{{ !channel.enabled ? '已停用' : channel.configured ? '已启用' : '待配置密钥' }}</UBadge
                   >
                 </div>
                 <div class="channel-meta-row">
@@ -365,7 +365,7 @@ onBeforeUnmount(() => stopUpdateListener?.())
           <div class="settings-note">
             <strong>渠道可以切换吗？</strong>
             <p>
-              可以。配音渠道按项目选择，翻译渠道在“任务与识别”中设置；修改渠道参数会使该渠道下已生成的配音和成片失效，需要重新生成。
+              可以。配音和翻译各启用一个渠道。启用新渠道会自动停用同功能的其他渠道，之后生成时自动使用这里的配置；已有配音和译文会保留。
             </p>
           </div>
         </section>
@@ -596,17 +596,6 @@ onBeforeUnmount(() => stopUpdateListener?.())
                   ]"
                 />
               </UFormField>
-              <UFormField label="默认翻译渠道" description="只显示已启用的 OpenAI 兼容渠道。">
-                <USelect
-                  v-model="queueDraft.translationChannelId"
-                  class="w-full"
-                  :items="
-                    channels
-                      .filter((c) => c.type === 'openai' && c.enabled)
-                      .map((c) => ({ label: c.name, value: c.id }))
-                  "
-                />
-              </UFormField>
             </div>
             <div class="settings-form-footer">
               <UCheckbox v-model="queueDraft.pauseOnFailure" label="任务失败后暂停队列" />
@@ -758,7 +747,7 @@ onBeforeUnmount(() => stopUpdateListener?.())
             </div>
           </UFormField>
           <div class="channel-editor-footer">
-            <UCheckbox v-model="draft.enabled" label="启用渠道" />
+            <UCheckbox v-model="draft.enabled" label="启用渠道" description="自动停用同功能的其他渠道" />
             <div class="modal-actions">
               <UButton color="neutral" variant="ghost" type="button" @click="modalOpen = false">取消</UButton>
               <UButton type="submit" :loading="saving">保存渠道</UButton>

@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs'
 import { eq } from 'drizzle-orm'
 import { db } from '../db'
 import { jobs, projects, segments } from '../db/schema'
-import { getProject, getSegments, getChannel, getSettings, invalidateOutput } from './store'
+import { getProject, getSegments, getActiveChannel, getSettings, invalidateOutput } from './store'
 import {
   assetPath,
   projectDir,
@@ -194,7 +194,7 @@ export async function executeJob(job: Job, progress: (value: number, message: st
     )
     if (!lines.length || lines.some((s) => !s.text.trim()))
       throw new Error('请先识别或填写所有启用片段的原文')
-    const channel = await getChannel((await getSettings()).translationChannelId)
+    const channel = await getActiveChannel('openai')
     if (channel.type !== 'openai') throw new Error('翻译渠道类型不正确')
     await progress(15, `正在翻译 ${lines.length} 句台词...`)
     const result = await translateLines(lines, p.targetLanguage, channel, p.sourceLanguage)
@@ -238,7 +238,7 @@ export async function executeJob(job: Job, progress: (value: number, message: st
     const needsReference = lines.some(
       (s) => s.synthesisMode !== 'tts' && s.aiUseReference && !s.customReferencePath
     )
-    const channel = needsAi ? await getChannel(p.channelId) : undefined
+    const channel = needsAi ? await getActiveChannel('volcengine') : undefined
     if (needsReference && p.kind !== 'text' && (!p.vocalsPath || !existsSync(assetPath(p.vocalsPath))))
       throw new Error('请先完成人声分离，再使用原声参考配音')
     await invalidateOutput(p.id)
