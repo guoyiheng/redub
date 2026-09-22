@@ -1,4 +1,4 @@
-import { randomUUID, randomBytes } from 'node:crypto'
+import { createHash, randomUUID, randomBytes } from 'node:crypto'
 import WebSocket from 'ws'
 import { eq } from 'drizzle-orm'
 import { db } from '../db'
@@ -14,33 +14,64 @@ const xml = (text: string) =>
     (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' })[c]!
   )
 const uuid = () => randomUUID().replaceAll('-', '')
+const chromiumVersion = '143.0.3650.75'
+let clockSkewMs = 0
+
+// Edge read-aloud signs the five-minute Windows FILETIME bucket with its public client token.
+// Protocol reference: rany2/edge-tts, src/edge_tts/drm.py and constants.py.
+export function edgeSpeechToken(now: number) {
+  const seconds = Math.floor(now / 1000) + 11644473600
+  const ticks = BigInt(seconds - (seconds % 300)) * BigInt(10000000)
+  return createHash('sha256').update(`${ticks}${clientToken}`).digest('hex').toUpperCase()
+}
+class EdgeHandshakeError extends Error {
+  constructor(
+    readonly status: number | null,
+    readonly serverDate: string | undefined
+  ) {
+    super(`微软 TTS 握手失败：${status}`)
+  }
+}
 
 /** The Edge protocol uses WebSocket frames, which are retained along with the handshake. */
-export async function edgeSpeech(
+async function edgeSpeechAttempt(
   text: string,
   options: { voice: string; rate: string; pitch: string; volume: string },
   urlOverride?: string
 ) {
-  const url = urlOverride || `${endpoint}?TrustedClientToken=${clientToken}&ConnectionId=${uuid()}`
+  const now = Date.now() + clockSkewMs
+  const requestUrl = new URL(urlOverride || endpoint)
+  requestUrl.searchParams.set('TrustedClientToken', clientToken)
+  requestUrl.searchParams.set('ConnectionId', uuid())
+  requestUrl.searchParams.set('Sec-MS-GEC', edgeSpeechToken(now))
+  requestUrl.searchParams.set('Sec-MS-GEC-Version', `1-${chromiumVersion}`)
+  const url = requestUrl.toString()
   const headers = {
-    'User-Agent':
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.5060.66 Safari/537.36 Edg/103.0.1264.44',
-    Origin: 'chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold'
+    'User-Agent': `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0`,
+    Origin: 'chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold',
+    Pragma: 'no-cache',
+    'Cache-Control': 'no-cache',
+    'Accept-Language': 'en-US,en;q=0.9',
+    Cookie: `muid=${randomBytes(16).toString('hex').toUpperCase()};`
   }
+  const recordedHeaders = { ...headers, Cookie: '[已隐藏]' }
+  const timestamp = new Date(now)
+    .toUTCString()
+    .replace(/^(\w+), (\d+) (\w+) (\d+) (.*) GMT$/, '$1 $3 $2 $4 $5 GMT+0000 (Coordinated Universal Time)')
   const config = JSON.stringify({
     context: {
       synthesis: {
         audio: {
-          metadataoptions: { sentenceBoundaryEnabled: false, wordBoundaryEnabled: false },
+          metadataoptions: { sentenceBoundaryEnabled: 'false', wordBoundaryEnabled: 'false' },
           outputFormat: 'audio-24khz-48kbitrate-mono-mp3'
         }
       }
     }
   })
   const messages = [
-    `X-Timestamp:${Date()}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n${config}`,
-    `X-RequestId:${uuid()}\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:${Date()}Z\r\nPath:ssml\r\n\r\n` +
-      `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'><voice name='${xml(options.voice)}'><prosody pitch='${xml(options.pitch)}' rate='${xml(options.rate)}' volume='${xml(options.volume)}'>${xml(text)}</prosody></voice></speak>`
+    `X-Timestamp:${timestamp}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n${config}`,
+    `X-RequestId:${uuid()}\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:${timestamp}Z\r\nPath:ssml\r\n\r\n` +
+      `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='${xml(options.voice.split('-').slice(0, 2).join('-'))}'><voice name='${xml(options.voice)}'><prosody pitch='${xml(options.pitch)}' rate='${xml(options.rate)}' volume='${xml(options.volume)}'>${xml(text)}</prosody></voice></speak>`
   ]
   const context = jobContext.getStore(),
     id = randomUUID(),
@@ -53,7 +84,7 @@ export async function edgeSpeech(
       label: '微软 TTS（WebSocket）',
       method: 'WEBSOCKET',
       url,
-      requestHeaders: headers,
+      requestHeaders: recordedHeaders,
       requestBody: JSON.stringify({ messages }),
       startedAt,
       curl:
@@ -62,7 +93,7 @@ export async function edgeSpeech(
           'GET',
           url.replace(/^ws/, 'http'),
           {
-            ...headers,
+            ...recordedHeaders,
             Connection: 'Upgrade',
             Upgrade: 'websocket',
             'Sec-WebSocket-Version': '13',
@@ -145,7 +176,7 @@ export async function edgeSpeech(
           ])
         )
         response.on('data', (chunk) => frames.push({ encoding: 'utf8', data: chunk.toString() }))
-        response.on('end', () => finish(new Error(`微软 TTS 握手失败：${responseStatus}`)))
+        response.on('end', () => finish(new EdgeHandshakeError(responseStatus, response.headers.date)))
         response.on('error', (error) => finish(error))
       })
     })
@@ -166,5 +197,22 @@ export async function edgeSpeech(
           durationMs: Date.now() - startedAt
         })
         .where(eq(jobRequests.id, id))
+  }
+}
+
+export async function edgeSpeech(
+  text: string,
+  options: { voice: string; rate: string; pitch: string; volume: string },
+  urlOverride?: string
+) {
+  try {
+    return await edgeSpeechAttempt(text, options, urlOverride)
+  } catch (error) {
+    if (!(error instanceof EdgeHandshakeError) || error.status !== 403 || !error.serverDate) throw error
+    const serverTime = Date.parse(error.serverDate)
+    if (!Number.isFinite(serverTime)) throw error
+    clockSkewMs = serverTime - Date.now()
+    // Retry once after correcting clock skew; both handshakes retain their own request record.
+    return edgeSpeechAttempt(text, options, urlOverride)
   }
 }

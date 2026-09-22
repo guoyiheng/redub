@@ -14,7 +14,7 @@ import {
   jobFetch,
   requestCurl
 } from '../server/services/job-requests'
-import { edgeSpeech } from '../server/services/edge-speech'
+import { edgeSpeech, edgeSpeechToken } from '../server/services/edge-speech'
 
 beforeAll(initDb)
 afterEach(() => vi.unstubAllGlobals())
@@ -222,9 +222,104 @@ describe('任务网络记录', () => {
       const row = await request(id)
       expect(row.method).toBe('WEBSOCKET')
       expect(row.responseStatus).toBe(101)
+      expect(new URL(row.url).searchParams.get('Sec-MS-GEC')).toMatch(/^[A-F0-9]{64}$/)
+      expect(new URL(row.url).searchParams.get('Sec-MS-GEC-Version')).toBe('1-143.0.3650.75')
+      expect(row.requestHeaders.Cookie).toBe('[已隐藏]')
       expect(JSON.parse(row.requestBody!).messages[1]).toBe(ssml)
       expect(JSON.parse(row.responseBody!).frames).toHaveLength(2)
       expect(row.curl).toContain('仅复现 WebSocket 握手')
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  })
+
+  it('403 时按服务端时间校正签名后重试一次，失败和成功响应都保留', async () => {
+    const id = await task()
+    const serverTime = new Date(Date.now() + 3600000).toUTCString()
+    const urls: string[] = []
+    const server = createServer()
+    const ws = new WebSocketServer({ noServer: true })
+    server.on('upgrade', (req, socket, head) => {
+      urls.push(req.url!)
+      if (urls.length === 1) {
+        socket.end(
+          `HTTP/1.1 403 Forbidden\r\nDate: ${serverTime}\r\nContent-Length: 6\r\nConnection: close\r\n\r\ndenied`
+        )
+        return
+      }
+      ws.handleUpgrade(req, socket, head, (client) => {
+        client.on('message', (data) => {
+          if (!data.toString().includes('Path:ssml')) return
+          const header = Buffer.from('Path:audio\r\n')
+          const length = Buffer.alloc(2)
+          length.writeUInt16BE(header.length)
+          client.send(Buffer.concat([length, header, Buffer.from([1, 2, 3])]))
+          client.send('Path:turn.end\r\n\r\n{}')
+        })
+      })
+    })
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    try {
+      const port = (server.address() as { port: number }).port
+      const audio = await jobContext.run({ id, attempt: 1 }, () =>
+        edgeSpeech(
+          '测试',
+          {
+            voice: 'zh-CN-XiaoxiaoNeural',
+            rate: '+0%',
+            pitch: '+0Hz',
+            volume: '+0%'
+          },
+          `ws://127.0.0.1:${port}`
+        )
+      )
+      expect(audio).toEqual(Buffer.from([1, 2, 3]))
+      expect(urls).toHaveLength(2)
+      expect(new URL(urls[1]!, 'http://localhost').searchParams.get('Sec-MS-GEC')).toBe(
+        edgeSpeechToken(Date.parse(serverTime))
+      )
+      const first = await request(id, 0)
+      const second = await request(id, 1)
+      expect(first).toMatchObject({ responseStatus: 403, error: '微软 TTS 握手失败：403' })
+      expect(first.responseBody).toContain('denied')
+      expect(second).toMatchObject({ responseStatus: 101, error: null })
+    } finally {
+      ws.close()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  })
+
+  it('持续 403 只重试一次，不产生无限请求', async () => {
+    const id = await task()
+    let attempts = 0
+    const server = createServer()
+    server.on('upgrade', (_req, socket) => {
+      attempts++
+      socket.end(
+        `HTTP/1.1 403 Forbidden\r\nDate: ${new Date().toUTCString()}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`
+      )
+    })
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    try {
+      const port = (server.address() as { port: number }).port
+      await expect(
+        jobContext.run({ id, attempt: 1 }, () =>
+          edgeSpeech(
+            '测试',
+            {
+              voice: 'zh-CN-XiaoxiaoNeural',
+              rate: '+0%',
+              pitch: '+0Hz',
+              volume: '+0%'
+            },
+            `ws://127.0.0.1:${port}`
+          )
+        )
+      ).rejects.toThrow('403')
+      expect(attempts).toBe(2)
+      expect((await getJobDetail(id)).requests.map((row) => row.responseStatus)).toEqual([403, 403])
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()))
     }
