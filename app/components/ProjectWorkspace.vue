@@ -1476,3 +1476,5 @@ async function onSegmentRestored(updated: Segment) {
     />
   </section>
 </template>
+
+<style src="../assets/css/dubbing-workspace.css"></style>
