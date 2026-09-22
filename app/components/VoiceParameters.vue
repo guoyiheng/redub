@@ -131,7 +131,7 @@ onBeforeUnmount(() => {
             icon="i-carbon-waveform"
             class="voice-source-select"
             color="neutral"
-            variant="ghost"
+            variant="outline"
             size="sm"
             :items="[
               { label: '原声参考', value: true, disabled: !canReference },
@@ -146,7 +146,7 @@ onBeforeUnmount(() => {
           class="voice-mode-select"
           :icon="draft.synthesisMode === 'ai' ? 'i-carbon-machine-learning-model' : 'i-carbon-volume-up'"
           color="neutral"
-          variant="ghost"
+          variant="outline"
           size="sm"
           :items="[
             { label: 'AI 配音', value: 'ai' },
@@ -160,7 +160,7 @@ onBeforeUnmount(() => {
           aria-label="微软声音"
           class="voice-tts-select"
           color="neutral"
-          variant="ghost"
+          variant="outline"
           size="sm"
           :items="ttsVoices"
           :disabled="disabled"
@@ -169,9 +169,8 @@ onBeforeUnmount(() => {
           v-if="draft.synthesisMode === 'tts'"
           type="button"
           color="neutral"
-          variant="ghost"
+          variant="outline"
           size="sm"
-          class="voice-tts-audition-btn"
           :icon="isAuditionPlaying ? 'i-carbon-stop-filled' : 'i-carbon-play-filled'"
           :loading="isAuditionLoading"
           aria-label="试听当前音色"
@@ -188,7 +187,7 @@ onBeforeUnmount(() => {
             type="button"
             icon="i-carbon-settings-adjust"
             color="neutral"
-            variant="ghost"
+            variant="outline"
             size="sm"
             aria-label="更多配音参数"
             :disabled="disabled"

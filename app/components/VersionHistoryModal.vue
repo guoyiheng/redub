@@ -119,33 +119,22 @@ async function restoreVersion(type: 'translation' | 'audio', item: { id: string;
   >
     <template #body>
       <div class="version-modal-content">
-        <!-- Tabs -->
-        <div class="version-tab-nav" role="tablist">
-          <button
-            type="button"
-            role="tab"
-            class="version-tab-btn"
-            :class="{ active: activeTab === 'translation' }"
-            :aria-selected="activeTab === 'translation'"
-            @click="activeTab = 'translation'"
-          >
-            <UIcon name="i-carbon-language" />
-            <span>译文版本</span>
-            <span class="version-count-pill">{{ translationList.length }}</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            class="version-tab-btn"
-            :class="{ active: activeTab === 'audio' }"
-            :aria-selected="activeTab === 'audio'"
-            @click="activeTab = 'audio'"
-          >
-            <UIcon name="i-carbon-microphone" />
-            <span>配音版本</span>
-            <span class="version-count-pill">{{ audioList.length }}</span>
-          </button>
-        </div>
+        <UTabs
+          v-model="activeTab"
+          color="neutral"
+          variant="link"
+          :content="false"
+          aria-label="历史版本类型"
+          :items="[
+            {
+              label: '译文版本',
+              value: 'translation',
+              icon: 'i-carbon-language',
+              badge: translationList.length
+            },
+            { label: '配音版本', value: 'audio', icon: 'i-carbon-microphone', badge: audioList.length }
+          ]"
+        />
 
         <!-- Translation Tab -->
         <div v-if="activeTab === 'translation'" class="version-list-pane">
@@ -170,9 +159,9 @@ async function restoreVersion(type: 'translation' | 'audio', item: { id: string;
                 <div class="version-actions">
                   <UButton
                     v-if="!isCurrentTranslation(item)"
-                    size="xs"
-                    variant="soft"
-                    color="primary"
+                    size="md"
+                    variant="outline"
+                    color="neutral"
                     icon="i-carbon-checkmark"
                     :loading="restoringId === item.id"
                     @click="restoreVersion('translation', item)"
@@ -216,9 +205,9 @@ async function restoreVersion(type: 'translation' | 'audio', item: { id: string;
                 <div class="version-actions">
                   <UButton
                     v-if="!isCurrentAudio(item)"
-                    size="xs"
-                    variant="soft"
-                    color="primary"
+                    size="md"
+                    variant="outline"
+                    color="neutral"
                     icon="i-carbon-checkmark"
                     :loading="restoringId === item.id"
                     @click="restoreVersion('audio', item)"

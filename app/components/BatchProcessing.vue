@@ -278,7 +278,7 @@ async function submit() {
     <div class="editor-actions">
       <StudioAction
         color="neutral"
-        variant="ghost"
+        variant="outline"
         :reason="saving ? '正在提交批量任务' : ''"
         @click="emit('close')"
         >取消</StudioAction

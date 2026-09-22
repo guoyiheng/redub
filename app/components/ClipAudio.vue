@@ -34,7 +34,7 @@ function retry() {
     <span v-else class="help">{{ empty || '暂无音频' }}</span>
     <div v-if="failed" class="row-actions">
       <span class="help">音频读取失败</span
-      ><UButton color="neutral" variant="ghost" size="xs" @click="retry">重新加载</UButton>
+      ><UButton color="neutral" variant="outline" @click="retry">重新加载</UButton>
     </div>
   </div>
 </template>

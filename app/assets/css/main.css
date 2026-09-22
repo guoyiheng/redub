@@ -1011,33 +1011,6 @@ button:disabled {
 .voice-reference-bar:hover {
   border-color: color-mix(in srgb, var(--ui-text-muted) 40%, var(--ui-border));
 }
-.voice-reference-play-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  border: none;
-  background: var(--ui-text);
-  color: var(--ui-bg-elevated);
-  cursor: pointer;
-  flex-shrink: 0;
-  transition:
-    transform 120ms ease,
-    opacity 150ms ease;
-}
-.voice-reference-play-btn:hover {
-  opacity: 0.88;
-  transform: scale(1.05);
-}
-.voice-reference-play-btn:active {
-  transform: scale(0.96);
-}
-.voice-reference-play-btn .iconify {
-  width: 16px;
-  height: 16px;
-}
 .voice-reference-meta {
   display: flex;
   align-items: center;
@@ -1094,26 +1067,6 @@ button:disabled {
   white-space: nowrap;
   flex-shrink: 0;
 }
-.voice-reference-del-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  border: none;
-  background: transparent;
-  color: var(--ui-text-muted);
-  cursor: pointer;
-  flex-shrink: 0;
-  transition:
-    background-color 150ms ease,
-    color 150ms ease;
-}
-.voice-reference-del-btn:hover {
-  background: color-mix(in srgb, var(--ui-text-muted) 15%, transparent);
-  color: var(--ui-text);
-}
 .voice-composer-footer {
   display: flex;
   align-items: center;
@@ -1130,7 +1083,6 @@ button:disabled {
 }
 .voice-composer-tools > * {
   min-width: 0;
-  border-radius: 999px;
 }
 .voice-mode-select,
 .voice-source-select {
@@ -1155,38 +1107,9 @@ button:disabled {
   background: color-mix(in srgb, var(--ui-border) 45%, transparent);
   white-space: nowrap;
 }
-.voice-add-reference-btn {
-  border-radius: 999px;
-  font-size: 12px;
-}
 .voice-composer-footer > .action-hint {
   flex-shrink: 0;
   margin-left: auto;
-}
-.voice-submit-wrap {
-  flex-shrink: 0;
-}
-.voice-submit {
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  justify-content: center;
-  border-radius: 999px;
-  background: var(--ui-text);
-  color: var(--ui-bg-elevated);
-  transition:
-    transform 120ms ease,
-    opacity 150ms ease;
-}
-.voice-submit:not(:disabled):hover {
-  background: var(--ui-text-muted);
-  transform: scale(1.05);
-}
-.voice-submit:active {
-  transform: scale(0.96);
-}
-.voice-submit:disabled {
-  opacity: 0.3;
 }
 .voice-reference-menu {
   display: grid;
@@ -3213,46 +3136,6 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 16px;
-}
-.version-tab-nav {
-  display: flex;
-  gap: 6px;
-  background: var(--ui-bg-muted);
-  padding: 4px;
-  border-radius: 8px;
-}
-.version-tab-btn {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 14px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--ui-text-muted);
-  background: transparent;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 120ms ease;
-}
-.version-tab-btn:hover {
-  color: var(--ui-text);
-}
-.version-tab-btn.active {
-  background: var(--ui-bg-elevated);
-  color: var(--ui-text);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-}
-.version-count-pill {
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--ui-border) 60%, transparent);
-  color: var(--ui-text-muted);
-}
-.version-tab-btn.active .version-count-pill {
-  background: var(--ui-bg-muted);
-  color: var(--ui-text);
 }
 .version-list-pane {
   max-height: 480px;

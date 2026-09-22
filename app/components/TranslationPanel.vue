@@ -133,7 +133,7 @@ async function translate() {
             v-model="sourceLanguage"
             class="voice-lang-select"
             color="neutral"
-            variant="ghost"
+            variant="outline"
             size="sm"
             icon="i-carbon-language"
             :items="sourceLangItems"
@@ -145,7 +145,7 @@ async function translate() {
             v-model="targetLanguage"
             class="voice-lang-select"
             color="neutral"
-            variant="ghost"
+            variant="outline"
             size="sm"
             :items="languageOptions(targetLanguage)"
             aria-label="目标语言"
@@ -156,7 +156,7 @@ async function translate() {
             v-model="selectedChannelId"
             class="voice-channel-select"
             color="neutral"
-            variant="ghost"
+            variant="outline"
             size="sm"
             icon="i-carbon-flow"
             :items="openaiChannels.map((c) => ({ label: c.name, value: c.id }))"
@@ -165,15 +165,14 @@ async function translate() {
           />
         </div>
         <StudioAction
-          class="voice-submit-wrap"
           type="submit"
           color="neutral"
+          variant="solid"
           icon="i-carbon-arrow-up"
           square
           aria-label="生成本句译文"
           :reason="unavailableReason"
           :loading="translating"
-          :ui="{ base: 'voice-submit' }"
         />
       </div>
     </div>

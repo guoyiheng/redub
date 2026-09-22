@@ -266,14 +266,15 @@ async function generate() {
             @play="onAudioPlay"
             @error="onAudioError"
           />
-          <button
+          <UButton
             type="button"
-            class="voice-reference-play-btn"
+            color="neutral"
+            variant="outline"
+            size="sm"
+            :icon="isPlaying ? 'i-carbon-pause-filled' : 'i-carbon-play-filled-alt'"
             :aria-label="isPlaying ? '暂停参考音频' : '播放参考音频'"
             @click.stop="togglePlay"
-          >
-            <UIcon :name="isPlaying ? 'i-carbon-pause-filled' : 'i-carbon-play-filled-alt'" />
-          </button>
+          />
           <div class="voice-reference-meta">
             <span class="voice-reference-title" :title="referenceName">{{ referenceName }}</span>
           </div>
@@ -290,16 +291,17 @@ async function generate() {
           <div class="voice-reference-time">
             {{ formatAudioTime(currentTime) }} / {{ formatAudioTime(duration) }}
           </div>
-          <button
+          <UButton
             type="button"
-            class="voice-reference-del-btn"
+            color="neutral"
+            variant="outline"
+            size="sm"
+            icon="i-carbon-close"
             :disabled="busy"
             aria-label="移除参考音频"
             title="移除参考音频"
             @click.stop="removeReference"
-          >
-            <UIcon name="i-carbon-close" />
-          </button>
+          />
         </div>
       </template>
       <template #reference-control>
@@ -311,7 +313,7 @@ async function generate() {
           v-model="selectedChannelId"
           class="voice-channel-select"
           color="neutral"
-          variant="ghost"
+          variant="outline"
           size="sm"
           icon="i-carbon-flow"
           :items="aiChannels.map((c) => ({ label: c.name, value: c.id }))"
@@ -326,10 +328,9 @@ async function generate() {
           <UButton
             type="button"
             color="neutral"
-            variant="ghost"
+            variant="outline"
             size="sm"
             icon="i-carbon-add"
-            class="voice-add-reference-btn"
             :disabled="busy"
             :loading="uploading"
             aria-label="添加参考音频"
@@ -362,15 +363,14 @@ async function generate() {
       </template>
       <template #actions>
         <StudioAction
-          class="voice-submit-wrap"
           type="submit"
           color="neutral"
+          variant="solid"
           icon="i-carbon-arrow-up"
           square
           :aria-label="submitLabel"
           :reason="unavailableReason"
           :loading="saving"
-          :ui="{ base: 'voice-submit' }"
         />
       </template>
     </VoiceParameters>

@@ -30,7 +30,7 @@
     font-variant-numeric: tabular-nums;
   }
   .studio-table {
-    --dialogue-columns: 136px minmax(0, 1fr) minmax(0, 1fr) 208px;
+    --dialogue-columns: 136px minmax(0, 1fr) minmax(0, 1fr) 240px;
     --dialogue-column-gap: 24px;
     background: var(--ui-bg-elevated);
     border: 1px solid var(--ui-border);
@@ -224,17 +224,16 @@
     grid-row: 2;
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 8px;
   }
   .action-buttons-group > button {
     flex-shrink: 0;
-    min-height: 30px;
     white-space: nowrap;
   }
 
   @container dubbing-workspace (max-width: 1000px) {
     .studio-table {
-      --dialogue-columns: 120px minmax(0, 1fr) minmax(0, 1fr) 204px;
+      --dialogue-columns: 120px minmax(0, 1fr) minmax(0, 1fr) 240px;
       --dialogue-column-gap: 16px;
     }
     .studio-table-header,
@@ -242,7 +241,7 @@
       padding-inline: 16px;
     }
   }
-  @container dubbing-workspace (max-width: 820px) {
+  @container dubbing-workspace (max-width: 880px) {
     .studio-table-header {
       display: none;
     }
@@ -301,9 +300,6 @@
       margin-top: 4px;
       padding-top: 10px;
       border-top: 1px solid var(--ui-border);
-    }
-    .action-buttons-group > button {
-      min-height: 44px;
     }
     .workspace-header {
       position: static;

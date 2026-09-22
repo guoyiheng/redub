@@ -848,9 +848,9 @@ async function onSegmentRestored(updated: Segment) {
         />
         <div v-if="totalPages > 1" class="toolbar-pagination">
           <UButton
-            size="xs"
+            size="md"
             color="neutral"
-            variant="ghost"
+            variant="outline"
             icon="i-carbon-chevron-left"
             :disabled="currentPage <= 1"
             aria-label="上一页"
@@ -858,9 +858,9 @@ async function onSegmentRestored(updated: Segment) {
           />
           <span class="page-indicator">{{ currentPage }} / {{ totalPages }}</span>
           <UButton
-            size="xs"
+            size="md"
             color="neutral"
-            variant="ghost"
+            variant="outline"
             icon="i-carbon-chevron-right"
             :disabled="currentPage >= totalPages"
             aria-label="下一页"
@@ -876,13 +876,15 @@ async function onSegmentRestored(updated: Segment) {
           <StudioAction
             v-if="lines.length"
             color="neutral"
-            variant="ghost"
+            variant="outline"
             icon="i-carbon-language"
             :reason="dirty ? '请先保存台词修改' : ''"
             @click="openBatch('translate')"
             >批量翻译</StudioAction
           >
           <StudioAction
+            color="neutral"
+            variant="outline"
             :icon="lines.length ? 'i-carbon-microphone' : 'i-carbon-batch-job'"
             :reason="dirty ? '请先保存台词修改' : ''"
             @click="openBatch(lines.length ? 'synthesize' : 'prepare')"
@@ -923,6 +925,8 @@ async function onSegmentRestored(updated: Segment) {
           }}
         </p>
         <StudioAction
+          color="neutral"
+          variant="outline"
           :reason="locked ? '素材正在处理中，完成后即可校对台词' : ''"
           @click="project.kind === 'text' ? addLine() : openBatch('prepare')"
           >{{ project.kind === 'text' ? '添加台词' : '识别台词 · 本机处理' }}</StudioAction
@@ -1026,9 +1030,9 @@ async function onSegmentRestored(updated: Segment) {
 
                 <div class="action-buttons-group">
                   <UButton
-                    variant="ghost"
+                    variant="outline"
                     color="neutral"
-                    size="xs"
+                    size="md"
                     icon="i-carbon-microphone"
                     :disabled="locked"
                     :aria-label="`第 ${getGlobalIndex(line.id)} 句配音`"
@@ -1036,9 +1040,9 @@ async function onSegmentRestored(updated: Segment) {
                     >配音</UButton
                   >
                   <UButton
-                    variant="ghost"
+                    variant="outline"
                     color="neutral"
-                    size="xs"
+                    size="md"
                     icon="i-carbon-language"
                     :disabled="locked || !line.text?.trim()"
                     :aria-label="`第 ${getGlobalIndex(line.id)} 句翻译`"
@@ -1046,9 +1050,9 @@ async function onSegmentRestored(updated: Segment) {
                     >翻译</UButton
                   >
                   <UButton
-                    variant="ghost"
+                    variant="outline"
                     color="neutral"
-                    size="xs"
+                    size="md"
                     icon="i-carbon-time"
                     :aria-label="`第 ${getGlobalIndex(line.id)} 句历史版本`"
                     title="历史版本"
@@ -1062,9 +1066,9 @@ async function onSegmentRestored(updated: Segment) {
         </div>
         <div v-if="totalPages > 1" class="script-bottom-pagination">
           <UButton
-            size="sm"
+            size="md"
             color="neutral"
-            variant="ghost"
+            variant="outline"
             icon="i-carbon-chevron-left"
             :disabled="currentPage <= 1"
             aria-label="上一页"
@@ -1073,9 +1077,9 @@ async function onSegmentRestored(updated: Segment) {
           >
           <span class="page-indicator">第 {{ currentPage }} / {{ totalPages }} 页</span>
           <UButton
-            size="sm"
+            size="md"
             color="neutral"
-            variant="ghost"
+            variant="outline"
             trailing-icon="i-carbon-chevron-right"
             :disabled="currentPage >= totalPages"
             aria-label="下一页"
