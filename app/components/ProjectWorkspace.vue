@@ -824,11 +824,9 @@ async function renderFilm() {
             </header>
             <div class="comparison-source">
               <div class="dialogue-content">
-                <p
-                  class="dialogue-original"
-                  title="点击编辑原文与时间"
-                  @click="selectLine(line.id)"
-                >{{ line.text || '尚未填写原文' }}</p>
+                <p class="dialogue-original" title="点击编辑原文与时间" @click="selectLine(line.id)">
+                  {{ line.text || '尚未填写原文' }}
+                </p>
               </div>
               <ClipAudio
                 :src="
@@ -843,11 +841,7 @@ async function renderFilm() {
             <div class="comparison-generated">
               <div class="dialogue-content">
                 <div>
-                  <p
-                    class="dialogue-translation"
-                    title="点击编辑配音台词"
-                    @click="selectLine(line.id)"
-                  >
+                  <p class="dialogue-translation" title="点击编辑配音台词" @click="selectLine(line.id)">
                     {{ line.translation || line.text || '填写要生成的配音台词' }}
                   </p>
                   <small v-if="!line.translation && line.text" class="help">使用原文配音</small>

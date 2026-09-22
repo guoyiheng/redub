@@ -226,9 +226,7 @@ onBeforeUnmount(() => stopUpdateListener?.())
               @click="edit(channel)"
             >
               <div class="channel-icon-badge">
-                <UIcon
-                  :name="channel.type === 'volcengine' ? 'i-carbon-microphone' : 'i-carbon-language'"
-                />
+                <UIcon :name="channel.type === 'volcengine' ? 'i-carbon-microphone' : 'i-carbon-language'" />
               </div>
               <div class="channel-info">
                 <div class="channel-title-row">
@@ -237,7 +235,8 @@ onBeforeUnmount(() => stopUpdateListener?.())
                     :color="!channel.enabled ? 'neutral' : channel.configured ? 'success' : 'warning'"
                     variant="soft"
                     size="sm"
-                  >{{ !channel.enabled ? '已停用' : channel.configured ? '已配置' : '未配置' }}</UBadge>
+                    >{{ !channel.enabled ? '已停用' : channel.configured ? '已配置' : '未配置' }}</UBadge
+                  >
                 </div>
                 <div class="channel-meta-row">
                   <span class="channel-type-tag">{{ channel.type === 'volcengine' ? '配音' : '翻译' }}</span>
@@ -356,9 +355,12 @@ onBeforeUnmount(() => stopUpdateListener?.())
                 <div class="model-info">
                   <div class="model-title-row">
                     <strong>Demucs · htdemucs</strong>
-                    <UBadge :color="health?.modelStatus?.demucs ? 'success' : 'warning'" variant="soft" size="sm">{{
-                      health?.modelStatus?.demucs ? '已安装' : '待安装'
-                    }}</UBadge>
+                    <UBadge
+                      :color="health?.modelStatus?.demucs ? 'success' : 'warning'"
+                      variant="soft"
+                      size="sm"
+                      >{{ health?.modelStatus?.demucs ? '已安装' : '待安装' }}</UBadge
+                    >
                   </div>
                   <p>把原始音轨分离为人声和背景音。当前版本固定使用 htdemucs，页面中不可切换。</p>
                 </div>
@@ -368,9 +370,12 @@ onBeforeUnmount(() => stopUpdateListener?.())
                 <div class="model-info">
                   <div class="model-title-row">
                     <strong>Faster Whisper · 可切换</strong>
-                    <UBadge :color="health?.modelStatus?.fasterWhisper ? 'success' : 'warning'" variant="soft" size="sm">{{
-                      health?.modelStatus?.fasterWhisper ? '已安装' : '待安装'
-                    }}</UBadge>
+                    <UBadge
+                      :color="health?.modelStatus?.fasterWhisper ? 'success' : 'warning'"
+                      variant="soft"
+                      size="sm"
+                      >{{ health?.modelStatus?.fasterWhisper ? '已安装' : '待安装' }}</UBadge
+                    >
                   </div>
                   <p>把语音识别为文字。可在“任务与识别”中切换 tiny、base、small、medium 或 large-v3。</p>
                 </div>
@@ -380,9 +385,12 @@ onBeforeUnmount(() => stopUpdateListener?.())
                 <div class="model-info">
                   <div class="model-title-row">
                     <strong>Silero VAD · 内置</strong>
-                    <UBadge :color="health?.modelStatus?.fasterWhisper ? 'success' : 'warning'" variant="soft" size="sm">{{
-                      health?.modelStatus?.fasterWhisper ? '已安装' : '待安装'
-                    }}</UBadge>
+                    <UBadge
+                      :color="health?.modelStatus?.fasterWhisper ? 'success' : 'warning'"
+                      variant="soft"
+                      size="sm"
+                      >{{ health?.modelStatus?.fasterWhisper ? '已安装' : '待安装' }}</UBadge
+                    >
                   </div>
                   <p>检测人声起止位置，自动切分台词片段；随 Faster Whisper 环境提供，无需单独选择。</p>
                 </div>
@@ -392,9 +400,12 @@ onBeforeUnmount(() => stopUpdateListener?.())
                 <div class="model-info">
                   <div class="model-title-row">
                     <strong>OpenCC · 内置</strong>
-                    <UBadge :color="health?.modelStatus?.opencc ? 'success' : 'warning'" variant="soft" size="sm">{{
-                      health?.modelStatus?.opencc ? '已安装' : '待安装'
-                    }}</UBadge>
+                    <UBadge
+                      :color="health?.modelStatus?.opencc ? 'success' : 'warning'"
+                      variant="soft"
+                      size="sm"
+                      >{{ health?.modelStatus?.opencc ? '已安装' : '待安装' }}</UBadge
+                    >
                   </div>
                   <p>把繁体识别结果转换为简体中文；不参与配音生成，也不需要切换。</p>
                 </div>

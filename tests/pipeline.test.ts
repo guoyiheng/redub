@@ -107,6 +107,25 @@ describe.sequential('媒体处理与服务协议', () => {
     await run('synthesize')
     expect(fetcher).toHaveBeenCalledTimes(1)
   })
+  it('指定音色通过 references 传入，不引用未上传的参考音频', async () => {
+    const line = (await getSegments(id))[0]!
+    const fetcher = vi.fn(async (_url, options) => {
+      const body = JSON.parse(options.body)
+      expect(body.references).toEqual([{ speaker: 'fixture-voice' }])
+      expect(body).not.toHaveProperty('speaker')
+      expect(body.text_prompt).not.toContain('@音频1')
+      expect(body.text_prompt).toContain(line.translation)
+      return new Response(JSON.stringify({ audio: voice.toString('base64') }))
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const result = await synthesizeSpeech(
+      { ...line, aiUseReference: false, aiSpeaker: ' fixture-voice ' },
+      await getChannel('volcengine-default'),
+      join(dir, 'specified-voice.mp3')
+    )
+    expect(result.duration).toBeGreaterThan(0)
+    expect(fetcher).toHaveBeenCalledOnce()
+  })
   it('合并仅替换启用片段，未替换原始 PCM 保持一致', async () => {
     await ffmpeg([
       '-f',

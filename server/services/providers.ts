@@ -137,7 +137,7 @@ export async function synthesizeSpeech(segment: Segment, channel: Channel, outpu
   } else if (segment.aiSpeaker?.trim()) {
     references = [{ speaker: segment.aiSpeaker.trim() }]
   }
-  const prompt = `${segment.aiPrompt?.trim() ? `${segment.aiPrompt.trim()}\n` : ''}${references ? '参考@音频1的说话音色，' : ''}只朗读以下台词，保持自然语气，目标时长约${duration.toFixed(2)}秒：\n${text}`
+  const prompt = `${segment.aiPrompt?.trim() ? `${segment.aiPrompt.trim()}\n` : ''}${references?.some((reference) => 'audio_data' in reference) ? '参考@音频1的说话音色，' : ''}只朗读以下台词，保持自然语气，目标时长约${duration.toFixed(2)}秒：\n${text}`
   if (prompt.length > 3000) throw new Error('配音文本超过 3000 字限制')
   const result = await responseJson(
     await jobFetch(
