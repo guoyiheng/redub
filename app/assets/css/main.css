@@ -2477,7 +2477,7 @@ textarea.generation-prompt::placeholder {
   opacity: 0.5;
 }
 .mixer-track.unavailable .mixer-lane {
-  background: #efede7;
+  background: var(--ui-bg-muted);
 }
 .mixer-empty {
   position: absolute;
@@ -2513,7 +2513,7 @@ textarea.generation-prompt::placeholder {
   padding: 13px 14px;
   border: 1px solid var(--ui-border);
   border-radius: 8px;
-  background: #f7f5ee;
+  background: var(--ui-bg-muted);
   color: var(--ui-text);
   font: inherit;
   text-align: left;
@@ -2523,13 +2523,13 @@ textarea.generation-prompt::placeholder {
     transform 120ms ease;
 }
 .export-preset:hover {
-  border-color: #cfc7b8;
-  background: #f3efe4;
+  border-color: var(--ui-primary);
+  background: var(--ui-bg-elevated);
   transform: translateY(-1px);
 }
 .export-preset.recommended {
-  border-color: #d6ad94;
-  background: #f8eee7;
+  border-color: var(--ui-primary);
+  background: var(--ui-bg-muted);
 }
 .export-preset strong {
   font-size: 12px;
@@ -2559,8 +2559,8 @@ textarea.generation-prompt::placeholder {
   opacity: 0.58;
 }
 .export-option.recommended {
-  border-color: #d6ad94;
-  background: #f8eee7;
+  border-color: var(--ui-primary);
+  background: var(--ui-bg-muted);
 }
 .export-option-copy {
   display: grid;
