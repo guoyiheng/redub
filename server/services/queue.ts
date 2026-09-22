@@ -10,7 +10,7 @@ import { executeJob } from './pipeline'
 import { safeError } from './providers'
 import { assetPath } from './media'
 import type { GenerationInput } from '../../shared/voice'
-import type { Job, MediaKind, Stage } from '../../shared/types'
+import type { Job, MediaKind, Stage, Settings } from '../../shared/types'
 import { jobContext, interruptJobRequests, jobColumns } from './job-requests'
 import { exportSchema } from '../../shared/export'
 import { previewRevision } from './preview-tracks'
@@ -21,18 +21,37 @@ export function workflowStages(kind: MediaKind): Stage[] {
   if (kind === 'text') return []
   return [...(kind === 'video' ? ['extract' as const] : []), 'separate', 'segment', 'transcribe']
 }
-export function eligibleJobs(all: Job[], paused: Set<string>, runningJobIds: Set<string>, capacity: number) {
+type ConcurrencySettings = Pick<Settings, 'translationConcurrency' | 'synthesisConcurrency'>
+function poolOf(stage: Stage) {
+  return stage === 'translate' || stage === 'synthesize' ? stage : 'local'
+}
+export function eligibleJobs(
+  all: Job[],
+  paused: Set<string>,
+  runningJobIds: Set<string>,
+  settings: ConcurrencySettings
+) {
   const byId = new Map(all.map((j) => [j.id, j]))
   const blocked = automaticFollowups(all)
   const picked: Job[] = []
   const used = new Set(runningJobIds)
+  // 本机密集处理仍限制为两个，独立于翻译与配音的网络任务。
+  const capacity = {
+    translate: settings.translationConcurrency,
+    synthesize: settings.synthesisConcurrency,
+    local: 2
+  }
+  for (const job of all)
+    if (runningJobIds.has(job.id) || job.status === 'running') capacity[poolOf(job.stage)]--
   for (const job of all) {
-    if (picked.length >= capacity) break
     if (job.status !== 'queued' || paused.has(job.projectId) || used.has(job.id) || blocked.has(job.id))
       continue
+    const pool = poolOf(job.stage)
+    if (capacity[pool] <= 0) continue
     const parent = job.dependsOn && byId.get(job.dependsOn)
     if (job.dependsOn && (!parent || !['completed', 'skipped'].includes(parent.status))) continue
     picked.push(job)
+    capacity[pool]--
     used.add(job.id)
   }
   return picked
@@ -71,16 +90,28 @@ export function serializeEnqueue<T>(action: () => Promise<T>): Promise<T> {
 export function enqueue(projectId: string, stages?: Stage[], segmentId?: string, batch?: BatchInput) {
   return serializeEnqueue(async () => {
     const p = await getProject(projectId)
-    await assertIdle(projectId)
+    if (segmentId && stages?.length === 1 && stages[0] === 'translate') {
+      const active = await db
+        .select(jobColumns)
+        .from(jobs)
+        .where(and(eq(jobs.projectId, projectId), inArray(jobs.status, ['queued', 'running'])))
+      if (active.some((job) => job.stage !== 'translate' || !job.segmentId || job.segmentId === segmentId))
+        throw createError({ statusCode: 409, statusMessage: '当前有冲突任务，请等待完成并核对后再翻译' })
+    } else await assertIdle(projectId)
     if (!stages && !batch && p.kind === 'text') throw new Error('文本已导入，请手动选择翻译或生成配音')
     const lines = await getSegments(projectId)
     const plan = batch
       ? batchPlan(p, lines, batch)
       : stages
-        ? stages.map((stage) => ({ stage, segmentId }))
+        ? stages.flatMap((stage) => {
+            if (!segmentId && (stage === 'translate' || stage === 'synthesize'))
+              return lines.filter((line) => line.enabled).map((line) => ({ stage, segmentId: line.id }))
+            return [{ stage, segmentId }]
+          })
         : batchPlan(p, lines, { action: 'prepare', scope: 'missing' })
     if (plan.some((item, index) => index > 0 && !canChainStages(plan[index - 1]!.stage, item.stage)))
       throw new Error('翻译、配音、合成和导出需分别手动发起，请先核对上一步结果')
+    if (!plan.length) throw new Error('没有需要处理的台词')
     const targetIds = plan.flatMap((item) => (item.segmentId ? [item.segmentId] : []))
     if (batch?.action === 'synthesize') {
       const voices = batch.useSegmentVoices
@@ -91,20 +122,31 @@ export function enqueue(projectId: string, stages?: Stage[], segmentId?: string,
         if (channel.type !== 'volcengine') throw new Error('请在项目设置中选择 AI 配音渠道')
       }
     }
-    if (batch?.action === 'translate') await getChannel((await getSettings()).translationChannelId)
+    if (plan.some((item) => item.stage === 'translate')) {
+      if (
+        plan.some(
+          (item) =>
+            item.stage === 'translate' && !lines.find((line) => line.id === item.segmentId)?.text.trim()
+        )
+      )
+        throw new Error('请先识别或填写需要翻译的原文')
+      await getChannel((await getSettings()).translationChannelId)
+    }
     const order = plan.map((item) => item.stage)
     const rows: Job[] = []
+    const batchId = randomUUID()
     for (const item of plan)
       rows.push({
         id: randomUUID(),
         projectId,
         stage: item.stage,
         segmentId: item.segmentId || null,
+        batchId,
         status: 'queued',
         progress: 0,
         message: '等待执行',
         error: null,
-        dependsOn: rows.at(-1)?.id || null,
+        dependsOn: item.stage === 'translate' || item.stage === 'synthesize' ? null : rows.at(-1)?.id || null,
         attempts: 0,
         createdAt: Date.now(),
         updatedAt: Date.now()
@@ -328,11 +370,10 @@ export async function tick() {
     const settings = await getSettings()
     const all = await db.select(jobColumns).from(jobs).orderBy(asc(jobs.createdAt))
     await cancelAutomaticFollowups(all)
-    if (running.size >= settings.concurrency) return
     const paused = new Set(
       (await db.select().from(projects).where(eq(projects.paused, true))).map((p) => p.id)
     )
-    for (const job of eligibleJobs(all, paused, running, settings.concurrency - running.size)) {
+    for (const job of eligibleJobs(all, paused, running, settings)) {
       running.add(job.id)
       void execute(job)
     }

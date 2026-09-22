@@ -220,9 +220,9 @@ describe.sequential('production HTTP workflow', () => {
       (await fetch(base + '/api/projects', { headers: { Origin: 'https://evil.example' } })).status
     ).toBe(403)
     expect((await fetch(base + '/api/media?path=../redub.sqlite')).status).toBe(400)
-    await expect(api('settings', 'PATCH', { ...(await api('settings')), concurrency: 0 })).rejects.toThrow(
-      '400'
-    )
+    await expect(
+      api('settings', 'PATCH', { ...(await api('settings')), translationConcurrency: 0 })
+    ).rejects.toThrow('400')
   })
   it('recovers an interrupted task on restart and can retry it', async () => {
     const detail = await api(`projects/${id}`),
@@ -306,7 +306,8 @@ describe.sequential('production HTTP workflow', () => {
         voice: voiceSettings
       })
       expect(created.map((job) => job.stage)).toEqual(['synthesize', 'synthesize'])
-      expect(created[1]!.dependsOn).toBe(created[0]!.id)
+      expect(created[1]!.dependsOn).toBeNull()
+      expect(created[1]!.batchId).toBe(created[0]!.batchId)
       await until(
         (detail) => detail.jobs.some((job) => job.id === created[0]!.id && job.status === 'running'),
         batchProject.id
@@ -333,6 +334,122 @@ describe.sequential('production HTTP workflow', () => {
     )
     expect(completed.project.outputPath).toBeNull()
     expect(completed.segments[2]!.generatedPath).toBeTruthy()
+  })
+  it('persists separate limits and concurrently runs ten translations and five voices', async () => {
+    const defaults = await api('settings')
+    expect(defaults).toMatchObject({ translationConcurrency: 10, synthesisConcurrency: 5 })
+    expect(defaults).not.toHaveProperty('concurrency')
+    await api('settings', 'PATCH', { ...defaults, translationConcurrency: 4, synthesisConcurrency: 2 })
+    await stop()
+    await start()
+    expect(await api('settings')).toMatchObject({ translationConcurrency: 4, synthesisConcurrency: 2 })
+    await api('settings', 'PATCH', defaults)
+    const translation = await api('projects', 'POST', {
+      name: 'Parallel translation',
+      text: Array.from({ length: 12 }, (_, i) => `Sentence ${i}.`).join('\n')
+    })
+    const synthesis = await api('projects', 'POST', {
+      name: 'Parallel voice',
+      text: Array.from({ length: 7 }, (_, i) => `Voice ${i}.`).join('\n')
+    })
+    let releaseTranslation!: () => void
+    let releaseSynthesis!: () => void
+    holdTranslation = new Promise((resolve) => {
+      releaseTranslation = resolve
+    })
+    holdSynthesis = new Promise((resolve) => {
+      releaseSynthesis = resolve
+    })
+    const translatedBefore = translationRequests
+    const generatedBefore = synthesisRequests.length
+    try {
+      const translations: Job[] = await api(`projects/${translation.id}/batch`, 'POST', {
+        action: 'translate'
+      })
+      const voices: Job[] = await api(`projects/${synthesis.id}/batch`, 'POST', {
+        action: 'synthesize',
+        voice: { ...defaultVoiceSettings(), aiUseReference: false }
+      })
+      expect(translations).toHaveLength(12)
+      expect(voices).toHaveLength(7)
+      expect([...translations, ...voices].every((job) => !job.dependsOn && !!job.batchId)).toBe(true)
+      const translating = await until(
+        (detail) =>
+          detail.jobs.filter((job) => job.status === 'running').length === 10 &&
+          translationRequests === translatedBefore + 10,
+        translation.id
+      )
+      const generating = await until(
+        (detail) =>
+          detail.jobs.filter((job) => job.status === 'running').length === 5 &&
+          synthesisRequests.length === generatedBefore + 5,
+        synthesis.id
+      )
+      expect(translating.jobs.filter((job) => job.status === 'queued')).toHaveLength(2)
+      expect(generating.jobs.filter((job) => job.status === 'queued')).toHaveLength(2)
+      expect(new Set(translations.map((job) => job.batchId)).size).toBe(1)
+      expect(new Set(voices.map((job) => job.batchId)).size).toBe(1)
+      await api('settings', 'PATCH', { ...defaults, translationConcurrency: 1, synthesisConcurrency: 1 })
+      expect(
+        (await api(`projects/${translation.id}`)).jobs.filter((job: Job) => job.status === 'running')
+      ).toHaveLength(10)
+      expect(
+        (await api(`projects/${synthesis.id}`)).jobs.filter((job: Job) => job.status === 'running')
+      ).toHaveLength(5)
+    } finally {
+      holdTranslation = undefined
+      holdSynthesis = undefined
+      releaseTranslation()
+      releaseSynthesis()
+    }
+    const translated = await until(
+      (detail) => detail.jobs.every((job) => job.status === 'completed'),
+      translation.id
+    )
+    const generated = await until(
+      (detail) => detail.jobs.every((job) => job.status === 'completed'),
+      synthesis.id
+    )
+    expect(translated.jobs).toHaveLength(12)
+    expect(generated.jobs).toHaveLength(7)
+    expect(translated.segments.every((line) => line.translation && !line.generatedPath)).toBe(true)
+    expect(generated.segments.every((line) => line.generatedPath)).toBe(true)
+    expect(generated.project.outputPath).toBeNull()
+    expect(translationRequests).toBe(translatedBefore + 12)
+    expect(synthesisRequests.length).toBe(generatedBefore + 7)
+    await api('settings', 'PATCH', defaults)
+  })
+  it('queues single-line translations with the same limit and persists their request history', async () => {
+    const project = await api('projects', 'POST', {
+      name: 'Single translations',
+      text: 'First.\nSecond.\nUntouched.'
+    })
+    const before: ProjectDetail = await api(`projects/${project.id}`)
+    const defaults = await api('settings')
+    await api('settings', 'PATCH', { ...defaults, translationConcurrency: 1 })
+    let release!: () => void
+    holdTranslation = new Promise((resolve) => {
+      release = resolve
+    })
+    try {
+      const first = await api(`segments/${before.segments[0]!.id}/translate`, 'POST')
+      const second = await api(`segments/${before.segments[1]!.id}/translate`, 'POST')
+      expect(first.jobs).toHaveLength(1)
+      expect(second.jobs).toHaveLength(1)
+      const active = await until((detail) => detail.jobs.some((job) => job.status === 'running'), project.id)
+      expect(active.jobs.filter((job) => job.status === 'running')).toHaveLength(1)
+      expect(active.jobs.filter((job) => job.status === 'queued')).toHaveLength(1)
+      await expect(api(`segments/${before.segments[0]!.id}/translate`, 'POST')).rejects.toThrow('409')
+    } finally {
+      holdTranslation = undefined
+      release()
+    }
+    const done = await until((detail) => detail.jobs.every((job) => job.status === 'completed'), project.id)
+    expect(done.segments[0]!.translation).toBeTruthy()
+    expect(done.segments[1]!.translation).toBeTruthy()
+    expect(done.segments[2]).toEqual(before.segments[2])
+    for (const job of done.jobs) expect((await api(`jobs/${job.id}`)).requests).toHaveLength(1)
+    await api('settings', 'PATCH', defaults)
   })
   it('requires translation to finish and be reviewed before voice generation can be submitted', async () => {
     const project = await api('projects', 'POST', {

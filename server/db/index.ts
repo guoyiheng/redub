@@ -58,7 +58,7 @@ export function initDb() {
       PRAGMA user_version=1;
     `)
     const jobColumns = await client.execute('PRAGMA table_info(jobs)')
-    for (const column of ['input', 'result'])
+    for (const column of ['input', 'result', 'batchId'])
       if (!jobColumns.rows.some((row) => row.name === column))
         await client.execute(`ALTER TABLE jobs ADD COLUMN ${column} TEXT`)
     const columns = await client.execute('PRAGMA table_info(channels)')

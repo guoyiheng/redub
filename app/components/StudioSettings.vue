@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Channel } from '../../shared/types'
+import { settingsSchema } from '../../shared/settings'
 
 interface Health {
   ffmpeg: boolean
@@ -54,6 +55,16 @@ const health = ref<Health>(),
 const queueDraft = ref({ ...settings.value }),
   desktopStatus = ref(''),
   desktopBusy = ref(false)
+const queueSaving = ref(false)
+async function saveQueue() {
+  if (queueSaving.value) return
+  queueSaving.value = true
+  try {
+    await act(() => $fetch('/api/settings', { method: 'PATCH', body: queueDraft.value }), '任务设置已保存')
+  } finally {
+    queueSaving.value = false
+  }
+}
 const desktopUpdate = ref<DesktopUpdateState>({
   currentVersion: '',
   state: 'idle',
@@ -529,26 +540,50 @@ onBeforeUnmount(() => stopUpdateListener?.())
           <div class="settings-card-header">
             <div>
               <h2>任务与识别</h2>
-              <p class="help">设置队列并发、本机识别模型和默认翻译渠道。</p>
+              <p class="help">翻译和配音分别控制并发，互不占用额度。</p>
             </div>
           </div>
-          <form
+          <UForm
             class="settings-form"
-            @submit.prevent="
-              act(() => $fetch('/api/settings', { method: 'PATCH', body: queueDraft }), '任务设置已保存')
-            "
+            :schema="settingsSchema"
+            :state="queueDraft"
+            :disabled="queueSaving"
+            @submit="saveQueue"
           >
             <div class="settings-form-grid">
               <UFormField
-                label="全局并发任务数"
-                description="同时运行的任务总数；预处理、翻译、配音与合成共用此额度。数值越高越占用 CPU 和网络。"
+                name="translationConcurrency"
+                label="翻译并发数"
+                description="同时翻译的台词数量，默认 10。"
               >
-                <USelect v-model="queueDraft.concurrency" class="w-full" :items="[1, 2, 3, 4, 5, 6, 7, 8]" />
+                <UInputNumber
+                  v-model="queueDraft.translationConcurrency"
+                  increment-icon="i-carbon-add"
+                  decrement-icon="i-carbon-subtract"
+                  class="w-full"
+                  :min="1"
+                  :max="32"
+                  :step="1"
+                />
               </UFormField>
               <UFormField
-                label="本地识别模型"
-                description="Faster Whisper 模型越大越准确，但速度越慢、内存占用越高。"
+                name="synthesisConcurrency"
+                label="配音并发数"
+                description="同时生成的配音数量，默认 5。"
               >
+                <UInputNumber
+                  v-model="queueDraft.synthesisConcurrency"
+                  increment-icon="i-carbon-add"
+                  decrement-icon="i-carbon-subtract"
+                  class="w-full"
+                  :min="1"
+                  :max="32"
+                  :step="1"
+                />
+              </UFormField>
+            </div>
+            <div class="settings-form-grid">
+              <UFormField label="本地识别模型" description="模型越大，精度越高，内存占用越多。">
                 <USelect
                   v-model="queueDraft.whisperModel"
                   class="w-full"
@@ -561,25 +596,30 @@ onBeforeUnmount(() => stopUpdateListener?.())
                   ]"
                 />
               </UFormField>
+              <UFormField label="默认翻译渠道" description="只显示已启用的 OpenAI 兼容渠道。">
+                <USelect
+                  v-model="queueDraft.translationChannelId"
+                  class="w-full"
+                  :items="
+                    channels
+                      .filter((c) => c.type === 'openai' && c.enabled)
+                      .map((c) => ({ label: c.name, value: c.id }))
+                  "
+                />
+              </UFormField>
             </div>
-            <UFormField label="默认翻译渠道" description="只显示已启用的 OpenAI 兼容渠道。">
-              <USelect
-                v-model="queueDraft.translationChannelId"
-                class="w-full"
-                :items="
-                  channels
-                    .filter((c) => c.type === 'openai' && c.enabled)
-                    .map((c) => ({ label: c.name, value: c.id }))
-                "
-              />
-            </UFormField>
             <div class="settings-form-footer">
               <UCheckbox v-model="queueDraft.pauseOnFailure" label="任务失败后暂停队列" />
-              <UButton color="neutral" variant="outline" type="submit" class="settings-save"
+              <UButton
+                color="neutral"
+                variant="outline"
+                type="submit"
+                class="settings-save"
+                :loading="queueSaving"
                 >保存任务设置</UButton
               >
             </div>
-          </form>
+          </UForm>
         </section>
 
         <section v-else-if="activeSection === 'desktop' && desktop" class="settings-card settings-section">

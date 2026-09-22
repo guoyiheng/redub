@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { groupJobs, type TaskGroup } from '../../shared/task-groups'
+import { groupJobs, isActiveTask, type TaskGroup } from '../../shared/task-groups'
 import { stageLabels, type Job } from '../../shared/types'
 
-const { jobs, projects, settings, act } = useStudio()
+const { jobs, projects, act } = useStudio()
 const open = ref(false)
+const activeTab = ref('active')
 const route = useRoute()
 const router = useRouter()
 const selectedId = computed(() => (typeof route.query.task === 'string' ? route.query.task : ''))
@@ -24,6 +25,12 @@ const allJobs = computed(() => [
   ...new Map([...history.value, ...jobs.value].map((job) => [job.id, job])).values()
 ])
 const allGroups = computed(() => groupJobs(allJobs.value, Number.MAX_SAFE_INTEGER))
+const activeGroups = computed(() => allGroups.value.filter((group) => isActiveTask(group.status)))
+const completedGroups = computed(() => allGroups.value.filter((group) => !isActiveTask(group.status)))
+const tabs = computed(() => [
+  { label: '进行中', value: 'active', badge: activeGroups.value.length },
+  { label: '已完成', value: 'completed' }
+])
 const siblings = computed(
   () => allGroups.value.find((group) => group.jobs.some((job) => job.id === selectedId.value))?.jobs || []
 )
@@ -48,7 +55,7 @@ async function loadHistory() {
 }
 const pending = computed(() => jobs.value.filter((j) => ['running', 'queued', 'failed'].includes(j.status)))
 const running = computed(() => jobs.value.filter((j) => j.status === 'running'))
-const visible = computed(() => groupJobs(allJobs.value, showHistory.value ? Number.MAX_SAFE_INTEGER : 8))
+const visible = computed(() => (activeTab.value === 'active' ? activeGroups.value : completedGroups.value))
 const labels = {
   queued: '排队中',
   running: '处理中',
@@ -99,7 +106,7 @@ function groupMessage(group: TaskGroup) {
     return `${status} · 已完成 ${done} / ${group.jobs.length} 个阶段${skipped ? ` · 跳过 ${skipped}` : ''}`
   }
 
-  if (group.kind === 'synthesize' && group.jobs.length > 1) {
+  if (['translate', 'synthesize'].includes(group.kind) && group.jobs.length > 1) {
     const skipped = skippedCount(group)
     const progress = group.status === 'running' && group.message ? ` · ${group.message}` : ''
     return `已完成 ${finishedCount(group)} / ${group.jobs.length} 句${
@@ -128,12 +135,6 @@ async function groupAction(group: TaskGroup, action: 'retry' | 'skip', failedOnl
         method: 'POST'
       })
   })
-}
-
-async function concurrency(value: number) {
-  await act(() =>
-    $fetch('/api/settings', { method: 'PATCH', body: { ...settings.value, concurrency: value } })
-  )
 }
 let closeTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -173,93 +174,97 @@ onBeforeUnmount(() => {
       ><span>{{ taskSummary() }}</span
       ><UIcon :name="open ? 'i-carbon-chevron-down' : 'i-carbon-chevron-up'" />
     </button>
-    <div v-if="open" class="task-body">
-      <UFormField
-        label="全局并发任务数"
-        description="同时运行的任务总数；预处理、翻译、配音与合成共用此额度。"
-        class="queue-settings"
-        ><USelect
-          :model-value="settings.concurrency"
-          :items="[1, 2, 3, 4, 5, 6, 7, 8]"
-          aria-label="全局并发任务数"
-          @update:model-value="concurrency(Number($event))"
-      /></UFormField>
-      <div v-if="!visible.length" class="task-empty">暂无任务</div>
-      <div v-for="group in visible" :key="group.id" class="task-item task-group">
-        <div class="task-title">
-          <div class="task-title-main">
-            <strong>{{ group.title }}</strong>
-            <span v-if="group.jobs.length > 1" class="task-count">{{ group.jobs.length }} 项</span>
+    <UTabs
+      v-if="open"
+      v-model="activeTab"
+      :items="tabs"
+      color="neutral"
+      variant="link"
+      class="task-tabs"
+      :ui="{ list: 'px-4', trigger: 'flex-1 py-3', content: 'task-body' }"
+    >
+      <template #content>
+        <div v-if="!visible.length" class="task-empty">
+          {{ activeTab === 'active' ? '暂无进行中的任务' : '暂无已完成的任务' }}
+        </div>
+        <div v-for="group in visible" :key="group.id" class="task-item task-group">
+          <div class="task-title">
+            <div class="task-title-main">
+              <strong>{{ group.title }}</strong>
+              <span v-if="group.jobs.length > 1" class="task-count">{{ group.jobs.length }} 项</span>
+            </div>
+            <span :class="`status-${group.status}`">{{ labels[group.status] }}</span>
           </div>
-          <span :class="`status-${group.status}`">{{ labels[group.status] }}</span>
+          <p class="help task-project">
+            {{ projectName(group.projectId) }}<span v-if="projectPaused(group.projectId)"> · 已暂停</span>
+          </p>
+          <div v-if="showProgress(group)" class="task-progress">
+            <UProgress :model-value="group.progress" size="sm" /><span>{{ group.progress }}%</span>
+          </div>
+          <p
+            class="job-message"
+            :class="{ 'error-text': group.status === 'failed' }"
+            :title="groupMessage(group)"
+          >
+            {{ groupMessage(group) }}
+          </p>
+          <div class="row-actions">
+            <UButton
+              size="sm"
+              color="neutral"
+              variant="ghost"
+              icon="i-carbon-document"
+              @click="showDetail(group.jobs[0]!.id)"
+              >查看详情</UButton
+            >
+            <UButton
+              v-if="failedJobs(group).length"
+              size="sm"
+              color="neutral"
+              variant="outline"
+              icon="i-carbon-renew"
+              @click="groupAction(group, 'retry')"
+              >{{ failedJobs(group).length > 1 ? '重试失败项' : '重试' }}</UButton
+            ><UButton
+              v-if="failedJobs(group).length && group.jobs.length === 1"
+              size="sm"
+              color="neutral"
+              variant="ghost"
+              @click="groupAction(group, 'skip')"
+              >{{ group.kind === 'synthesize' ? '保留原声并跳过' : '跳过' }}</UButton
+            ><UButton
+              v-else-if="failedJobs(group).length"
+              size="sm"
+              color="neutral"
+              variant="ghost"
+              @click="groupAction(group, 'skip', true)"
+              >跳过失败项</UButton
+            ><UButton
+              v-else-if="queuedJobs(group).length && group.jobs.length === 1"
+              size="sm"
+              color="neutral"
+              variant="ghost"
+              @click="groupAction(group, 'skip')"
+              >{{ group.kind === 'synthesize' ? '保留原声并跳过' : '跳过' }}</UButton
+            >
+          </div>
         </div>
-        <p class="help task-project">
-          {{ projectName(group.projectId) }}<span v-if="projectPaused(group.projectId)"> · 已暂停</span>
+        <p v-if="activeTab === 'completed' && historyError" class="error-text" role="alert">
+          {{ historyError }}
         </p>
-        <div v-if="showProgress(group)" class="task-progress">
-          <UProgress :model-value="group.progress" size="sm" /><span>{{ group.progress }}%</span>
-        </div>
-        <p
-          class="job-message"
-          :class="{ 'error-text': group.status === 'failed' }"
-          :title="groupMessage(group)"
+        <UButton
+          v-if="activeTab === 'completed' && (!showHistory || historyMore || historyError)"
+          class="mt-4"
+          block
+          size="sm"
+          color="neutral"
+          variant="ghost"
+          :loading="historyLoading"
+          @click="loadHistory"
+          >{{ showHistory ? '加载更多历史任务' : '查看全部历史任务' }}</UButton
         >
-          {{ groupMessage(group) }}
-        </p>
-        <div class="row-actions">
-          <UButton
-            size="sm"
-            color="neutral"
-            variant="ghost"
-            icon="i-carbon-document"
-            @click="showDetail(group.jobs[0]!.id)"
-            >查看详情</UButton
-          >
-          <UButton
-            v-if="failedJobs(group).length"
-            size="sm"
-            color="neutral"
-            variant="outline"
-            icon="i-carbon-renew"
-            @click="groupAction(group, 'retry')"
-            >{{ failedJobs(group).length > 1 ? '重试失败项' : '重试' }}</UButton
-          ><UButton
-            v-if="failedJobs(group).length && group.jobs.length === 1"
-            size="sm"
-            color="neutral"
-            variant="ghost"
-            @click="groupAction(group, 'skip')"
-            >{{ group.kind === 'synthesize' ? '保留原声并跳过' : '跳过' }}</UButton
-          ><UButton
-            v-else-if="failedJobs(group).length"
-            size="sm"
-            color="neutral"
-            variant="ghost"
-            @click="groupAction(group, 'skip', true)"
-            >跳过失败项</UButton
-          ><UButton
-            v-else-if="queuedJobs(group).length && group.jobs.length === 1"
-            size="sm"
-            color="neutral"
-            variant="ghost"
-            @click="groupAction(group, 'skip')"
-            >{{ group.kind === 'synthesize' ? '保留原声并跳过' : '跳过' }}</UButton
-          >
-        </div>
-      </div>
-      <p v-if="historyError" class="error-text" role="alert">{{ historyError }}</p>
-      <UButton
-        v-if="!showHistory || historyMore || historyError"
-        class="mt-4"
-        block
-        size="sm"
-        color="neutral"
-        variant="ghost"
-        :loading="historyLoading"
-        @click="loadHistory"
-        >{{ showHistory ? '加载更多历史任务' : '查看全部历史任务' }}</UButton
-      >
-    </div>
+      </template>
+    </UTabs>
   </aside>
   <USlideover
     v-model:open="detailOpen"

@@ -1669,19 +1669,13 @@ button:disabled {
   padding: 14px 16px 16px;
   overflow-y: auto;
 }
-.queue-settings {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding-bottom: 14px;
+.task-tabs {
+  gap: 0;
 }
-.queue-settings [data-slot='container'] {
+.task-body > .task-item:first-child {
   margin-top: 0;
-  min-width: 96px;
-}
-.queue-settings button {
-  width: 100%;
+  padding-top: 0;
+  border-top: 0;
 }
 .task-empty {
   padding: 24px 0;

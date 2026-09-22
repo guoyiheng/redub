@@ -1,4 +1,5 @@
 import type { Project, Job, Channel, Settings, ProjectDetail } from '../../shared/types'
+import { defaultSettings } from '../../shared/settings'
 export const mediaUrl = (path: string | null | undefined, download = false) =>
   path ? `/api/media?path=${encodeURIComponent(path)}${download ? '&download=1' : ''}` : ''
 export const formatTime = (value: number) =>
@@ -7,12 +8,7 @@ export function useStudio() {
   const projects = useState<Project[]>('projects', () => [])
   const jobs = useState<Job[]>('jobs', () => [])
   const channels = useState<Channel[]>('channels', () => [])
-  const settings = useState<Settings>('settings', () => ({
-    concurrency: 2,
-    pauseOnFailure: true,
-    whisperModel: 'small',
-    translationChannelId: 'translation-default'
-  }))
+  const settings = useState<Settings>('settings', defaultSettings)
   const selected = useState<string | null>('selected', () => null)
   const workspacePanels = useState<Record<string, 'script' | 'preview'>>('workspacePanels', () => ({}))
   const settingsProject = useState<string | null>('settingsProject', () => null)

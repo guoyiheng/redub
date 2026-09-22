@@ -36,7 +36,7 @@ function titleOf(kind: TaskGroupKind, size: number) {
   return size > 1 ? '批量配音' : '单句配音'
 }
 
-function isActive(status: JobStatus) {
+export function isActiveTask(status: JobStatus) {
   return status === 'queued' || status === 'running' || status === 'failed'
 }
 
@@ -72,8 +72,7 @@ function currentJobOf(jobs: Job[]) {
 }
 
 /**
- * 将同一条依赖链上的底层任务合并为一个界面任务。
- * 批量配音会自然形成 synthesize -> synthesize 的依赖链，而手动生成的单句彼此独立。
+ * 同一批次的并行任务合并展示，旧版本按依赖链分组，手动单句彼此独立。
  */
 export function groupJobs(allJobs: Job[], recentLimit = 8): TaskGroup[] {
   const jobs = [...allJobs].sort(byLatestUpdate)
@@ -93,7 +92,14 @@ export function groupJobs(allJobs: Job[], recentLimit = 8): TaskGroup[] {
     if (rootA !== rootB) parent.set(rootB, rootA)
   }
 
+  const batches = new Map<string, string>()
   for (const job of jobs) {
+    if (job.batchId) {
+      const key = `${job.projectId}:${kindOf(job.stage)}:${job.batchId}`
+      const first = batches.get(key)
+      if (first) union(job.id, first)
+      else batches.set(key, job.id)
+    }
     if (!job.dependsOn) continue
     const dependency = byId.get(job.dependsOn)
     if (!dependency || dependency.projectId !== job.projectId) continue
@@ -115,10 +121,13 @@ export function groupJobs(allJobs: Job[], recentLimit = 8): TaskGroup[] {
     const current = currentJobOf(jobs)
     const failures = jobs.filter((job) => job.status === 'failed')
     return {
-      id: `${kind}:${jobs[0]!.projectId}:${jobs
-        .map((job) => job.id)
-        .sort()
-        .join(':')}`,
+      id: `${kind}:${jobs[0]!.projectId}:${
+        jobs[0]!.batchId ||
+        jobs
+          .map((job) => job.id)
+          .sort()
+          .join(':')
+      }`,
       kind,
       projectId: jobs[0]!.projectId,
       title: titleOf(kind, jobs.length),
@@ -137,14 +146,14 @@ export function groupJobs(allJobs: Job[], recentLimit = 8): TaskGroup[] {
   })
 
   const active = groups
-    .filter((group) => group.jobs.some((job) => isActive(job.status)))
+    .filter((group) => isActiveTask(group.status))
     .sort((a, b) => {
       const rank = { running: 0, failed: 1, queued: 2 } as const
       const statusDiff = rank[a.status as keyof typeof rank] - rank[b.status as keyof typeof rank]
       return statusDiff || byLatestUpdate(a.jobs[0]!, b.jobs[0]!)
     })
   const recent = groups
-    .filter((group) => !group.jobs.some((job) => isActive(job.status)))
+    .filter((group) => !isActiveTask(group.status))
     .sort((a, b) => byLatestUpdate(a.jobs[0]!, b.jobs[0]!))
     .slice(0, recentLimit)
 

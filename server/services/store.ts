@@ -3,6 +3,7 @@ import { createError } from 'h3'
 import { db, initDb } from '../db'
 import { projects, segments, jobs, settings, channels } from '../db/schema'
 import type { Settings } from '../../shared/types'
+import { settingsSchema } from '../../shared/settings'
 
 export async function getProject(id: string) {
   await initDb()
@@ -28,13 +29,7 @@ export async function getSettings(): Promise<Settings> {
   await initDb()
   const rows = await db.select().from(settings)
   const values = Object.fromEntries(rows.map((r) => [r.key, JSON.parse(r.value)]))
-  return {
-    concurrency: 2,
-    pauseOnFailure: true,
-    whisperModel: 'small',
-    translationChannelId: 'translation-default',
-    ...values
-  }
+  return settingsSchema.parse(values)
 }
 export async function getChannel(id: string) {
   const [channel] = await db.select().from(channels).where(eq(channels.id, id))

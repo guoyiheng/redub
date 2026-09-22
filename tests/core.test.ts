@@ -3,6 +3,7 @@ import { parseScript, subtitleText } from '../server/services/text'
 import { eligibleJobs, workflowStages } from '../server/services/queue'
 import { tempoFilters } from '../server/services/media'
 import { safeError } from '../server/services/providers'
+import { defaultSettings } from '../shared/settings'
 import type { Job, Stage } from '../shared/types'
 function job(
   id: string,
@@ -46,6 +47,40 @@ describe('文本与字幕', () => {
   })
 })
 describe('任务调度', () => {
+  it('默认同时运行 10 个翻译和 5 个配音，互不占用额度', () => {
+    const tasks = [
+      ...Array.from({ length: 12 }, (_, i) => job(`t${i}`, 'translation')),
+      ...Array.from({ length: 7 }, (_, i) => ({ ...job(`s${i}`, 'voice'), stage: 'synthesize' as const })),
+      ...Array.from({ length: 3 }, (_, i) => ({ ...job(`l${i}`, 'local'), stage: 'extract' as const }))
+    ]
+    const picked = eligibleJobs(tasks, new Set(), new Set(), defaultSettings())
+    expect(picked.filter((job) => job.stage === 'translate')).toHaveLength(10)
+    expect(picked.filter((job) => job.stage === 'synthesize')).toHaveLength(5)
+    expect(picked.filter((job) => job.stage === 'extract')).toHaveLength(2)
+  })
+  it('已运行任务和刚领取的任务都占用本类额度，调低额度不打断运行任务', () => {
+    const tasks = [
+      job('t1', 'p1', null, 'running'),
+      job('t2', 'p2'),
+      job('t3', 'p3'),
+      { ...job('s1', 'p4', null, 'running'), stage: 'synthesize' as const },
+      { ...job('s2', 'p5'), stage: 'synthesize' as const }
+    ]
+    expect(
+      eligibleJobs(tasks, new Set(), new Set(['t1', 't2', 's1']), {
+        translationConcurrency: 1,
+        synthesisConcurrency: 2
+      }).map((job) => job.id)
+    ).toEqual(['s2'])
+    tasks[0]!.status = 'completed'
+    tasks[1]!.status = 'completed'
+    expect(
+      eligibleJobs(tasks, new Set(), new Set(['s1']), {
+        translationConcurrency: 1,
+        synthesisConcurrency: 1
+      }).map((job) => job.id)
+    ).toEqual(['t3'])
+  })
   it.each<[Stage, Stage]>([
     ['transcribe', 'translate'],
     ['translate', 'synthesize'],
@@ -58,9 +93,9 @@ describe('任务调度', () => {
         { ...job('b', 'p1', 'a'), stage: next },
         { ...job('c', 'p1', 'b'), stage: next }
       ]
-      expect(eligibleJobs(tasks, new Set(), new Set(), 4)).toEqual([])
+      expect(eligibleJobs(tasks, new Set(), new Set(), defaultSettings())).toEqual([])
       tasks[1]!.status = 'completed'
-      expect(eligibleJobs(tasks, new Set(), new Set(), 4)).toEqual([])
+      expect(eligibleJobs(tasks, new Set(), new Set(), defaultSettings())).toEqual([])
     }
   })
   it.each<[Stage, Stage]>([
@@ -73,7 +108,7 @@ describe('任务调度', () => {
       { ...job('a', 'p1', null, 'completed'), stage: parent },
       { ...job('b', 'p1', 'a'), stage: next }
     ]
-    expect(eligibleJobs(tasks, new Set(), new Set(), 4).map((job) => job.id)).toEqual(['b'])
+    expect(eligibleJobs(tasks, new Set(), new Set(), defaultSettings()).map((job) => job.id)).toEqual(['b'])
   })
   it('取消的依赖和跨项目依赖不能解锁后续任务', () => {
     const tasks = [
@@ -82,30 +117,28 @@ describe('任务调度', () => {
       job('c', 'p2', null, 'completed'),
       job('d', 'p1', 'c')
     ]
-    expect(eligibleJobs(tasks, new Set(), new Set(), 4)).toEqual([])
+    expect(eligibleJobs(tasks, new Set(), new Set(), defaultSettings())).toEqual([])
   })
   it('默认流程仅包含本机处理，文本不自动启动付费任务', () => {
     expect(workflowStages('video')).toEqual(['extract', 'separate', 'segment', 'transcribe'])
     expect(workflowStages('audio')).toEqual(['separate', 'segment', 'transcribe'])
     expect(workflowStages('text')).toEqual([])
   })
-  it('全局限制并发，不再串行化同项目任务', () => {
+  it('翻译按自身额度执行，不串行化同项目任务', () => {
     expect(
-      eligibleJobs(
-        [job('a', 'p1'), job('b', 'p1'), job('c', 'p2'), job('d', 'p3')],
-        new Set(),
-        new Set(),
-        2
-      ).map((j) => j.id)
+      eligibleJobs([job('a', 'p1'), job('b', 'p1'), job('c', 'p2'), job('d', 'p3')], new Set(), new Set(), {
+        translationConcurrency: 2,
+        synthesisConcurrency: 5
+      }).map((j) => j.id)
     ).toEqual(['a', 'b'])
   })
   it('暂停、运行中的项目和失败依赖不启动', () => {
     const tasks = [job('a', 'p1', null, 'failed'), job('b', 'p1', 'a'), job('c', 'p2'), job('d', 'p3')]
-    expect(eligibleJobs(tasks, new Set(['p2']), new Set(['d']), 4)).toEqual([])
+    expect(eligibleJobs(tasks, new Set(['p2']), new Set(['d']), defaultSettings())).toEqual([])
   })
   it('跳过和成功后解锁依赖，缺失依赖仍阻塞', () => {
     const tasks = [job('a', 'p1', null, 'skipped'), job('b', 'p1', 'a'), job('c', 'p2', 'missing')]
-    expect(eligibleJobs(tasks, new Set(), new Set(), 4).map((j) => j.id)).toEqual(['b'])
+    expect(eligibleJobs(tasks, new Set(), new Set(), defaultSettings()).map((j) => j.id)).toEqual(['b'])
   })
 })
 it('长短配音均使用不改变音高的合法倍速链', () => {

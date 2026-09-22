@@ -64,6 +64,7 @@ export const jobs = sqliteTable(
       .references(() => projects.id),
     stage: text().$type<Stage>().notNull(),
     segmentId: text(),
+    batchId: text(),
     status: text().$type<JobStatus>().notNull().default('queued'),
     progress: integer().notNull().default(0),
     message: text().notNull().default('等待执行'),

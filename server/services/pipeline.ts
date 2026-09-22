@@ -188,7 +188,9 @@ export async function executeJob(job: Job, progress: (value: number, message: st
     })
   }
   if (job.stage === 'translate') {
-    const lines = (await getSegments(p.id)).filter((s) => s.enabled)
+    const lines = (await getSegments(p.id)).filter((s) =>
+      job.segmentId ? s.id === job.segmentId : s.enabled
+    )
     if (!lines.length || lines.some((s) => !s.text.trim()))
       throw new Error('请先识别或填写所有启用片段的原文')
     const channel = await getChannel((await getSettings()).translationChannelId)
@@ -205,7 +207,9 @@ export async function executeJob(job: Job, progress: (value: number, message: st
               translation: result.get(s.id)!,
               generationPrompt: null,
               generatedPath: null,
-              generatedHash: null
+              generatedHash: null,
+              generatedDuration: null,
+              subtitle: null
             })
             .where(eq(segments.id, s.id))
       })

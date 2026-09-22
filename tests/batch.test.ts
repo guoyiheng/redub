@@ -11,7 +11,14 @@ import { originalClip } from '../server/services/original-clip'
 import { assetPath, ffmpeg, probe, projectDir } from '../server/services/media'
 vi.mock('../server/services/store', async (original) => {
   const actual = await original<typeof import('../server/services/store')>()
-  return { ...actual, getSettings: async () => ({ ...(await actual.getSettings()), concurrency: 0 }) }
+  return {
+    ...actual,
+    getSettings: async () => ({
+      ...(await actual.getSettings()),
+      translationConcurrency: 0,
+      synthesisConcurrency: 0
+    })
+  }
 })
 beforeAll(initDb)
 async function fixture() {
@@ -57,11 +64,13 @@ describe('批量处理范围与事务', () => {
     expect(await getSegments(id)).toEqual(before)
     expect((await getProject(id)).outputPath).toBe('old.mp3')
     expect((await db.select().from(jobs).where(eq(jobs.projectId, id))).map((job) => job.stage)).toEqual([
+      'translate',
       'translate'
     ])
   })
   it('取消旧自动链的全部待执行后代，保留历史、片段与手动任务，且可重复执行', async () => {
     const id = await fixture()
+    await db.update(projects).set({ paused: true }).where(eq(projects.id, id))
     const before = await getSegments(id)
     const stages = ['transcribe', 'translate', 'synthesize', 'mix', 'preview', 'export'] as const
     await db.insert(jobs).values(
@@ -135,6 +144,9 @@ describe('批量处理范围与事务', () => {
       voice
     })
     expect(result.map((j) => j.segmentId)).toEqual([`${id}-ready`, `${id}-missing`])
+    expect(result.every((job) => job.dependsOn === null)).toBe(true)
+    expect(result[0]!.batchId).toBeTruthy()
+    expect(result[1]!.batchId).toBe(result[0]!.batchId)
     expect((await getSegments(id))[0]!.generatedPath).toBeNull()
     expect((await getSegments(id))[2]!.synthesisMode).toBe('ai')
   })

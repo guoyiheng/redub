@@ -2,6 +2,7 @@ import { normalizeLanguage } from '../../shared/languages'
 import { speakerName, voiceSettingsSchema, generationSchema } from '../../shared/voice'
 import { uploadReference } from '../services/reference-upload'
 import { batchSchema } from '../../shared/batch'
+import { settingsSchema } from '../../shared/settings'
 import { assertTimeline } from '../../shared/timeline'
 import { originalClip } from '../services/original-clip'
 import { randomUUID } from 'node:crypto'
@@ -20,7 +21,7 @@ import {
 import { importProject } from '../services/importer'
 import { enqueue, enqueueOutput, generateSegment, serializeEnqueue, tick } from '../services/queue'
 import { mediaHealth, assetPath, cutAudio } from '../services/media'
-import { safeError, translateLines } from '../services/providers'
+import { safeError } from '../services/providers'
 import { stageLabels } from '../../shared/types'
 import { getJobDetail, getJobRequest, jobColumns } from '../services/job-requests'
 import { getPreviewTracks } from '../services/preview-tracks'
@@ -60,14 +61,7 @@ export default defineEventHandler(async (event) => {
     if (resource === 'settings') {
       if (method === 'GET') return await getSettings()
       if (method === 'PATCH') {
-        const data = z
-          .object({
-            concurrency: z.number().int().min(1).max(8),
-            pauseOnFailure: z.boolean(),
-            whisperModel: z.enum(['tiny', 'base', 'small', 'medium', 'large-v3']),
-            translationChannelId: z.string().default('translation-default')
-          })
-          .parse(await readBody(event))
+        const data = settingsSchema.parse(await readBody(event))
         const [translationChannel] = await db
           .select()
           .from(channels)
@@ -383,33 +377,10 @@ export default defineEventHandler(async (event) => {
       return await uploadReference(event, line.projectId)
     }
     if (resource === 'segments' && id && action === 'translate' && method === 'POST') {
-      return await serializeEnqueue(async () => {
-        const [old] = await db.select().from(segments).where(eq(segments.id, id))
-        if (!old) throw createError({ statusCode: 404, statusMessage: '片段不存在' })
-        await assertIdle(old.projectId)
-        if (!old.text?.trim()) throw createError({ statusCode: 400, statusMessage: '台词原文为空，无法翻译' })
-        const p = await getProject(old.projectId)
-        const s = await getSettings()
-        if (!s.translationChannelId) {
-          throw createError({ statusCode: 400, statusMessage: '未配置默认翻译渠道，请前往设置配置' })
-        }
-        const channel = await getChannel(s.translationChannelId)
-        const resultMap = await translateLines([old], p.targetLanguage, channel)
-        const translation = resultMap.get(old.id) || ''
-        await db
-          .update(segments)
-          .set({
-            translation,
-            generationPrompt: null,
-            generatedPath: null,
-            generatedHash: null,
-            subtitle: null,
-            generatedDuration: null
-          })
-          .where(eq(segments.id, id))
-        await invalidateOutput(p.id)
-        return { ok: true, translation }
-      })
+      const [line] = await db.select().from(segments).where(eq(segments.id, id))
+      if (!line) throw createError({ statusCode: 404, statusMessage: '片段不存在' })
+      setResponseStatus(event, 202)
+      return { jobs: await enqueue(line.projectId, ['translate'], id) }
     }
     if (resource === 'segments' && id && method === 'PATCH') {
       return await serializeEnqueue(async () => {
@@ -481,7 +452,14 @@ export default defineEventHandler(async (event) => {
           .where(notInArray(jobs.status, [...active]))
           .orderBy(desc(jobs.createdAt), desc(jobs.id))
           .limit(100)
-        return [...pending, ...recent]
+        // 带回整个批次，避免大批量任务的已完成部分被分页截断，导致进度或标签错误。
+        const batchIds = [
+          ...new Set([...pending, ...recent].flatMap((job) => (job.batchId ? [job.batchId] : [])))
+        ]
+        const siblings = batchIds.length
+          ? await db.select(jobColumns).from(jobs).where(inArray(jobs.batchId, batchIds))
+          : []
+        return [...new Map([...pending, ...recent, ...siblings].map((job) => [job.id, job])).values()]
       }
       if (id && method === 'POST') {
         return await serializeEnqueue(async () => {
@@ -507,9 +485,9 @@ export default defineEventHandler(async (event) => {
                   ['queued', 'running'].includes(item.status) &&
                   !descendants.has(item.id) &&
                   !(
-                    job.stage === 'synthesize' &&
+                    ['synthesize', 'translate'].includes(job.stage) &&
                     job.segmentId &&
-                    item.stage === 'synthesize' &&
+                    item.stage === job.stage &&
                     item.segmentId &&
                     item.segmentId !== job.segmentId
                   )

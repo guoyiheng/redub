@@ -796,7 +796,7 @@ async function translateSingleLine(lineId: string) {
   try {
     await act(async () => {
       await $fetch(`/api/segments/${lineId}/translate`, { method: 'POST' })
-    }, '台词翻译完成')
+    }, '翻译已加入队列')
   } finally {
     translatingLineId.value = null
   }

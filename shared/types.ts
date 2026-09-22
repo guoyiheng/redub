@@ -66,6 +66,7 @@ export interface Job {
   projectId: string
   stage: Stage
   segmentId: string | null
+  batchId?: string | null
   status: JobStatus
   progress: number
   message: string
@@ -119,9 +120,10 @@ export interface Channel {
   configured?: boolean
 }
 export interface Settings {
-  concurrency: number
+  translationConcurrency: number
+  synthesisConcurrency: number
   pauseOnFailure: boolean
-  whisperModel: string
+  whisperModel: 'tiny' | 'base' | 'small' | 'medium' | 'large-v3'
   translationChannelId: string
 }
 export interface ProjectDetail {

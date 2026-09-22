@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { groupJobs } from '../shared/task-groups'
+import { groupJobs, isActiveTask } from '../shared/task-groups'
 import type { Job, JobStatus, Stage } from '../shared/types'
 
 function job(id: string, stage: Stage, status: JobStatus = 'queued', options: Partial<Job> = {}): Job {
@@ -21,6 +21,29 @@ function job(id: string, stage: Stage, status: JobStatus = 'queued', options: Pa
 }
 
 describe('任务面板聚合', () => {
+  it('并行批次在全部结束后才移至已完成，失败仍留在进行中', () => {
+    const jobs = [
+      job('a', 'translate', 'completed', { batchId: 'translation' }),
+      job('b', 'translate', 'running', { batchId: 'translation' }),
+      job('c', 'synthesize', 'failed', { batchId: 'voice' }),
+      job('d', 'synthesize', 'queued', { batchId: 'voice' }),
+      job('other', 'synthesize', 'completed', { batchId: 'voice', projectId: 'p2' }),
+      job('cancelled', 'export', 'cancelled'),
+      job('skipped', 'translate', 'skipped')
+    ]
+    let groups = groupJobs(jobs)
+    expect(groups.filter((group) => isActiveTask(group.status))).toHaveLength(2)
+    expect(groups.filter((group) => !isActiveTask(group.status))).toHaveLength(3)
+    expect(
+      groups.find((group) => group.kind === 'translate' && group.status === 'running')!.jobs
+    ).toHaveLength(2)
+    jobs[1]!.status = 'completed'
+    jobs[2]!.status = 'skipped'
+    jobs[3]!.status = 'completed'
+    groups = groupJobs(jobs)
+    expect(groups.filter((group) => isActiveTask(group.status))).toHaveLength(0)
+    expect(groups.filter((group) => !isActiveTask(group.status))).toHaveLength(5)
+  })
   it('取消的旧自动链显示已取消，不计为排队或完成', () => {
     const groups = groupJobs([
       job('mix', 'mix', 'cancelled'),
