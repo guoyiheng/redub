@@ -157,9 +157,9 @@ export async function synthesizeSpeech(segment: Segment, channel: Channel, outpu
           audio_config: {
             format: segment.aiFormat || 'mp3',
             sample_rate: segment.aiSampleRate || 48000,
-            pitch_rate: segment.aiPitchRate ?? channel.pitch,
-            speech_rate: segment.aiSpeechRate ?? channel.speed,
-            loudness_rate: segment.aiLoudnessRate ?? channel.loudness,
+            pitch_rate: segment.aiPitchRate ?? channel.pitch ?? 0,
+            speech_rate: segment.aiSpeechRate ?? channel.speed ?? 0,
+            loudness_rate: segment.aiLoudnessRate ?? channel.loudness ?? 0,
             enable_subtitle: true
           },
           watermark: {}

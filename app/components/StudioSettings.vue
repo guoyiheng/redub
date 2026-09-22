@@ -43,7 +43,7 @@ interface DesktopUpdateState {
 
 type SettingsSection = 'channels' | 'local' | 'queue' | 'desktop'
 
-const { channels, settings, act } = useStudio()
+const { channels, settings, act, toast, errorMessage } = useStudio()
 const activeSection = ref<SettingsSection>('channels')
 const modalOpen = ref(false),
   selected = ref<string>(),
@@ -73,6 +73,98 @@ const updateBusy = computed(
   () =>
     updateRequestBusy.value || ['checking', 'downloading', 'installing'].includes(desktopUpdate.value.state)
 )
+
+const defaultModelPresets: Record<'volcengine' | 'openai', string[]> = {
+  volcengine: ['seed-audio-1.0', 'seed-audio-2.0', 'seed-tts-1.0', 'seed-tts-2.0'],
+  openai: [
+    'gpt-4o',
+    'gpt-4o-mini',
+    'gpt-4-turbo',
+    'deepseek-chat',
+    'deepseek-reasoner',
+    'qwen-plus',
+    'qwen-turbo',
+    'moonshot-v1-8k',
+    'claude-3-5-sonnet-20241022'
+  ]
+}
+const modelOptions = ref<string[]>([])
+const fetchingModels = ref(false)
+
+const modelDropdownItems = computed(() => {
+  if (!modelOptions.value.length) {
+    return [[{ label: '暂无可用模型，请先拉取', disabled: true }]]
+  }
+  return [
+    modelOptions.value.map((m) => ({
+      label: m,
+      onSelect: () => {
+        if (draft.value) draft.value.model = m
+      }
+    }))
+  ]
+})
+
+function onTypeChange(val: unknown) {
+  if (!draft.value) return
+  const type = val === 'openai' ? 'openai' : 'volcengine'
+  draft.value.type = type
+  const preset = defaultModelPresets[type]
+  modelOptions.value = [...preset]
+  if (!preset.includes(draft.value.model)) {
+    draft.value.model = preset[0] || ''
+  }
+  if (type === 'volcengine' && draft.value.endpoint.includes('openai.com')) {
+    draft.value.endpoint = 'https://openspeech.bytedance.com/api/v3/tts/create'
+  } else if (type === 'openai' && draft.value.endpoint.includes('bytedance.com')) {
+    draft.value.endpoint = 'https://api.openai.com/v1'
+  }
+}
+
+async function pullModels() {
+  if (!draft.value) return
+  fetchingModels.value = true
+  try {
+    const res = await $fetch<{ models: string[] }>('/api/channels/fetch-models', {
+      method: 'POST',
+      body: {
+        id: selected.value,
+        type: draft.value.type,
+        endpoint: draft.value.endpoint,
+        apiKey: draft.value.apiKey,
+        keyEnv: draft.value.keyEnv
+      }
+    })
+    if (res?.models && res.models.length) {
+      modelOptions.value = Array.from(new Set([...res.models, ...modelOptions.value]))
+      if (!draft.value.model || !modelOptions.value.includes(draft.value.model)) {
+        draft.value.model = res.models[0] || draft.value.model
+      }
+      toast.add({
+        id: 'pull-models-success',
+        title: `成功拉取 ${res.models.length} 个模型`,
+        color: 'success'
+      })
+    } else {
+      toast.add({
+        id: 'pull-models-warn',
+        title: '未获取到模型',
+        description: '服务未返回模型列表，请手动输入模型 ID',
+        color: 'warning'
+      })
+    }
+  } catch (error) {
+    toast.add({
+      id: 'pull-models-error',
+      title: '拉取模型失败',
+      description: errorMessage(error),
+      color: 'error',
+      duration: 8000
+    })
+  } finally {
+    fetchingModels.value = false
+  }
+}
 
 const sections: {
   id: SettingsSection
@@ -110,18 +202,23 @@ const sections: {
 
 function edit(channel?: Channel) {
   selected.value = channel?.id
+  const type = channel?.type || 'volcengine'
+  const preset = defaultModelPresets[type]
+  const currentModel = channel?.model || (type === 'volcengine' ? 'seed-audio-1.0' : 'gpt-4o')
+  modelOptions.value = Array.from(new Set([currentModel, ...preset]))
   draft.value = {
     id: channel?.id || '',
     name: channel?.name || '新的配音渠道',
-    type: channel?.type || 'volcengine',
-    endpoint: channel?.endpoint || 'https://openspeech.bytedance.com/api/v3/tts/create',
-    model: channel?.model || 'seed-audio-1.0',
+    type,
+    endpoint:
+      channel?.endpoint ||
+      (type === 'volcengine'
+        ? 'https://openspeech.bytedance.com/api/v3/tts/create'
+        : 'https://api.openai.com/v1'),
+    model: currentModel,
     keyEnv: channel?.keyEnv || 'CUSTOM_API_KEY',
     apiKey: '',
-    enabled: channel?.enabled ?? true,
-    pitch: channel?.pitch || 0,
-    speed: channel?.speed || 0,
-    loudness: channel?.loudness || 0
+    enabled: channel?.enabled ?? true
   }
   modalOpen.value = true
 }
@@ -568,33 +665,58 @@ onBeforeUnmount(() => stopUpdateListener?.())
                   { label: '火山 Audio 配音', value: 'volcengine' },
                   { label: 'OpenAI 兼容翻译', value: 'openai' }
                 ]"
+                @update:model-value="onTypeChange"
               />
             </UFormField>
           </div>
           <div class="channel-editor-grid">
-            <UFormField label="模型 ID"><UInput v-model="draft.model" class="w-full" /></UFormField>
+            <UFormField label="接口地址"><UInput v-model="draft.endpoint" class="w-full" /></UFormField>
             <UFormField label="兼容环境变量名">
               <UInput v-model="draft.keyEnv" class="w-full" placeholder="CUSTOM_API_KEY" />
             </UFormField>
           </div>
-          <UFormField label="接口地址"><UInput v-model="draft.endpoint" class="w-full" /></UFormField>
           <UFormField label="API Key" description="只保存在本机；编辑已有渠道时留空表示不修改。">
             <UInput v-model="draft.apiKey" class="w-full" type="password" placeholder="输入 API Key" />
           </UFormField>
-          <details v-if="draft.type === 'volcengine'" class="advanced-options">
-            <summary>声音参数</summary>
-            <div class="channel-voice-params">
-              <UFormField label="音调">
-                <UInput v-model.number="draft.pitch" class="w-full" type="number" min="-12" max="12" />
-              </UFormField>
-              <UFormField label="语速">
-                <UInput v-model.number="draft.speed" class="w-full" type="number" min="-50" max="100" />
-              </UFormField>
-              <UFormField label="音量">
-                <UInput v-model.number="draft.loudness" class="w-full" type="number" min="-50" max="100" />
-              </UFormField>
+          <UFormField label="模型 ID" description="支持手动输入，或从接口拉取后在右侧下拉选择">
+            <div class="channel-model-picker">
+              <UInput
+                v-model="draft.model"
+                list="channel-model-suggestions"
+                class="channel-model-input"
+                placeholder="输入或选择模型 ID"
+              />
+              <datalist id="channel-model-suggestions">
+                <option v-for="m in modelOptions" :key="m" :value="m">{{ m }}</option>
+              </datalist>
+              <div class="channel-model-actions">
+                <UButton
+                  color="neutral"
+                  variant="outline"
+                  icon="i-carbon-cloud-download"
+                  :loading="fetchingModels"
+                  type="button"
+                  @click="pullModels"
+                >
+                  拉取
+                </UButton>
+                <UDropdownMenu
+                  :items="modelDropdownItems"
+                  :ui="{ content: 'max-h-64 overflow-y-auto min-w-44' }"
+                >
+                  <UButton
+                    color="neutral"
+                    variant="outline"
+                    trailing-icon="i-carbon-chevron-down"
+                    type="button"
+                    :disabled="!modelOptions.length"
+                  >
+                    选择
+                  </UButton>
+                </UDropdownMenu>
+              </div>
             </div>
-          </details>
+          </UFormField>
           <div class="channel-editor-footer">
             <UCheckbox v-model="draft.enabled" label="启用渠道" />
             <div class="modal-actions">

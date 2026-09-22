@@ -1372,10 +1372,21 @@ textarea.generation-prompt::placeholder {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
-.channel-voice-params {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+.channel-model-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.channel-model-input {
+  flex: 1;
+  min-width: 0;
+}
+.channel-model-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 .channel-editor-footer {
   display: flex;
@@ -1691,8 +1702,7 @@ textarea.generation-prompt::placeholder {
   .settings-layout,
   .health-summary,
   .settings-form-grid,
-  .channel-editor-grid,
-  .channel-voice-params {
+  .channel-editor-grid {
     grid-template-columns: 1fr;
   }
   .settings-form-footer,

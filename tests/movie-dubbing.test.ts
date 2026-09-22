@@ -344,13 +344,30 @@ describe('电影配音优化专项测试', () => {
       model: 'gpt-4o-mini',
       keyEnv: 'TRANSLATION_API_KEY',
       enabled: true,
-      pitch: 0,
-      speed: 0,
-      loudness: 0,
       apiKey: 'test-key',
       configured: true
     }
     const result = await translateLines([targetSeg], '中文', channel)
     expect(result.get(targetSeg.id)).toBe('单句独立翻译译文。')
+  })
+
+  it('渠道配置省略声音参数，且支持拉取模型列表', async () => {
+    const fakeFetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes('/models')) {
+        return new Response(
+          JSON.stringify({
+            data: [{ id: 'gpt-4o' }, { id: 'gpt-4o-mini' }, { id: 'deepseek-chat' }]
+          })
+        )
+      }
+      return new Response(JSON.stringify({ error: 'not found' }), { status: 404 })
+    })
+    vi.stubGlobal('fetch', fakeFetch)
+
+    const res = await fakeFetch('https://api.openai.com/v1/models')
+    const data = await res.json()
+    const modelIds = data.data.map((m: any) => m.id)
+    expect(modelIds).toContain('gpt-4o')
+    expect(modelIds).toContain('deepseek-chat')
   })
 })

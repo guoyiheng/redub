@@ -32,9 +32,9 @@ const channelSchema = z.object({
   model: z.string().trim().min(1).max(100),
   keyEnv: z.string().regex(/^[A-Z][A-Z0-9_]*_API_KEY$/, '密钥环境变量名需以 _API_KEY 结尾'),
   enabled: z.boolean(),
-  pitch: z.number().int().min(-12).max(12),
-  speed: z.number().int().min(-50).max(100),
-  loudness: z.number().int().min(-50).max(100),
+  pitch: z.number().int().min(-12).max(12).optional().default(0),
+  speed: z.number().int().min(-50).max(100).optional().default(0),
+  loudness: z.number().int().min(-50).max(100).optional().default(0),
   apiKey: z.string().max(10000).optional()
 })
 const segmentSchema = z
@@ -87,6 +87,80 @@ export default defineEventHandler(async (event) => {
       }
     }
     if (resource === 'channels') {
+      if (id === 'fetch-models' && method === 'POST') {
+        const body = z
+          .object({
+            id: z.string().optional(),
+            type: z.enum(['volcengine', 'openai']),
+            endpoint: z.string().trim().min(1, '请输入接口地址'),
+            apiKey: z.string().optional(),
+            keyEnv: z.string().optional()
+          })
+          .parse(await readBody(event))
+
+        let key = body.apiKey?.trim() || ''
+        if (!key && body.id) {
+          const [found] = await db.select().from(channels).where(eq(channels.id, body.id))
+          if (found?.apiKey) key = found.apiKey
+        }
+        if (!key && body.keyEnv && process.env[body.keyEnv]) {
+          key = process.env[body.keyEnv]!
+        }
+
+        if (body.type === 'openai') {
+          let base = body.endpoint.trim().replace(/\/$/, '')
+          if (base.endsWith('/chat/completions')) {
+            base = base.replace(/\/chat\/completions$/, '')
+          }
+          const modelsUrl = `${base}/models`
+          try {
+            const res = await fetch(modelsUrl, {
+              headers: {
+                ...(key ? { Authorization: `Bearer ${key}` } : {})
+              },
+              signal: AbortSignal.timeout(15000)
+            })
+            if (!res.ok) {
+              const errText = await res.text().catch(() => '')
+              throw new Error(`服务返回状态码 ${res.status}: ${errText.slice(0, 150)}`)
+            }
+            const data = (await res.json()) as any
+            let list: string[] = []
+            if (Array.isArray(data?.data)) {
+              list = data.data
+                .map((m: any) => (typeof m === 'string' ? m : m?.id))
+                .filter(Boolean)
+            } else if (Array.isArray(data?.models)) {
+              list = data.models
+                .map((m: any) => (typeof m === 'string' ? m : m?.id || m?.name))
+                .filter(Boolean)
+            }
+            if (!list.length) {
+              list = ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'deepseek-chat', 'qwen-plus']
+            }
+            list = Array.from(new Set(list)).sort((a, b) => a.localeCompare(b))
+            return { models: list }
+          } catch (e: any) {
+            throw createError({
+              statusCode: 400,
+              statusMessage: `拉取模型失败: ${e.message || '网络请求超时或地址错误'}`
+            })
+          }
+        }
+
+        if (body.type === 'volcengine') {
+          return {
+            models: [
+              'seed-audio-1.0',
+              'seed-audio-2.0',
+              'seed-tts-1.0',
+              'seed-tts-2.0'
+            ]
+          }
+        }
+
+        return { models: [] }
+      }
       if (method === 'GET')
         return (await db.select().from(channels)).map(({ apiKey: _apiKey, ...c }) => ({
           ...c,

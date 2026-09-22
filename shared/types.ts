@@ -110,9 +110,9 @@ export interface Channel {
   model: string
   keyEnv: string
   enabled: boolean
-  pitch: number
-  speed: number
-  loudness: number
+  pitch?: number
+  speed?: number
+  loudness?: number
   apiKey?: string | null
   configured?: boolean
 }
