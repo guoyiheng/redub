@@ -100,7 +100,7 @@ async function openGeneration() {
     /></UFormField>
     <div v-if="segment.generatedPath" class="generated-audio">
       <p class="help">已生成配音</p>
-      <audio :src="mediaUrl(segment.generatedPath)" controls preload="none" />
+      <ClipAudio :src="mediaUrl(segment.generatedPath)" label="已生成配音" />
     </div>
     <div class="editor-actions">
       <StudioAction

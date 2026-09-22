@@ -597,12 +597,6 @@ watch(
   },
   { deep: true }
 )
-function selectLine(id: string) {
-  if (dirty.value && !window.confirm('放弃未保存的台词修改？')) return
-  dirty.value = false
-  current.value = id
-  showEditor.value = true
-}
 function setEditorOpen(open: boolean) {
   if (!open && dirty.value && !window.confirm('放弃未保存的台词修改？')) return
   showEditor.value = open
@@ -824,7 +818,7 @@ async function renderFilm() {
             </header>
             <div class="comparison-source">
               <div class="dialogue-content">
-                <p class="dialogue-original" title="点击编辑原文与时间" @click="selectLine(line.id)">
+                <p class="dialogue-original">
                   {{ line.text || '尚未填写原文' }}
                 </p>
               </div>
@@ -841,7 +835,7 @@ async function renderFilm() {
             <div class="comparison-generated">
               <div class="dialogue-content">
                 <div>
-                  <p class="dialogue-translation" title="点击编辑配音台词" @click="selectLine(line.id)">
+                  <p class="dialogue-translation">
                     {{ line.translation || line.text || '填写要生成的配音台词' }}
                   </p>
                   <small v-if="!line.translation && line.text" class="help">使用原文配音</small>

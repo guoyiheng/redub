@@ -26,6 +26,7 @@ function retry() {
       :src="src"
       :aria-label="label"
       controls
+      controlslist="nodownload noplaybackrate"
       preload="none"
       @play="play"
       @error="failed = true"

@@ -57,6 +57,7 @@ const ttsVoices = [
           :src="mediaUrl(referencePath)"
           aria-label="参考音频"
           controls
+          controlslist="nodownload noplaybackrate"
           preload="none"
         />
         <span v-else>使用当前台词对应的原声</span>
