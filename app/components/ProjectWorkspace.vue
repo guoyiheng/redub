@@ -933,9 +933,7 @@ async function renderFilm() {
       <header class="content-heading preview-heading">
         <div>
           <h2>预览</h2>
-          <p class="help">
-            上方画面始终无声；默认试听优化合成，也可开启三条源音轨对比。拖动主进度条或点击任意音轨可跳转核对。
-          </p>
+          <p class="help">已完成的配音实时加入预览，未配音片段保留原声。</p>
         </div>
         <div class="row-actions">
           <UBadge color="neutral" variant="soft">{{
@@ -957,15 +955,44 @@ async function renderFilm() {
         <UButton color="neutral" variant="ghost" size="xs" @click="loadPreviewTracks">重试</UButton>
       </div>
       <div class="preview-editor">
-        <section class="preview-monitor">
-          <div class="preview-stage preview-stage-large" :class="{ 'audio-stage': project.kind !== 'video' }">
-            <video
-              v-if="project.kind === 'video'"
+        <section class="preview-workbench" aria-label="视频与音轨预览">
+          <section class="preview-monitor">
+            <div
+              class="preview-stage preview-stage-large"
+              :class="{ 'audio-stage': project.kind !== 'video' }"
+            >
+              <video
+                v-if="project.kind === 'video'"
+                ref="clockPlayer"
+                :src="mediaUrl(clockSource)"
+                muted
+                playsinline
+                preload="metadata"
+                @loadedmetadata="onClockLoaded"
+                @play="onClockPlay"
+                @pause="onClockPause"
+                @ended="onClockEnded"
+                @timeupdate="onClockTimeUpdate"
+                @seeking="onClockSeeking"
+              />
+              <template v-else>
+                <UIcon
+                  :name="project.kind === 'text' ? 'i-carbon-quotes' : 'i-carbon-waveform'"
+                  class="preview-icon"
+                />
+                <div class="audio-monitor-copy">
+                  <strong>{{ project.kind === 'text' ? '配音时间轴' : '音频项目' }}</strong>
+                  <span>播放已完成的内容，点击音轨可跳转试听。</span>
+                </div>
+              </template>
+            </div>
+            <audio
+              v-if="project.kind !== 'video' && clockSource"
               ref="clockPlayer"
+              class="mixer-hidden-audio"
               :src="mediaUrl(clockSource)"
               muted
-              playsinline
-              preload="metadata"
+              preload="auto"
               @loadedmetadata="onClockLoaded"
               @play="onClockPlay"
               @pause="onClockPause"
@@ -973,133 +1000,111 @@ async function renderFilm() {
               @timeupdate="onClockTimeUpdate"
               @seeking="onClockSeeking"
             />
-            <template v-else>
-              <UIcon
-                :name="project.kind === 'text' ? 'i-carbon-quotes' : 'i-carbon-waveform'"
-                class="preview-icon"
+            <div class="preview-transport">
+              <UButton
+                color="neutral"
+                variant="soft"
+                square
+                :icon="playing ? 'i-carbon-pause' : 'i-carbon-play'"
+                :aria-label="playing ? '暂停' : '播放'"
+                :disabled="!clockSource"
+                @click="togglePlayback"
               />
-              <div class="audio-monitor-copy">
-                <strong>{{ project.kind === 'text' ? '配音时间轴' : '音频项目' }}</strong>
-                <span>此区域不播放原声；使用下方音轨开关试听最终混合效果。</span>
-              </div>
-            </template>
-          </div>
-          <audio
-            v-if="project.kind !== 'video' && clockSource"
-            ref="clockPlayer"
-            class="mixer-hidden-audio"
-            :src="mediaUrl(clockSource)"
-            muted
-            preload="auto"
-            @loadedmetadata="onClockLoaded"
-            @play="onClockPlay"
-            @pause="onClockPause"
-            @ended="onClockEnded"
-            @timeupdate="onClockTimeUpdate"
-            @seeking="onClockSeeking"
-          />
-          <div class="preview-transport">
-            <UButton
-              color="neutral"
-              variant="soft"
-              square
-              :icon="playing ? 'i-carbon-pause' : 'i-carbon-play'"
-              :aria-label="playing ? '暂停' : '播放'"
-              :disabled="!clockSource"
-              @click="togglePlayback"
-            />
-            <span class="preview-time">{{ formatTime(time) }}</span>
-            <input
-              class="preview-scrubber"
-              type="range"
-              min="0"
-              :max="previewDuration"
-              step="0.01"
-              :value="time"
-              :disabled="!clockSource"
-              aria-label="播放进度"
-              @input="seekTo(Number(($event.target as HTMLInputElement).value))"
-            />
-            <span class="preview-time">{{ formatTime(previewDuration) }}</span>
-          </div>
-          <div class="preview-status">
-            <span><UIcon name="i-carbon-volume-mute" />视频画面始终静音，声音只来自已开启的音轨</span>
-            <span v-if="previewTracks">
-              {{ previewTracks.replacementRanges.length }} 个替换区间
-              <template v-if="previewTracks.missingDubs">
-                · {{ previewTracks.missingDubs }} 句待配音
-              </template>
-            </span>
-          </div>
-        </section>
+              <span class="preview-time">{{ formatTime(time) }}</span>
+              <input
+                class="preview-scrubber"
+                type="range"
+                min="0"
+                :max="previewDuration"
+                step="0.01"
+                :value="time"
+                :disabled="!clockSource"
+                aria-label="播放进度"
+                @input="seekTo(Number(($event.target as HTMLInputElement).value))"
+              />
+              <span class="preview-time">{{ formatTime(previewDuration) }}</span>
+            </div>
+            <div class="preview-status">
+              <span
+                ><UIcon
+                  :name="previewLoading ? 'i-carbon-loading' : 'i-carbon-volume-up'"
+                  :class="{ 'animate-spin': previewLoading }"
+                />{{ previewLoading ? '正在更新音轨，当前内容可继续播放' : '试听已开启的音轨' }}</span
+              >
+              <span v-if="previewTracks">
+                {{ previewTracks.replacementRanges.length }} 个替换区间
+                <template v-if="previewTracks.missingDubs">
+                  · {{ previewTracks.missingDubs }} 句待配音
+                </template>
+              </span>
+            </div>
+          </section>
 
-        <section class="preview-mixer">
-          <header class="mixer-heading">
-            <div>
-              <h3>音轨混音器</h3>
-              <p class="help">
-                优化合成与三条源音轨已对齐到同一时间轴；优化合成与源音轨互斥，避免重复叠加声音。
-              </p>
-            </div>
-            <div class="mixer-legend"><span class="playhead-mark" />播放头</div>
-          </header>
-          <div class="mixer-ruler">
-            <span class="mixer-ruler-spacer" />
-            <div class="mixer-ruler-scale">
-              <span v-for="n in 6" :key="n">{{ formatTime((previewDuration * (n - 1)) / 5) }}</span>
-            </div>
-          </div>
-          <div
-            v-for="key in trackKeys"
-            :key="key"
-            class="mixer-track"
-            :class="[`track-${key}`, { disabled: !trackEnabled[key], unavailable: !trackAvailable(key) }]"
-          >
-            <div class="mixer-track-header">
-              <UCheckbox
-                :model-value="trackEnabled[key]"
-                :disabled="!trackAvailable(key)"
-                :aria-label="`${trackEnabled[key] ? '关闭' : '开启'}${trackLabels[key]}试听`"
-                @update:model-value="setTrackEnabled(key, $event)"
-              />
-              <div class="mixer-track-copy">
-                <strong>{{ trackLabels[key] }}</strong>
-                <span>{{ trackDescriptions[key] }}</span>
+          <section class="preview-mixer">
+            <header class="mixer-heading">
+              <div>
+                <h3>音轨</h3>
+                <p class="help">默认播放优化合成，也可切换原声、背景音或配音对比。</p>
               </div>
-              <span class="mixer-track-state">{{ trackState(key) }}</span>
+              <div class="mixer-legend"><span class="playhead-mark" />播放头</div>
+            </header>
+            <div class="mixer-ruler">
+              <span class="mixer-ruler-spacer" />
+              <div class="mixer-ruler-scale">
+                <span v-for="n in 6" :key="n">{{ formatTime((previewDuration * (n - 1)) / 5) }}</span>
+              </div>
             </div>
             <div
-              class="mixer-lane"
-              role="slider"
-              tabindex="0"
-              :aria-label="`${trackLabels[key]}轨道进度`"
-              :aria-valuemin="0"
-              :aria-valuemax="previewDuration"
-              :aria-valuenow="time"
-              :aria-valuetext="`${formatTime(time)} / ${formatTime(previewDuration)}`"
-              @click="seekFromLane"
-              @keydown.left.prevent="seekTo(time - 1)"
-              @keydown.right.prevent="seekTo(time + 1)"
-              @keydown.space.prevent="togglePlayback"
+              v-for="key in trackKeys"
+              :key="key"
+              class="mixer-track"
+              :class="[`track-${key}`, { disabled: !trackEnabled[key], unavailable: !trackAvailable(key) }]"
             >
-              <div class="mixer-waveform" aria-hidden="true">
-                <span
-                  v-for="(peak, index) in waveforms[key]"
-                  :key="index"
-                  class="mixer-bar"
-                  :style="{ height: `${Math.max(8, peak * 100)}%` }"
+              <div class="mixer-track-header">
+                <UCheckbox
+                  :model-value="trackEnabled[key]"
+                  :disabled="!trackAvailable(key)"
+                  :aria-label="`${trackEnabled[key] ? '关闭' : '开启'}${trackLabels[key]}试听`"
+                  @update:model-value="setTrackEnabled(key, $event)"
                 />
+                <div class="mixer-track-copy">
+                  <strong>{{ trackLabels[key] }}</strong>
+                  <span>{{ trackDescriptions[key] }}</span>
+                </div>
+                <span class="mixer-track-state">{{ trackState(key) }}</span>
               </div>
-              <span class="mixer-progress" :style="{ width: `${progress}%` }" aria-hidden="true" />
-              <span class="playhead" :style="{ left: `${progress}%` }" aria-hidden="true" />
-              <span v-if="!trackAvailable(key)" class="mixer-empty">{{ trackState(key) }}</span>
+              <div
+                class="mixer-lane"
+                role="slider"
+                tabindex="0"
+                :aria-label="`${trackLabels[key]}轨道进度`"
+                :aria-valuemin="0"
+                :aria-valuemax="previewDuration"
+                :aria-valuenow="time"
+                :aria-valuetext="`${formatTime(time)} / ${formatTime(previewDuration)}`"
+                @click="seekFromLane"
+                @keydown.left.prevent="seekTo(time - 1)"
+                @keydown.right.prevent="seekTo(time + 1)"
+                @keydown.space.prevent="togglePlayback"
+              >
+                <div class="mixer-waveform" aria-hidden="true">
+                  <span
+                    v-for="(peak, index) in waveforms[key]"
+                    :key="index"
+                    class="mixer-bar"
+                    :style="{ height: `${Math.max(8, peak * 100)}%` }"
+                  />
+                </div>
+                <span class="mixer-progress" :style="{ width: `${progress}%` }" aria-hidden="true" />
+                <span class="playhead" :style="{ left: `${progress}%` }" aria-hidden="true" />
+                <span v-if="!trackAvailable(key)" class="mixer-empty">{{ trackState(key) }}</span>
+              </div>
             </div>
-          </div>
-          <p v-if="!previewTracks && !previewLoading && !previewError" class="help mixer-hint">
-            音轨会在切换到本页时自动准备。
-          </p>
+            <p v-if="!previewTracks && !previewLoading && !previewError" class="help mixer-hint">
+              音轨会在切换到本页时自动准备。
+            </p>
+          </section>
         </section>
-
         <section class="export-panel">
           <header class="export-heading">
             <div>

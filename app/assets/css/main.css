@@ -2229,32 +2229,35 @@ button:disabled {
   display: grid;
   gap: 16px;
 }
-.preview-monitor,
-.preview-mixer,
+.preview-workbench,
 .export-panel {
   border: 1px solid var(--ui-border);
   border-radius: 12px;
   background: var(--ui-bg-elevated);
 }
+.preview-workbench {
+  overflow: hidden;
+}
 .preview-monitor {
-  padding: 14px;
+  padding: 14px 16px 12px;
 }
 .preview-panel .preview-stage {
   position: relative;
-  min-height: clamp(280px, 48vh, 600px);
+  min-height: 0;
   padding: 0;
   border: 1px solid #252525;
   background: radial-gradient(circle at 50% 45%, rgba(255, 255, 255, 0.06), transparent 45%), #252523;
 }
 .preview-panel .preview-stage video {
   width: 100%;
-  max-height: min(62vh, 620px);
+  height: clamp(200px, 34vh, 420px);
+  max-height: 420px;
   background: #111;
   object-fit: contain;
 }
 .preview-panel .preview-stage.audio-stage {
-  min-height: 260px;
-  padding: 32px;
+  min-height: 130px;
+  padding: 20px;
   gap: 14px;
 }
 .audio-monitor-copy {
@@ -2272,21 +2275,6 @@ button:disabled {
   color: #aaa79e;
   font-size: 12px;
   line-height: 1.7;
-}
-.preview-loading {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  background: rgba(28, 28, 26, 0.68);
-  color: #f2efe7;
-  font-size: 12px;
-  backdrop-filter: blur(2px);
-}
-.preview-loading .iconify {
-  font-size: 18px;
 }
 .preview-transport {
   display: grid;
@@ -2330,7 +2318,8 @@ button:disabled {
   font-size: 15px;
 }
 .preview-mixer {
-  padding: 16px;
+  padding: 14px 16px 8px;
+  border-top: 1px solid var(--ui-border);
 }
 .mixer-heading,
 .export-heading {
@@ -2418,8 +2407,8 @@ button:disabled {
 .mixer-lane {
   position: relative;
   min-width: 0;
-  height: 68px;
-  border: 1px solid #d8d4c7;
+  height: 44px;
+  border: 1px solid var(--ui-border);
   border-radius: 8px;
   background:
     repeating-linear-gradient(
@@ -2654,8 +2643,8 @@ button:disabled {
     min-height: 220px;
   }
   .preview-panel .preview-stage.audio-stage {
-    min-height: 210px;
-    padding: 24px 18px;
+    min-height: 120px;
+    padding: 18px;
   }
   .preview-transport {
     grid-template-columns: 34px 46px minmax(0, 1fr) 46px;
