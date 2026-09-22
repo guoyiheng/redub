@@ -204,8 +204,9 @@ onUnmounted(() => {
               <div class="task-item-actions">
                 <UButton
                   size="xs"
+                  square
                   color="neutral"
-                  variant="ghost"
+                  variant="outline"
                   icon="i-carbon-document"
                   title="查看详情"
                   aria-label="查看详情"
@@ -214,6 +215,7 @@ onUnmounted(() => {
                 <UButton
                   v-if="failedJobs(group).length"
                   size="xs"
+                  square
                   color="neutral"
                   variant="outline"
                   icon="i-carbon-renew"
@@ -224,8 +226,9 @@ onUnmounted(() => {
                 <UButton
                   v-if="failedJobs(group).length && group.jobs.length === 1"
                   size="xs"
+                  square
                   color="neutral"
-                  variant="ghost"
+                  variant="outline"
                   icon="i-carbon-skip-forward"
                   :title="group.kind === 'synthesize' ? '保留原声并跳过' : '跳过'"
                   :aria-label="group.kind === 'synthesize' ? '保留原声并跳过' : '跳过'"
@@ -234,8 +237,9 @@ onUnmounted(() => {
                 <UButton
                   v-else-if="failedJobs(group).length"
                   size="xs"
+                  square
                   color="neutral"
-                  variant="ghost"
+                  variant="outline"
                   icon="i-carbon-skip-forward"
                   title="跳过失败项"
                   aria-label="跳过失败项"
@@ -244,8 +248,9 @@ onUnmounted(() => {
                 <UButton
                   v-else-if="queuedJobs(group).length && group.jobs.length === 1"
                   size="xs"
+                  square
                   color="neutral"
-                  variant="ghost"
+                  variant="outline"
                   icon="i-carbon-skip-forward"
                   :title="group.kind === 'synthesize' ? '保留原声并跳过' : '跳过'"
                   :aria-label="group.kind === 'synthesize' ? '保留原声并跳过' : '跳过'"

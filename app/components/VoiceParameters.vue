@@ -33,59 +33,75 @@ const ttsVoices = [
   { label: 'Svetlana · 俄语', value: 'ru-RU-SvetlanaNeural' }
 ]
 
+const { toast, errorMessage } = useStudio()
+const voiceMenuOpen = ref(false)
+const selectedVoiceLabel = computed(
+  () => ttsVoices.find((voice) => voice.value === draft.value.ttsVoice)?.label || draft.value.ttsVoice
+)
+const auditionVoice = ref('')
 const isAuditionLoading = ref(false)
 const isAuditionPlaying = ref(false)
 let auditionAudio: HTMLAudioElement | null = null
+let auditionController: AbortController | null = null
+let auditionUrl = ''
 
 function stopAudition() {
+  auditionController?.abort()
+  auditionController = null
   if (auditionAudio) {
     auditionAudio.pause()
     auditionAudio = null
   }
+  if (auditionUrl) URL.revokeObjectURL(auditionUrl)
+  auditionUrl = ''
+  auditionVoice.value = ''
   isAuditionPlaying.value = false
   isAuditionLoading.value = false
 }
 
-async function toggleAudition() {
-  if (isAuditionPlaying.value || isAuditionLoading.value) {
-    stopAudition()
-    return
-  }
+async function toggleAudition(voice: string) {
+  const shouldStop = auditionVoice.value === voice
   stopAudition()
+  if (shouldStop) return
+  const controller = new AbortController()
+  auditionController = controller
+  auditionVoice.value = voice
   isAuditionLoading.value = true
   try {
-    const res = await fetch('/api/tts/preview', {
+    const blob = await $fetch<Blob>('/api/tts/preview', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        voice: draft.value.ttsVoice,
+      signal: controller.signal,
+      responseType: 'blob',
+      body: {
+        voice,
         rate: `${draft.value.ttsRate >= 0 ? '+' : ''}${draft.value.ttsRate}%`,
         pitch: `${draft.value.ttsPitch >= 0 ? '+' : ''}${draft.value.ttsPitch}Hz`,
         volume: `${draft.value.ttsVolume >= 0 ? '+' : ''}${draft.value.ttsVolume}%`
-      })
+      }
     })
-    if (!res.ok) throw new Error('试听生成失败')
-    const blob = await res.blob()
-    const url = URL.createObjectURL(blob)
-    const audio = new Audio(url)
+    if (controller.signal.aborted) return
+    auditionUrl = URL.createObjectURL(blob)
+    const audio = new Audio(auditionUrl)
     auditionAudio = audio
-    audio.onended = () => {
-      stopAudition()
-      URL.revokeObjectURL(url)
-    }
+    audio.onended = stopAudition
     audio.onerror = () => {
       stopAudition()
-      URL.revokeObjectURL(url)
+      toast.add({ title: '音色试听播放失败', color: 'error' })
     }
     await audio.play()
-    isAuditionPlaying.value = true
-  } catch {
+    if (!controller.signal.aborted) isAuditionPlaying.value = true
+  } catch (error) {
+    if (controller.signal.aborted) return
     stopAudition()
+    toast.add({ title: '音色试听失败', description: errorMessage(error), color: 'error' })
   } finally {
-    isAuditionLoading.value = false
+    if (auditionController === controller) isAuditionLoading.value = false
   }
 }
 
+watch(voiceMenuOpen, (open) => {
+  if (!open) stopAudition()
+})
 watch(
   () => draft.value.ttsVoice,
   () => {
@@ -154,31 +170,54 @@ onBeforeUnmount(() => {
           ]"
           :disabled="disabled"
         />
-        <USelect
+        <UPopover
           v-if="draft.synthesisMode === 'tts'"
-          v-model="draft.ttsVoice"
-          aria-label="微软声音"
-          class="voice-tts-select"
-          color="neutral"
-          variant="outline"
-          size="sm"
-          :items="ttsVoices"
-          :disabled="disabled"
-        />
-        <UButton
-          v-if="draft.synthesisMode === 'tts'"
-          type="button"
-          color="neutral"
-          variant="outline"
-          size="sm"
-          :icon="isAuditionPlaying ? 'i-carbon-stop-filled' : 'i-carbon-play-filled'"
-          :loading="isAuditionLoading"
-          aria-label="试听当前音色"
-          :disabled="disabled"
-          @click="toggleAudition"
+          v-model:open="voiceMenuOpen"
+          :content="{ side: 'top', align: 'start' }"
         >
-          {{ isAuditionPlaying ? '停止' : '试听' }}
-        </UButton>
+          <UButton
+            aria-label="微软声音"
+            class="voice-tts-select"
+            color="neutral"
+            variant="outline"
+            size="sm"
+            trailing-icon="i-carbon-chevron-down"
+            :disabled="disabled"
+            >{{ selectedVoiceLabel }}</UButton
+          >
+          <template #content>
+            <div class="max-h-80 w-72 max-w-[calc(100vw-2rem)] overflow-y-auto p-2" aria-label="微软音色列表">
+              <div v-for="voice in ttsVoices" :key="voice.value" class="flex items-center gap-2 py-1">
+                <UButton
+                  color="neutral"
+                  :variant="draft.ttsVoice === voice.value ? 'soft' : 'ghost'"
+                  class="min-w-0 flex-1"
+                  :aria-pressed="draft.ttsVoice === voice.value"
+                  :disabled="disabled"
+                  @click="
+                    draft.ttsVoice = voice.value
+                    voiceMenuOpen = false
+                  "
+                  >{{ voice.label }}</UButton
+                >
+                <UButton
+                  color="neutral"
+                  variant="outline"
+                  square
+                  :icon="
+                    auditionVoice === voice.value && isAuditionPlaying
+                      ? 'i-carbon-stop-filled'
+                      : 'i-carbon-play-filled-alt'
+                  "
+                  :loading="auditionVoice === voice.value && isAuditionLoading"
+                  :aria-label="`${auditionVoice === voice.value ? '停止试听' : '试听'} ${voice.label}`"
+                  :disabled="disabled"
+                  @click="toggleAudition(voice.value)"
+                />
+              </div>
+            </div>
+          </template>
+        </UPopover>
         <UPopover
           :content="{ side: 'top', align: 'start', sideOffset: 12 }"
           :ui="{ content: 'voice-options-popover' }"
