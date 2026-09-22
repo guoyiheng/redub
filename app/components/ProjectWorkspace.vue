@@ -640,31 +640,57 @@ async function translateSingleLine(lineId: string) {
         </div>
       </div>
       <div class="row-actions">
-        <span v-if="lines.length" class="help">{{ completed }} / {{ enabledCount }} 句已配音</span>
-        <UButton
-          v-if="locked || project.paused"
-          color="neutral"
-          variant="ghost"
-          :icon="project.paused ? 'i-carbon-play' : 'i-carbon-pause'"
-          @click="pause"
-          >{{ project.paused ? '继续任务' : '暂停任务' }}</UButton
-        >
-        <StudioAction
-          v-if="panel === 'script' && lines.length"
-          color="neutral"
-          variant="ghost"
-          icon="i-carbon-language"
-          :reason="dirty ? '请先保存台词修改' : ''"
-          @click="openBatch('translate')"
-          >批量翻译</StudioAction
-        >
-        <StudioAction
-          v-if="panel === 'script'"
-          icon="i-carbon-batch-job"
-          :reason="dirty ? '请先保存台词修改' : ''"
-          @click="openBatch(lines.length ? 'synthesize' : 'prepare')"
-          >{{ lines.length ? '批量配音' : '处理素材' }}</StudioAction
-        >
+        <template v-if="panel === 'script'">
+          <span v-if="lines.length" class="help">{{ completed }} / {{ enabledCount }} 句已配音</span>
+          <UButton
+            v-if="locked || project.paused"
+            color="neutral"
+            variant="ghost"
+            :icon="project.paused ? 'i-carbon-play' : 'i-carbon-pause'"
+            @click="pause"
+            >{{ project.paused ? '继续任务' : '暂停任务' }}</UButton
+          >
+          <StudioAction
+            v-if="lines.length"
+            color="neutral"
+            variant="ghost"
+            icon="i-carbon-language"
+            :reason="dirty ? '请先保存台词修改' : ''"
+            @click="openBatch('translate')"
+            >批量翻译</StudioAction
+          >
+          <StudioAction
+            icon="i-carbon-batch-job"
+            :reason="dirty ? '请先保存台词修改' : ''"
+            @click="openBatch(lines.length ? 'synthesize' : 'prepare')"
+            >{{ lines.length ? '批量配音' : '处理素材' }}</StudioAction
+          >
+        </template>
+        <template v-else-if="panel === 'preview'">
+          <UBadge color="neutral" variant="soft">{{
+            previewTracks
+              ? previewTracks.missingDubs
+                ? `${previewTracks.replacementRanges.length} 个区间 · ${previewTracks.missingDubs} 待配音`
+                : `${previewTracks.replacementRanges.length} 个替换区间`
+              : '等待音轨'
+          }}</UBadge>
+          <UButton
+            color="neutral"
+            variant="ghost"
+            icon="i-carbon-renew"
+            :loading="previewLoading"
+            @click="loadPreviewTracks"
+            >刷新音轨</UButton
+          >
+          <UButton
+            v-if="project.outputPath"
+            :href="mediaUrl(project.outputPath, true)"
+            icon="i-carbon-download"
+            color="neutral"
+            variant="soft"
+            >导出成片</UButton
+          >
+        </template>
       </div>
     </header>
     <section v-if="panel === 'script'" class="script-panel">
@@ -807,25 +833,6 @@ async function translateSingleLine(lineId: string) {
     </section>
 
     <section v-else class="preview-panel">
-      <header class="content-heading preview-heading">
-        <div>
-          <h2>预览</h2>
-          <p class="help">已完成的配音实时加入预览，未配音片段保留原声。</p>
-        </div>
-        <div class="row-actions">
-          <UBadge color="neutral" variant="soft">{{
-            previewTracks ? `${previewTracks.replacementRanges.length} 个替换区间` : '等待音轨'
-          }}</UBadge>
-          <UButton
-            color="neutral"
-            variant="ghost"
-            icon="i-carbon-renew"
-            :loading="previewLoading"
-            @click="loadPreviewTracks"
-            >刷新音轨</UButton
-          >
-        </div>
-      </header>
       <div v-if="previewError" class="preview-alert" role="alert">
         <UIcon name="i-carbon-warning-alt" />
         <span>{{ previewError }}</span>
@@ -859,7 +866,6 @@ async function translateSingleLine(lineId: string) {
                 />
                 <div class="audio-monitor-copy">
                   <strong>{{ project.kind === 'text' ? '配音时间轴' : '音频项目' }}</strong>
-                  <span>播放已完成的内容，点击音轨可跳转试听。</span>
                 </div>
               </template>
             </div>
@@ -901,30 +907,9 @@ async function translateSingleLine(lineId: string) {
               />
               <span class="preview-time">{{ formatTime(previewDuration) }}</span>
             </div>
-            <div class="preview-status">
-              <span
-                ><UIcon
-                  :name="previewLoading ? 'i-carbon-loading' : 'i-carbon-volume-up'"
-                  :class="{ 'animate-spin': previewLoading }"
-                />{{ previewLoading ? '正在更新音轨，当前内容可继续播放' : '试听已开启的音轨' }}</span
-              >
-              <span v-if="previewTracks">
-                {{ previewTracks.replacementRanges.length }} 个替换区间
-                <template v-if="previewTracks.missingDubs">
-                  · {{ previewTracks.missingDubs }} 句待配音
-                </template>
-              </span>
-            </div>
           </section>
 
           <section class="preview-mixer">
-            <header class="mixer-heading">
-              <div>
-                <h3>音轨</h3>
-                <p class="help">默认播放优化合成，也可切换原声、背景音或配音对比。</p>
-              </div>
-              <div class="mixer-legend"><span class="playhead-mark" />播放头</div>
-            </header>
             <div class="mixer-ruler">
               <span class="mixer-ruler-spacer" />
               <div class="mixer-ruler-scale">
@@ -977,22 +962,12 @@ async function translateSingleLine(lineId: string) {
                 <span v-if="!trackAvailable(key)" class="mixer-empty">{{ trackState(key) }}</span>
               </div>
             </div>
-            <p v-if="!previewTracks && !previewLoading && !previewError" class="help mixer-hint">
-              音轨会在切换到本页时自动准备。
-            </p>
           </section>
         </section>
         <section class="export-panel">
           <header class="export-heading">
             <div>
               <h3>导出</h3>
-              <p class="help">
-                {{
-                  exportTarget === 'video'
-                    ? '保留原视频格式与已有音轨，新增一条音轨，可在播放器中切换。'
-                    : '将所选音轨保存为独立音频，便于试听或继续剪辑。'
-                }}
-              </p>
             </div>
           </header>
           <div class="export-choices" role="group" aria-label="导出内容">
