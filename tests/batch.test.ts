@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { db, initDb } from '../server/db'
 import { projects, segments, jobs } from '../server/db/schema'
-import { enqueue } from '../server/services/queue'
+import { enqueue, generateSegment, cancelAutomaticFollowups } from '../server/services/queue'
 import { getProject, getSegments } from '../server/services/store'
 import { batchPlan, batchSchema } from '../shared/batch'
 import { defaultVoiceSettings } from '../shared/voice'
@@ -41,18 +41,80 @@ async function fixture() {
 }
 const voice = { ...defaultVoiceSettings(), synthesisMode: 'tts' as const, aiUseReference: false, ttsRate: 20 }
 describe('批量处理范围与事务', () => {
-  it('仅补齐未生成台词，保留已有配音和关闭替换的参数，串联成片任务', async () => {
+  it('拒绝旧客户端的自动合成选项以及跨手动步骤的任务链', async () => {
+    const id = await fixture()
+    const before = await getSegments(id)
+    expect(batchSchema.safeParse({ action: 'synthesize', voice, finish: true }).success).toBe(false)
+    await expect(enqueue(id, ['translate', 'synthesize', 'mix', 'preview'])).rejects.toThrow('手动')
+    expect(await db.select().from(jobs).where(eq(jobs.projectId, id))).toEqual([])
+    expect(await getSegments(id)).toEqual(before)
+  })
+  it('当前步骤完成前不能提前排入配音，也不会覆盖已保存内容', async () => {
+    const id = await fixture()
+    const before = await getSegments(id)
+    await enqueue(id, ['translate'])
+    await expect(generateSegment(`${id}-ready`, voice)).rejects.toThrow('核对')
+    expect(await getSegments(id)).toEqual(before)
+    expect((await getProject(id)).outputPath).toBe('old.mp3')
+    expect((await db.select().from(jobs).where(eq(jobs.projectId, id))).map((job) => job.stage)).toEqual([
+      'translate'
+    ])
+  })
+  it('取消旧自动链的全部待执行后代，保留历史、片段与手动任务，且可重复执行', async () => {
+    const id = await fixture()
+    const before = await getSegments(id)
+    const stages = ['transcribe', 'translate', 'synthesize', 'mix', 'preview', 'export'] as const
+    await db.insert(jobs).values(
+      stages.map((stage, index) => ({
+        id: `${id}-${stage}`,
+        projectId: id,
+        stage,
+        status:
+          index === 0 ? ('completed' as const) : index === 1 ? ('failed' as const) : ('queued' as const),
+        error: index === 1 ? '翻译失败记录' : null,
+        dependsOn: index ? `${id}-${stages[index - 1]}` : null,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      }))
+    )
+    await db.insert(jobs).values([
+      { id: `${id}-manual-mix`, projectId: id, stage: 'mix', createdAt: 1, updatedAt: 1 },
+      {
+        id: `${id}-manual-preview`,
+        projectId: id,
+        stage: 'preview',
+        dependsOn: `${id}-manual-mix`,
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ])
+    expect(await cancelAutomaticFollowups()).toEqual(stages.slice(2).map((stage) => `${id}-${stage}`))
+    expect(await cancelAutomaticFollowups()).toEqual([])
+    const result = await db.select().from(jobs).where(eq(jobs.projectId, id))
+    expect(result).toHaveLength(8)
+    expect(result.find((job) => job.stage === 'translate')).toMatchObject({
+      status: 'failed',
+      error: '翻译失败记录'
+    })
+    expect(result.find((job) => job.stage === 'transcribe')!.status).toBe('completed')
+    expect(result.filter((job) => job.status === 'cancelled')).toHaveLength(4)
+    expect(result.filter((job) => job.status === 'queued').map((job) => job.id)).toEqual([
+      `${id}-manual-mix`,
+      `${id}-manual-preview`
+    ])
+    expect(await getSegments(id)).toEqual(before)
+    expect((await getProject(id)).outputPath).toBe('old.mp3')
+  })
+  it('仅补齐未生成台词，保留已有配音和关闭替换的参数，完成后停下来核对', async () => {
     const id = await fixture()
     const result = await enqueue(id, undefined, undefined, {
       action: 'synthesize',
       scope: 'missing',
-      finish: true,
       voice
     })
-    expect(result.map((j) => j.stage)).toEqual(['synthesize', 'mix', 'preview'])
+    expect(result.map((j) => j.stage)).toEqual(['synthesize'])
     expect(result[0]!.segmentId).toBe(`${id}-missing`)
-    expect(result[1]!.dependsOn).toBe(result[0]!.id)
-    expect(result[2]!.dependsOn).toBe(result[1]!.id)
+    expect(result[0]!.dependsOn).toBeNull()
     const lines = await getSegments(id)
     expect(lines[0]!.generatedPath).toBe('ready.mp3')
     expect(lines[0]!.aiPrompt).toBe('已有参数')

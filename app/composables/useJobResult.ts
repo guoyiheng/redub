@@ -9,6 +9,7 @@ export async function waitForJobResult<T>(id: string, signal?: AbortSignal): Pro
     if (detail.job.status === 'failed')
       throw new Error(detail.job.error || '任务执行失败，可在任务详情中重试')
     if (detail.job.status === 'skipped') throw new Error('任务已跳过')
+    if (detail.job.status === 'cancelled') throw new Error('任务已取消，请核对结果后手动发起')
     await new Promise<void>((resolve, reject) => {
       const abort = () => {
         clearTimeout(timer)

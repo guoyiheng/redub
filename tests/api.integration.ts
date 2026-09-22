@@ -238,7 +238,7 @@ describe.sequential('production HTTP workflow', () => {
     await api(`jobs/${job.id}/retry`, 'POST')
     await until((d) => d.jobs.every((j) => j.status === 'completed'))
   })
-  it('batches only missing voices with shared parameters and finishes the movie', async () => {
+  it('batches only missing voices with shared parameters and stops for review', async () => {
     const before: ProjectDetail = await api(`projects/${id}`)
     const original = before.segments[0]!
     const added = await api(`projects/${id}/segments`, 'POST', {
@@ -253,6 +253,9 @@ describe.sequential('production HTTP workflow', () => {
     await expect(
       api(`projects/${id}/batch`, 'POST', { action: 'synthesize', voice: { ...voice, aiSpeechRate: 101 } })
     ).rejects.toThrow('400')
+    await expect(
+      api(`projects/${id}/batch`, 'POST', { action: 'synthesize', voice, finish: true })
+    ).rejects.toThrow('手动')
     let release!: () => void
     holdSynthesis = new Promise((resolve) => {
       release = resolve
@@ -262,14 +265,13 @@ describe.sequential('production HTTP workflow', () => {
       created = await api(`projects/${id}/batch`, 'POST', {
         action: 'synthesize',
         scope: 'missing',
-        finish: true,
         voice
       })
     } finally {
       holdSynthesis = undefined
       release()
     }
-    expect(created.map((j) => j.stage)).toEqual(['synthesize', 'mix', 'preview'])
+    expect(created.map((j) => j.stage)).toEqual(['synthesize'])
     expect(created[0]!.segmentId).toBe(added.id)
     const result = await until((d) =>
       created.every((j) => d.jobs.find((k) => k.id === j.id)?.status === 'completed')
@@ -278,7 +280,8 @@ describe.sequential('production HTTP workflow', () => {
     expect(result.segments[1]!.aiPrompt).toBe('自然地说')
     expect(result.segments[1]!.aiSpeechRate).toBe(10)
     expect(result.segments[1]!.generatedPath).toBeTruthy()
-    expect(result.project.outputPath).toBeTruthy()
+    expect(result.project.mixedPath).toBeNull()
+    expect(result.project.outputPath).toBeNull()
   })
   it('queues a separate sentence alongside a voice-only batch without finishing the movie', async () => {
     const batchProject = await api('projects', 'POST', {
@@ -331,6 +334,109 @@ describe.sequential('production HTTP workflow', () => {
     expect(completed.project.outputPath).toBeNull()
     expect(completed.segments[2]!.generatedPath).toBeTruthy()
   })
+  it('requires translation to finish and be reviewed before voice generation can be submitted', async () => {
+    const project = await api('projects', 'POST', {
+      name: 'Manual review',
+      text: 'Review the translation first.'
+    })
+    const before: ProjectDetail = await api(`projects/${project.id}`)
+    const count = synthesisRequests.length
+    let release!: () => void
+    holdTranslation = new Promise((resolve) => {
+      release = resolve
+    })
+    try {
+      await api(`projects/${project.id}/batch`, 'POST', { action: 'translate' })
+      await until((detail) => detail.jobs.some((job) => job.status === 'running'), project.id)
+      await expect(
+        api(`segments/${before.segments[0]!.id}/generate`, 'POST', {
+          ...defaultVoiceSettings(),
+          aiUseReference: false
+        })
+      ).rejects.toThrow('核对')
+      await expect(
+        api(`projects/${project.id}/batch`, 'POST', {
+          action: 'synthesize',
+          voice: { ...defaultVoiceSettings(), aiUseReference: false }
+        })
+      ).rejects.toThrow('409')
+    } finally {
+      holdTranslation = undefined
+      release()
+    }
+    const done = await until((detail) => detail.jobs.every((job) => job.status === 'completed'), project.id)
+    expect(done.jobs.map((job) => job.stage)).toEqual(['translate'])
+    expect(done.segments[0]!.generatedPath).toBeNull()
+    expect(synthesisRequests.length).toBe(count)
+  })
+  it.each(['retry', 'skip'] as const)(
+    'cancels legacy followups on restart and keeps them cancelled after %s and resume',
+    async (action) => {
+      const project = await api('projects', 'POST', { name: `Legacy ${action}`, text: 'Review each step.' })
+      await stop()
+      const db = createClient({ url: pathToFileURL(join(process.env.REDUB_DATA_DIR!, 'redub.sqlite')).href })
+      const stages = ['transcribe', 'translate', 'synthesize', 'mix', 'preview', 'export'] as const
+      await db.execute({ sql: 'UPDATE projects SET paused=1 WHERE id=?', args: [project.id] })
+      for (const [index, stage] of stages.entries())
+        await db.execute({
+          sql: 'INSERT INTO jobs (id,projectId,stage,status,dependsOn,error,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?)',
+          args: [
+            `${project.id}-${stage}`,
+            project.id,
+            stage,
+            index === 0 ? 'completed' : index === 1 ? 'failed' : 'queued',
+            index ? `${project.id}-${stages[index - 1]}` : null,
+            index === 1 ? 'Old translation failure' : null,
+            Date.now(),
+            Date.now()
+          ]
+        })
+      db.close()
+      const count = synthesisRequests.length
+      const translations = translationRequests
+      await start()
+      const restored: ProjectDetail = await api(`projects/${project.id}`)
+      expect(restored.jobs.filter((job) => job.status === 'cancelled')).toHaveLength(4)
+      expect(restored.jobs.find((job) => job.stage === 'translate')).toMatchObject({
+        status: 'failed',
+        error: 'Old translation failure'
+      })
+      await api(`projects/${project.id}/pause`, 'POST', { paused: false })
+      await api(`jobs/${project.id}-translate/${action}`, 'POST')
+      await until(
+        (detail) =>
+          detail.jobs.find((job) => job.stage === 'translate')?.status ===
+          (action === 'retry' ? 'completed' : 'skipped'),
+        project.id
+      )
+      await expect(api(`jobs/${project.id}-synthesize/retry`, 'POST')).rejects.toThrow('已取消')
+      await expect(api(`jobs/${project.id}-synthesize/skip`, 'POST')).rejects.toThrow('已取消')
+      await stop()
+      await start()
+      const done: ProjectDetail = await api(`projects/${project.id}`)
+      expect(done.jobs).toHaveLength(6)
+      expect(done.jobs.filter((job) => job.status === 'cancelled')).toHaveLength(4)
+      expect(done.jobs.some((job) => ['queued', 'running'].includes(job.status))).toBe(false)
+      expect(done.segments[0]!.generatedPath).toBeNull()
+      expect(done.segments[0]!.enabled).toBe(true)
+      expect(done.project.mixedPath).toBeNull()
+      expect(done.project.outputPath).toBeNull()
+      expect(synthesisRequests.length).toBe(count)
+      expect(translationRequests).toBe(translations + (action === 'retry' ? 1 : 0))
+      // 已核对后新建的手动操作仍可执行，不能复活取消的旧链。
+      await api(`segments/${done.segments[0]!.id}/generate`, 'POST', {
+        ...defaultVoiceSettings(),
+        aiUseReference: false
+      })
+      const reviewed = await until(
+        (detail) => detail.jobs.some((job) => job.stage === 'synthesize' && job.status === 'completed'),
+        project.id
+      )
+      expect(reviewed.jobs.filter((job) => job.status === 'cancelled')).toHaveLength(4)
+      expect(reviewed.project.outputPath).toBeNull()
+      expect(synthesisRequests.length).toBe(count + 1)
+    }
+  )
   it('generates individual sentences independently and saves only the requested parameters atomically', async () => {
     const before: ProjectDetail = await api(`projects/${id}`)
     const [first, second] = before.segments

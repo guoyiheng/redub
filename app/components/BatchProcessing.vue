@@ -16,14 +16,12 @@ const action = ref<BatchInput['action'] | 'speaker'>(
     (lines.value.length ? 'synthesize' : project.value.kind === 'text' ? 'synthesize' : 'prepare')
 )
 const scope = ref<'missing' | 'all'>('missing')
-const finish = ref(false)
 const saving = ref(false)
 const voice = ref(defaultVoiceSettings(!!project.value.vocalsPath))
 const useSegmentVoices = ref(true)
 const input = computed<BatchInput>(() => ({
   action: action.value === 'speaker' ? 'synthesize' : action.value,
   scope: scope.value,
-  finish: finish.value,
   useSegmentVoices: useSegmentVoices.value,
   voice: voice.value
 }))
@@ -81,7 +79,8 @@ const steps = computed(() => {
   if (action.value === 'translate')
     return [
       `将 ${lines.value.filter((s) => s.enabled).length} 句需替换台词翻译为${project.value.targetLanguage}`,
-      '覆盖这些台词的现有译文，并清除对应配音与成片'
+      '覆盖这些台词的现有译文，并清除对应配音与成片',
+      '翻译完成后核对译文，再手动生成配音'
     ]
   if (action.value === 'render')
     return [
@@ -94,9 +93,7 @@ const steps = computed(() => {
     useSegmentVoices.value
       ? '优先使用各句已保存的配音要求；未设置时使用译文或原文'
       : '按译文生成声音；没有译文时使用原文',
-    ...(finish.value
-      ? ['配音完成后保留背景音、合并音轨并生成成片']
-      : ['生成完成后在工作区逐句试听，不自动合成成片'])
+    '生成完成后逐句试听核对，再手动合成或导出'
   ]
 })
 async function submit() {
@@ -188,7 +185,6 @@ async function submit() {
         <h3>共用配音参数</h3>
         <VoiceParameters v-model="voice" :disabled="saving" :can-reference="!!project.vocalsPath" />
       </section>
-      <UCheckbox v-model="finish" :disabled="saving" label="配音完成后自动合成成片" />
     </template>
     <p class="batch-cost help">
       {{

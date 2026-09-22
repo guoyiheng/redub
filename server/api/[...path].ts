@@ -489,6 +489,8 @@ export default defineEventHandler(async (event) => {
           if (!job) throw createError({ statusCode: 404, statusMessage: '任务不存在' })
           if (job.status === 'running')
             throw createError({ statusCode: 409, statusMessage: '执行中的任务不能重复启动或跳过' })
+          if (job.status === 'cancelled')
+            throw createError({ statusCode: 409, statusMessage: '自动后续任务已取消，请核对结果后手动发起' })
           if (!['retry', 'skip'].includes(action || '')) throw createError({ statusCode: 404 })
           await db.transaction(async (tx) => {
             if (action === 'retry') {
@@ -522,7 +524,8 @@ export default defineEventHandler(async (event) => {
                 status: action === 'retry' ? 'queued' : 'skipped',
                 error: null,
                 progress: 0,
-                message: action === 'retry' ? '等待重试' : '已跳过，后续任务可继续',
+                message: action === 'retry' ? '等待重试' : '已跳过',
+                ...(action === 'retry' ? { dependsOn: null } : {}),
                 updatedAt: Date.now()
               })
               .where(and(eq(jobs.id, id), inArray(jobs.status, [...allowed])))

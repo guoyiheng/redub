@@ -5,7 +5,8 @@ export const batchSchema = z
   .object({
     action: z.enum(['prepare', 'translate', 'synthesize', 'render']),
     scope: z.enum(['missing', 'all']).default('missing'),
-    finish: z.boolean().default(false),
+    // 兼容旧客户端的 false；明确拒绝继续自动合成的请求。
+    finish: z.literal(false, { error: '配音后请先试听核对，再手动合成或导出' }).optional(),
     useSegmentVoices: z.boolean().optional(),
     voice: voiceSettingsSchema.optional()
   })
@@ -16,6 +17,7 @@ export function batchPlan(
   lines: Segment[],
   input: BatchInput
 ): { stage: Stage; segmentId?: string }[] {
+  input = batchSchema.parse(input)
   if (input.action === 'prepare') {
     if (project.kind === 'text') throw new Error('文本项目无需识别素材')
     if (lines.length) throw new Error('项目已有台词，不会重新分段覆盖编辑内容')
@@ -63,10 +65,5 @@ export function batchPlan(
     (project.kind === 'text' || !project.vocalsPath)
   )
     throw new Error('没有可用原声，请选择指定音色')
-  if (input.finish && project.kind !== 'text' && (!project.audioPath || !project.backgroundPath))
-    throw new Error('请先分离人声与背景音，再合成成片')
-  return [
-    ...targets.map((s) => ({ stage: 'synthesize' as const, segmentId: s.id })),
-    ...(input.finish ? [{ stage: 'mix' as const }, { stage: 'preview' as const }] : [])
-  ]
+  return targets.map((s) => ({ stage: 'synthesize' as const, segmentId: s.id }))
 }

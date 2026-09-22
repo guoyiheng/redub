@@ -46,6 +46,9 @@ const busy = computed(() => saving.value || uploading.value)
 const submitLabel = computed(() => (props.segment.enabled ? '生成本句配音' : '生成并启用替换'))
 const unavailableReason = computed(() => {
   if (busy.value) return uploading.value ? '正在准备参考音频' : '正在提交配音任务'
+  const active = detail.value?.jobs.filter((job) => ['queued', 'running'].includes(job.status)) || []
+  if (active.some((job) => job.stage !== 'synthesize')) return '请等待当前步骤完成，核对后再生成配音'
+  if (active.some((job) => job.segmentId === props.segment.id)) return '这句配音正在生成，请等待完成'
   if (!content.value.trim()) return '请输入配音内容'
   if (
     draft.value.synthesisMode === 'ai' &&

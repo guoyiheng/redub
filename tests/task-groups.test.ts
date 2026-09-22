@@ -21,6 +21,16 @@ function job(id: string, stage: Stage, status: JobStatus = 'queued', options: Pa
 }
 
 describe('任务面板聚合', () => {
+  it('取消的旧自动链显示已取消，不计为排队或完成', () => {
+    const groups = groupJobs([
+      job('mix', 'mix', 'cancelled'),
+      job('preview', 'preview', 'cancelled', { dependsOn: 'mix' })
+    ])
+    expect(groups).toHaveLength(1)
+    expect(groups[0]!.status).toBe('cancelled')
+    expect(groups[0]!.progress).toBe(0)
+    expect(groupJobs(groups[0]!.jobs, 0)).toEqual([])
+  })
   it('将前置处理链路合并为一条，并显示当前阶段和平均进度', () => {
     const jobs = [
       job('extract', 'extract', 'completed', { progress: 100, createdAt: 4 }),

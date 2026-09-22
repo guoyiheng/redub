@@ -3,7 +3,7 @@ import { parseScript, subtitleText } from '../server/services/text'
 import { eligibleJobs, workflowStages } from '../server/services/queue'
 import { tempoFilters } from '../server/services/media'
 import { safeError } from '../server/services/providers'
-import type { Job } from '../shared/types'
+import type { Job, Stage } from '../shared/types'
 function job(
   id: string,
   projectId: string,
@@ -46,6 +46,44 @@ describe('文本与字幕', () => {
   })
 })
 describe('任务调度', () => {
+  it.each<[Stage, Stage]>([
+    ['transcribe', 'translate'],
+    ['translate', 'synthesize'],
+    ['synthesize', 'mix'],
+    ['preview', 'export']
+  ])('%s 完成或跳过后不会自动启动 %s', (parent, next) => {
+    for (const status of ['completed', 'skipped'] as const) {
+      const tasks = [
+        { ...job('a', 'p1', null, status), stage: parent },
+        { ...job('b', 'p1', 'a'), stage: next },
+        { ...job('c', 'p1', 'b'), stage: next }
+      ]
+      expect(eligibleJobs(tasks, new Set(), new Set(), 4)).toEqual([])
+      tasks[1]!.status = 'completed'
+      expect(eligibleJobs(tasks, new Set(), new Set(), 4)).toEqual([])
+    }
+  })
+  it.each<[Stage, Stage]>([
+    ['extract', 'separate'],
+    ['segment', 'transcribe'],
+    ['synthesize', 'synthesize'],
+    ['mix', 'preview']
+  ])('同一手动操作内的 %s → %s 正常执行', (parent, next) => {
+    const tasks = [
+      { ...job('a', 'p1', null, 'completed'), stage: parent },
+      { ...job('b', 'p1', 'a'), stage: next }
+    ]
+    expect(eligibleJobs(tasks, new Set(), new Set(), 4).map((job) => job.id)).toEqual(['b'])
+  })
+  it('取消的依赖和跨项目依赖不能解锁后续任务', () => {
+    const tasks = [
+      job('a', 'p1', null, 'cancelled'),
+      job('b', 'p1', 'a'),
+      job('c', 'p2', null, 'completed'),
+      job('d', 'p1', 'c')
+    ]
+    expect(eligibleJobs(tasks, new Set(), new Set(), 4)).toEqual([])
+  })
   it('默认流程仅包含本机处理，文本不自动启动付费任务', () => {
     expect(workflowStages('video')).toEqual(['extract', 'separate', 'segment', 'transcribe'])
     expect(workflowStages('audio')).toEqual(['separate', 'segment', 'transcribe'])

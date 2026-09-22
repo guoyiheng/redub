@@ -54,7 +54,8 @@ const labels = {
   running: '处理中',
   completed: '已完成',
   failed: '失败',
-  skipped: '已跳过'
+  skipped: '已跳过',
+  cancelled: '已取消'
 }
 const projectName = (id: string) => projects.value.find((p) => p.id === id)?.name || '项目'
 const projectPaused = (id: string) => projects.value.find((p) => p.id === id)?.paused || false
@@ -71,10 +72,12 @@ function taskSummary() {
 }
 
 function showProgress(group: TaskGroup) {
+  if (group.status === 'cancelled') return false
   return group.jobs.length > 1 || ['running', 'failed'].includes(group.status)
 }
 
 function groupMessage(group: TaskGroup) {
+  if (group.status === 'cancelled') return '自动后续任务已取消，请核对结果后手动发起'
   const failures = failedJobs(group)
   if (failures.length) {
     const prefix = failures.length > 1 ? `${failures.length} 项失败：` : ''

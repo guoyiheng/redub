@@ -11,7 +11,7 @@ export const stageLabels = {
   'preview-tracks': '准备预览音轨'
 } as const
 export type Stage = keyof typeof stageLabels
-export type JobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'skipped'
+export type JobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'skipped' | 'cancelled'
 export type MediaKind = 'video' | 'audio' | 'text'
 export interface Project {
   id: string

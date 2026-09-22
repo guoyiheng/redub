@@ -15,6 +15,7 @@ import { jobContext, interruptJobRequests, jobColumns } from './job-requests'
 import { exportSchema } from '../../shared/export'
 import { previewRevision } from './preview-tracks'
 import type { PreviewTracks } from '../../shared/preview'
+import { automaticFollowups, canChainStages } from '../../shared/job-policy'
 
 export function workflowStages(kind: MediaKind): Stage[] {
   if (kind === 'text') return []
@@ -22,11 +23,13 @@ export function workflowStages(kind: MediaKind): Stage[] {
 }
 export function eligibleJobs(all: Job[], paused: Set<string>, runningJobIds: Set<string>, capacity: number) {
   const byId = new Map(all.map((j) => [j.id, j]))
+  const blocked = automaticFollowups(all)
   const picked: Job[] = []
   const used = new Set(runningJobIds)
   for (const job of all) {
     if (picked.length >= capacity) break
-    if (job.status !== 'queued' || paused.has(job.projectId) || used.has(job.id)) continue
+    if (job.status !== 'queued' || paused.has(job.projectId) || used.has(job.id) || blocked.has(job.id))
+      continue
     const parent = job.dependsOn && byId.get(job.dependsOn)
     if (job.dependsOn && (!parent || !['completed', 'skipped'].includes(parent.status))) continue
     picked.push(job)
@@ -34,12 +37,31 @@ export function eligibleJobs(all: Job[], paused: Set<string>, runningJobIds: Set
   }
   return picked
 }
+export async function cancelAutomaticFollowups(all?: Job[]) {
+  await initDb()
+  const snapshot = all ?? (await db.select(jobColumns).from(jobs))
+  const blocked = automaticFollowups(snapshot)
+  const ids = snapshot.filter((job) => job.status === 'queued' && blocked.has(job.id)).map((job) => job.id)
+  if (ids.length)
+    await db
+      .update(jobs)
+      .set({
+        status: 'cancelled',
+        message: '自动后续任务已取消，请核对结果后手动发起',
+        updatedAt: Date.now()
+      })
+      .where(and(inArray(jobs.id, ids), eq(jobs.status, 'queued')))
+  return ids
+}
 const running = new Set<string>()
 let ticking = false,
   timer: ReturnType<typeof setInterval> | undefined
 let enqueueChain = Promise.resolve()
 export function serializeEnqueue<T>(action: () => Promise<T>): Promise<T> {
-  const task = enqueueChain.then(action)
+  const task = enqueueChain.then(async () => {
+    await cancelAutomaticFollowups()
+    return action()
+  })
   enqueueChain = task.then(
     () => {},
     () => {}
@@ -56,7 +78,9 @@ export function enqueue(projectId: string, stages?: Stage[], segmentId?: string,
       ? batchPlan(p, lines, batch)
       : stages
         ? stages.map((stage) => ({ stage, segmentId }))
-        : batchPlan(p, lines, { action: 'prepare', scope: 'missing', finish: false })
+        : batchPlan(p, lines, { action: 'prepare', scope: 'missing' })
+    if (plan.some((item, index) => index > 0 && !canChainStages(plan[index - 1]!.stage, item.stage)))
+      throw new Error('翻译、配音、合成和导出需分别手动发起，请先核对上一步结果')
     const targetIds = plan.flatMap((item) => (item.segmentId ? [item.segmentId] : []))
     if (batch?.action === 'synthesize') {
       const voices = batch.useSegmentVoices
@@ -159,7 +183,8 @@ export function generateSegment(segmentId: string, input: GenerationInput) {
         .orderBy(desc(jobs.createdAt))
       if (active.some((item) => item.stage === 'synthesize' && item.segmentId === segmentId))
         throw createError({ statusCode: 409, statusMessage: '这句配音已在排队或生成中，请等待完成' })
-      const blocker = active.find((item) => item.stage !== 'synthesize')
+      if (active.some((item) => item.stage !== 'synthesize'))
+        throw createError({ statusCode: 409, statusMessage: '请等待当前步骤完成，核对结果后再生成配音' })
       job = {
         id: randomUUID(),
         projectId: project.id,
@@ -167,9 +192,9 @@ export function generateSegment(segmentId: string, input: GenerationInput) {
         segmentId,
         status: 'queued',
         progress: 0,
-        message: blocker ? '等待前置任务完成' : '等待生成这句配音',
+        message: '等待生成这句配音',
         error: null,
-        dependsOn: blocker?.id || null,
+        dependsOn: null,
         attempts: 0,
         createdAt: Date.now(),
         updatedAt: Date.now()
@@ -301,8 +326,9 @@ export async function tick() {
   ticking = true
   try {
     const settings = await getSettings()
-    if (running.size >= settings.concurrency) return
     const all = await db.select(jobColumns).from(jobs).orderBy(asc(jobs.createdAt))
+    await cancelAutomaticFollowups(all)
+    if (running.size >= settings.concurrency) return
     const paused = new Set(
       (await db.select().from(projects).where(eq(projects.paused, true))).map((p) => p.id)
     )
@@ -316,6 +342,7 @@ export async function tick() {
 }
 export async function startQueue() {
   await initDb()
+  await cancelAutomaticFollowups()
   await interruptJobRequests()
   const interrupted = await db.select().from(jobs).where(eq(jobs.status, 'running'))
   if (interrupted.length) {

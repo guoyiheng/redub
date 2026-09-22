@@ -48,6 +48,7 @@ function statusOf(jobs: Job[]): JobStatus {
   if (jobs.some((job) => job.status === 'running')) return 'running'
   if (jobs.some((job) => job.status === 'failed')) return 'failed'
   if (jobs.some((job) => job.status === 'queued')) return 'queued'
+  if (jobs.some((job) => job.status === 'cancelled')) return 'cancelled'
   if (jobs.every((job) => job.status === 'skipped')) return 'skipped'
   return 'completed'
 }

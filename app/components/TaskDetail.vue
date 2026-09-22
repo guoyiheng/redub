@@ -6,7 +6,14 @@ const { act, errorMessage, toast } = useStudio()
 const detail = shallowRef<JobDetail>()
 const error = ref('')
 const busy = ref(false)
-const labels = { queued: '排队中', running: '处理中', completed: '已完成', failed: '失败', skipped: '已跳过' }
+const labels = {
+  queued: '排队中',
+  running: '处理中',
+  completed: '已完成',
+  failed: '失败',
+  skipped: '已跳过',
+  cancelled: '已取消'
+}
 const artifact = computed(() => {
   const result = detail.value?.result as { path?: string; filename?: string } | null
   return result?.path && result?.filename ? { path: result.path, filename: result.filename } : null
