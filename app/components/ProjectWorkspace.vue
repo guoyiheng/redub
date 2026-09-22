@@ -883,7 +883,7 @@ async function onSegmentRestored(updated: Segment) {
             >批量翻译</StudioAction
           >
           <StudioAction
-            icon="i-carbon-batch-job"
+            :icon="lines.length ? 'i-carbon-microphone' : 'i-carbon-batch-job'"
             :reason="dirty ? '请先保存台词修改' : ''"
             @click="openBatch(lines.length ? 'synthesize' : 'prepare')"
             >{{ lines.length ? '批量配音' : '处理素材' }}</StudioAction
@@ -913,7 +913,7 @@ async function onSegmentRestored(updated: Segment) {
     </header>
     <section v-if="panel === 'script'" class="script-panel">
       <div v-if="!lines.length" class="project-start">
-        <UIcon name="i-carbon-script" class="empty-icon" />
+        <UIcon name="i-carbon-microphone" class="empty-icon" />
         <h2>{{ project.kind === 'text' ? '先添加需要配音的台词' : '先识别素材中的台词' }}</h2>
         <p>
           {{
@@ -981,12 +981,12 @@ async function onSegmentRestored(updated: Segment) {
                 <span class="comparison-label">配音</span>
                 <p
                   class="dialogue-translation"
-                  :class="{ 'is-empty': !line.translation && !line.generatedPath }"
+                  :class="{ 'is-empty': !line.translation.trim() && !line.generatedPath }"
                 >
                   {{
                     line.generatedPath
                       ? dubbedText(line) || '已生成配音'
-                      : line.translation || line.text || '暂未翻译配音台词'
+                      : line.translation.trim() || '待翻译'
                   }}
                 </p>
               </div>
@@ -1004,7 +1004,7 @@ async function onSegmentRestored(updated: Segment) {
                       ? lineJob(line.id)?.status === 'running'
                         ? '正在生成配音…'
                         : '等待生成配音'
-                      : '尚未生成配音'
+                      : '待配音'
                   }}</span>
                 </div>
               </div>

@@ -79,6 +79,6 @@ npm run build
 
 ## 验证状态与限制
 
-当前生成的安装包面向 macOS Apple Silicon，位于 `release/ReDub-0.1.0-arm64.dmg`，尚未签名和公证。Windows / Linux 打包配置已提供，需在对应平台构建验收。
+macOS Apple Silicon 安装包默认输出到 `release/ReDub-0.0.1-arm64.dmg`，尚未签名和公证。Windows / Linux 打包配置已提供，需在对应平台构建验收。
 
 本地模型已经用短语音验证；付费 API 使用模拟协议响应做自动测试，真实 Key 由使用者填写后联调。源分离可能残留人声或影响背景，参考音色和变速也受模型质量限制，不能保证所有影视片段完全无损或音色绝对一致。请在成片前逐句试听。
