@@ -917,154 +917,135 @@ async function onSegmentRestored(updated: Segment) {
         </div>
       </div>
       <template v-else>
-        <div class="comparison-heading">
-          <div class="comparison-heading-col">
-            <UIcon name="i-carbon-volume-up" />
-            <span>原文与原声素材</span>
+        <div class="studio-table">
+          <div class="studio-table-header">
+            <div class="th-meta">片段 / 时间</div>
+            <div class="th-col">
+              <UIcon name="i-carbon-volume-up" />
+              <span>原文与原声素材</span>
+            </div>
+            <div class="th-col">
+              <UIcon name="i-carbon-microphone" />
+              <span>配音台词与新声音</span>
+            </div>
+            <div class="th-actions">状态与操作</div>
           </div>
-          <div class="comparison-heading-col">
-            <UIcon name="i-carbon-microphone" />
-            <span>配音台词与新声音</span>
-          </div>
-        </div>
-        <div class="comparison-list">
-          <article
-            v-for="line in pagedLines"
-            :key="line.id"
-            class="segment-card comparison-row"
-            :class="{ selected: current === line.id, 'not-replaced': !line.enabled }"
-          >
-            <header class="segment-card-header">
-              <div class="header-left">
+          <div class="studio-table-body">
+            <article
+              v-for="line in pagedLines"
+              :key="line.id"
+              class="studio-row comparison-row"
+              :class="{ selected: current === line.id, 'not-replaced': !line.enabled }"
+            >
+              <div class="row-meta">
                 <span class="segment-idx">#{{ String(getGlobalIndex(line.id)).padStart(2, '0') }}</span>
-                <span class="segment-time">
-                  <UIcon name="i-carbon-time" />
-                  <time>{{ formatTime(line.start) }} – {{ formatTime(line.end) }}</time>
-                </span>
+                <time class="segment-time">{{ formatTime(line.start) }} – {{ formatTime(line.end) }}</time>
                 <span class="segment-speaker">{{ speakerName(line.speaker) }}</span>
               </div>
-              <div class="header-right">
-                <UBadge
-                  v-if="lineJob(line.id)"
-                  color="warning"
-                  variant="subtle"
-                  size="xs"
-                  class="status-badge"
-                >
-                  <UIcon name="i-carbon-renew" class="animate-spin" />
-                  <span>{{ lineJob(line.id)?.status === 'running' ? '正在生成' : '等待生成' }}</span>
-                </UBadge>
-                <UBadge
-                  v-else-if="!line.enabled"
-                  color="neutral"
-                  variant="subtle"
-                  size="xs"
-                  class="status-badge"
-                >
-                  保留原声
-                </UBadge>
-                <UBadge
-                  v-else-if="line.generatedPath"
-                  color="primary"
-                  variant="subtle"
-                  size="xs"
-                  class="status-badge"
-                >
-                  <UIcon name="i-carbon-checkmark" />
-                  <span>已生成 · {{ line.synthesisMode === 'tts' ? '微软 TTS' : 'AI 配音' }}</span>
-                </UBadge>
-                <UBadge v-else color="neutral" variant="subtle" size="xs" class="status-badge">
-                  待配音
-                </UBadge>
 
-                <div class="header-actions">
+              <div class="row-source-text">
+                <p class="dialogue-original">{{ line.text || '尚未填写原文' }}</p>
+              </div>
+
+              <div class="row-source-audio">
+                <ClipAudio
+                  :src="
+                    project.kind !== 'text' && project.sourcePath
+                      ? `/api/segments/${line.id}/original?t=${line.start}-${line.end}`
+                      : undefined
+                  "
+                  :label="`第 ${getGlobalIndex(line.id)} 句原声`"
+                  :empty="project.kind === 'text' ? '文本台词，无原声音频' : '尚无可试听的原声素材'"
+                />
+              </div>
+
+              <div class="row-dub-text">
+                <p
+                  class="dialogue-translation"
+                  :class="{ 'is-empty': !line.translation && !line.generatedPath }"
+                >
+                  {{
+                    line.generatedPath
+                      ? dubbedText(line) || '已生成配音'
+                      : line.translation || line.text || '暂未翻译配音台词'
+                  }}
+                </p>
+              </div>
+
+              <div class="row-dub-audio">
+                <ClipAudio
+                  v-if="line.generatedPath"
+                  :src="mediaUrl(line.generatedPath)"
+                  :label="`第 ${getGlobalIndex(line.id)} 句生成配音`"
+                />
+                <div v-else class="audio-placeholder">
+                  <UIcon name="i-carbon-waveform" />
+                  <span>{{ lineJob(line.id) ? '正在生成配音...' : '未生成配音音频' }}</span>
+                </div>
+              </div>
+
+              <div class="row-actions-col">
+                <div class="status-wrapper">
+                  <UBadge v-if="lineJob(line.id)" color="warning" variant="subtle" size="xs">
+                    <UIcon name="i-carbon-renew" class="animate-spin" />
+                    <span>{{ lineJob(line.id)?.status === 'running' ? '生成中' : '排队中' }}</span>
+                  </UBadge>
+                  <UBadge v-else-if="!line.enabled" color="neutral" variant="subtle" size="xs">
+                    保留原声
+                  </UBadge>
+                  <UBadge v-else-if="line.generatedPath" color="primary" variant="subtle" size="xs">
+                    <UIcon name="i-carbon-checkmark" />
+                    <span>{{ line.synthesisMode === 'tts' ? '微软 TTS' : 'AI 配音' }}</span>
+                  </UBadge>
+                  <UBadge v-else color="neutral" variant="subtle" size="xs"> 待配音 </UBadge>
+                </div>
+
+                <div class="action-buttons-group">
+                  <UButton
+                    variant="soft"
+                    color="primary"
+                    size="xs"
+                    icon="i-carbon-microphone"
+                    :disabled="locked"
+                    :aria-label="`第 ${getGlobalIndex(line.id)} 句配音`"
+                    @click="generateLine(line.id)"
+                    >配音</UButton
+                  >
+                  <UButton
+                    variant="ghost"
+                    color="neutral"
+                    size="xs"
+                    icon="i-carbon-language"
+                    :disabled="locked || !line.text?.trim()"
+                    :aria-label="`第 ${getGlobalIndex(line.id)} 句翻译`"
+                    @click="openTranslation(line)"
+                    >翻译</UButton
+                  >
+                </div>
+
+                <div class="row-more-actions">
                   <UButton
                     variant="ghost"
                     color="neutral"
                     size="xs"
                     icon="i-carbon-edit"
                     :aria-label="`第 ${getGlobalIndex(line.id)} 句编辑`"
+                    title="编辑台词"
                     @click="editLine(line.id)"
-                    >编辑</UButton
-                  >
+                  />
                   <UButton
                     variant="ghost"
                     color="neutral"
                     size="xs"
                     icon="i-carbon-time"
                     :aria-label="`第 ${getGlobalIndex(line.id)} 句历史版本`"
+                    title="历史版本"
                     @click="openHistory(line)"
-                    >历史</UButton
-                  >
-                </div>
-              </div>
-            </header>
-            <div class="segment-card-body">
-              <div class="segment-source-col comparison-source">
-                <div class="dialogue-content">
-                  <p class="dialogue-original">
-                    {{ line.text || '尚未填写原文' }}
-                  </p>
-                </div>
-                <div class="col-footer">
-                  <ClipAudio
-                    :src="
-                      project.kind !== 'text' && project.sourcePath
-                        ? `/api/segments/${line.id}/original?t=${line.start}-${line.end}`
-                        : undefined
-                    "
-                    :label="`第 ${getGlobalIndex(line.id)} 句原声`"
-                    :empty="project.kind === 'text' ? '文本台词，无原声音频' : '尚无可试听的原声素材'"
                   />
                 </div>
               </div>
-              <div class="segment-dub-col comparison-generated">
-                <div class="dialogue-content">
-                  <p class="dialogue-translation">
-                    {{
-                      line.generatedPath
-                        ? dubbedText(line) || '已生成配音'
-                        : line.translation || line.text || '填写要生成的配音台词'
-                    }}
-                  </p>
-                  <div class="line-action-buttons">
-                    <UButton
-                      variant="soft"
-                      size="xs"
-                      icon="i-carbon-language"
-                      :disabled="locked || !line.text?.trim()"
-                      :aria-label="`第 ${getGlobalIndex(line.id)} 句翻译`"
-                      @click="openTranslation(line)"
-                      >翻译</UButton
-                    >
-                  </div>
-                </div>
-                <div class="col-footer generated-output">
-                  <ClipAudio
-                    v-if="line.generatedPath"
-                    :src="mediaUrl(line.generatedPath)"
-                    :label="`第 ${getGlobalIndex(line.id)} 句生成配音`"
-                  />
-                  <div v-else class="audio-placeholder">
-                    <UIcon name="i-carbon-waveform" /><span>{{
-                      lineJob(line.id) ? '完成后可在此试听' : '生成后在此试听'
-                    }}</span>
-                  </div>
-                  <div class="line-action-buttons">
-                    <UButton
-                      variant="soft"
-                      size="xs"
-                      icon="i-carbon-microphone"
-                      :disabled="locked"
-                      :aria-label="`第 ${getGlobalIndex(line.id)} 句配音`"
-                      @click="generateLine(line.id)"
-                      >配音</UButton
-                    >
-                  </div>
-                </div>
-              </div>
-            </div>
-          </article>
+            </article>
+          </div>
         </div>
         <div v-if="totalPages > 1" class="script-bottom-pagination">
           <UButton
