@@ -34,7 +34,7 @@ async function load() {
       timer = setTimeout(load, 2000)
   }
 }
-async function action(value: 'retry' | 'skip') {
+async function action(value: 'retry' | 'cancel') {
   busy.value = true
   try {
     await act(() => $fetch(`/api/jobs/${props.jobId}/${value}`, { method: 'POST' }))
@@ -79,24 +79,32 @@ onBeforeUnmount(() => {
         <h3>{{ stageLabels[detail.job.stage] }}</h3>
         <span :class="`status-${detail.job.status}`">{{ labels[detail.job.status] }}</span>
       </div>
-      <UProgress :model-value="detail.job.progress" />
-      <p class="help">{{ detail.job.message }} · {{ detail.job.progress }}%</p>
+      <UProgress
+        v-if="!['failed', 'cancelled', 'skipped'].includes(detail.job.status)"
+        :model-value="detail.job.progress"
+      />
+      <p class="help">
+        {{ detail.job.message
+        }}<template v-if="!['failed', 'cancelled', 'skipped'].includes(detail.job.status)">
+          · {{ detail.job.progress }}%</template
+        >
+      </p>
       <UAlert v-if="detail.job.error" color="error" title="任务执行失败" :description="detail.job.error" />
       <div class="row-actions">
         <UButton
-          v-if="detail.job.status === 'failed'"
+          v-if="['failed', 'completed'].includes(detail.job.status)"
           :loading="busy"
           icon="i-carbon-renew"
           @click="action('retry')"
           >重试任务</UButton
         >
         <UButton
-          v-if="['queued', 'failed'].includes(detail.job.status)"
+          v-if="['queued', 'running'].includes(detail.job.status)"
           :disabled="busy"
           color="neutral"
           variant="outline"
-          @click="action('skip')"
-          >跳过任务</UButton
+          @click="action('cancel')"
+          >取消任务</UButton
         >
         <UButton
           v-if="artifact"

@@ -1,3 +1,4 @@
+import { jobContext, checkJobCancelled } from './job-context'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { existsSync } from 'node:fs'
@@ -38,9 +39,16 @@ export function stopMediaProcesses() {
   for (const child of children) child.kill('SIGKILL')
 }
 export function runProcess(command: string, args: string[], timeoutMs = 60 * 60 * 1000) {
+  checkJobCancelled()
+  const signal = jobContext.getStore()?.signal
   return new Promise<string>((resolvePromise, reject) => {
     const child = spawn(command, args, { windowsHide: true, env: process.env })
     children.add(child)
+    const abort = () => {
+      child.kill('SIGKILL')
+    }
+    signal?.addEventListener('abort', abort, { once: true })
+    if (signal?.aborted) abort()
     let stdout = '',
       stderr = '',
       timedOut = false
@@ -56,12 +64,18 @@ export function runProcess(command: string, args: string[], timeoutMs = 60 * 60 
     })
     child.on('error', (e) => {
       children.delete(child)
+      signal?.removeEventListener('abort', abort)
       clearTimeout(timer)
       reject(new Error(`无法启动 ${command.split(/[\\/]/).pop()}：${e.message}`))
     })
     child.on('close', (code) => {
       children.delete(child)
+      signal?.removeEventListener('abort', abort)
       clearTimeout(timer)
+      if (signal?.aborted) {
+        reject(signal.reason)
+        return
+      }
       if (code === 0) resolvePromise(stdout)
       else
         reject(
@@ -81,6 +95,8 @@ export async function audioPeaks(path: string, buckets = 600) {
   const sampleRate = 4000
   const totalSamples = Math.max(1, Math.ceil(info.duration * sampleRate))
   const peaks = Array.from({ length: buckets }, () => 0)
+  checkJobCancelled()
+  const signal = jobContext.getStore()?.signal
   return new Promise<number[]>((resolvePromise, reject) => {
     const child = spawn(
       binary('ffmpeg'),
@@ -102,6 +118,11 @@ export async function audioPeaks(path: string, buckets = 600) {
       { windowsHide: true, env: process.env }
     )
     children.add(child)
+    const abort = () => {
+      child.kill('SIGKILL')
+    }
+    signal?.addEventListener('abort', abort, { once: true })
+    if (signal?.aborted) abort()
     let remainder = Buffer.alloc(0)
     let sampleIndex = 0
     let stderr = ''
@@ -126,12 +147,18 @@ export async function audioPeaks(path: string, buckets = 600) {
     })
     child.on('error', (error) => {
       children.delete(child)
+      signal?.removeEventListener('abort', abort)
       clearTimeout(timer)
       reject(new Error(`无法读取波形：${error.message}`))
     })
     child.on('close', (code) => {
       children.delete(child)
+      signal?.removeEventListener('abort', abort)
       clearTimeout(timer)
+      if (signal?.aborted) {
+        reject(signal.reason)
+        return
+      }
       if (code === 0) resolvePromise(peaks)
       else
         reject(

@@ -12,7 +12,11 @@ export async function getProject(id: string) {
   return project
 }
 export async function getSegments(projectId: string) {
-  return db.select().from(segments).where(eq(segments.projectId, projectId)).orderBy(asc(segments.start))
+  return db
+    .select()
+    .from(segments)
+    .where(eq(segments.projectId, projectId))
+    .orderBy(asc(segments.start), asc(segments.id))
 }
 export async function assertIdle(projectId: string) {
   const active = await db

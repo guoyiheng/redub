@@ -156,6 +156,28 @@ watch([filteredLines, pageSize], () => {
   if (currentPage.value > totalPages.value) currentPage.value = totalPages.value
   if (currentPage.value < 1) currentPage.value = 1
 })
+const taskNavigation = useTaskNavigation()
+watch(
+  [taskNavigation, () => detail.value?.project.id],
+  async ([target, projectId]) => {
+    if (!target || target.projectId !== projectId || !target.segmentId) return
+    const index = lines.value.findIndex((line) => line.id === target.segmentId)
+    if (index < 0) {
+      toast.add({ title: '这句台词已被删除', color: 'warning' })
+      return
+    }
+    speakerFilter.value = 0
+    await nextTick()
+    currentPage.value = pageSize.value ? Math.floor(index / pageSize.value) + 1 : 1
+    current.value = target.segmentId
+    await nextTick()
+    const row = document.getElementById(`segment-${target.segmentId}`)
+    row?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    row?.focus({ preventScroll: true })
+  },
+  { immediate: true, flush: 'post' }
+)
+
 watch(panel, (newPanel) => {
   if (newPanel === 'preview') {
     nextTick(() => {
@@ -965,6 +987,8 @@ async function onSegmentRestored(updated: Segment) {
             <article
               v-for="line in pagedLines"
               :key="line.id"
+              :id="`segment-${line.id}`"
+              tabindex="-1"
               class="studio-row"
               :aria-label="`第 ${getGlobalIndex(line.id)} 句`"
               :class="{ selected: current === line.id, 'not-replaced': !line.enabled }"

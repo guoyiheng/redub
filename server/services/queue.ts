@@ -75,6 +75,7 @@ export async function cancelAutomaticFollowups(all?: Job[]) {
   return ids
 }
 const running = new Set<string>()
+const executions = new Map<string, { controller: AbortController; done: Promise<void> }>()
 let ticking = false,
   timer: ReturnType<typeof setInterval> | undefined
 let enqueueChain = Promise.resolve()
@@ -334,7 +335,7 @@ export function enqueueOutput(projectId: string, stage: 'export' | 'preview-trac
     return { jobId: id }
   })
 }
-async function execute(job: Job) {
+async function execute(job: Job, signal: AbortSignal) {
   try {
     const claimed = await db
       .update(jobs)
@@ -350,14 +351,17 @@ async function execute(job: Job) {
       .where(and(eq(jobs.id, job.id), eq(jobs.status, 'queued')))
       .returning({ id: jobs.id })
     if (!claimed.length) return
-    const result = await jobContext.run({ id: job.id, attempt: job.attempts + 1 }, () =>
+    signal.throwIfAborted()
+    const result = await jobContext.run({ id: job.id, attempt: job.attempts + 1, signal }, () =>
       executeJob(job, async (progress, message) => {
+        signal.throwIfAborted()
         await db
           .update(jobs)
           .set({ progress: Math.min(99, Math.max(0, progress)), message, updatedAt: Date.now() })
-          .where(eq(jobs.id, job.id))
+          .where(and(eq(jobs.id, job.id), eq(jobs.status, 'running')))
       })
     )
+    signal.throwIfAborted()
     await db
       .update(jobs)
       .set({
@@ -367,24 +371,54 @@ async function execute(job: Job) {
         result: result ?? null,
         updatedAt: Date.now()
       })
-      .where(eq(jobs.id, job.id))
+      .where(and(eq(jobs.id, job.id), eq(jobs.status, 'running')))
   } catch (error) {
     await db
       .update(jobs)
       .set({
-        status: 'failed',
-        error: safeError(error),
-        message: '执行失败，可重试或跳过',
+        status: signal.aborted ? 'cancelled' : 'failed',
+        error: signal.aborted ? null : safeError(error),
+        message: signal.aborted ? '任务已取消' : '执行失败，可重试',
         updatedAt: Date.now()
       })
-      .where(eq(jobs.id, job.id))
-    if ((await getSettings()).pauseOnFailure)
+      .where(and(eq(jobs.id, job.id), eq(jobs.status, 'running')))
+    if (!signal.aborted && (await getSettings()).pauseOnFailure)
       await db.update(projects).set({ paused: true }).where(eq(projects.id, job.projectId))
   } finally {
+    executions.delete(job.id)
     running.delete(job.id)
     void tick()
   }
 }
+/** Called under the enqueue lock; wait for resource cleanup before returning to the UI. */
+export async function cancelJob(id: string) {
+  const [job] = await db.select().from(jobs).where(eq(jobs.id, id))
+  if (!job) throw createError({ statusCode: 404, statusMessage: '任务不存在' })
+  if (!['queued', 'running'].includes(job.status))
+    throw createError({ statusCode: 409, statusMessage: '任务已结束，请刷新任务列表' })
+  const execution = executions.get(id)
+  execution?.controller.abort(new Error('任务已取消'))
+  await db
+    .update(jobs)
+    .set({ status: 'cancelled', error: null, message: '任务已取消', updatedAt: Date.now() })
+    .where(and(eq(jobs.id, id), inArray(jobs.status, ['queued', 'running'])))
+  await execution?.done
+  const projectJobs = await db.select().from(jobs).where(eq(jobs.projectId, job.projectId))
+  const descendants = new Set([id])
+  let size = 0
+  while (size !== descendants.size) {
+    size = descendants.size
+    for (const item of projectJobs)
+      if (item.dependsOn && descendants.has(item.dependsOn)) descendants.add(item.id)
+  }
+  await db
+    .update(jobs)
+    .set({ status: 'cancelled', message: '前置任务已取消', updatedAt: Date.now() })
+    .where(and(inArray(jobs.id, [...descendants]), eq(jobs.status, 'queued')))
+  void tick()
+  return { ok: true }
+}
+
 export async function tick() {
   if (ticking) return
   ticking = true
@@ -397,7 +431,10 @@ export async function tick() {
     )
     for (const job of eligibleJobs(all, paused, running, settings)) {
       running.add(job.id)
-      void execute(job)
+      const controller = new AbortController()
+      const done = execute(job, controller.signal)
+      executions.set(job.id, { controller, done })
+      void done.catch(console.error)
     }
   } finally {
     ticking = false

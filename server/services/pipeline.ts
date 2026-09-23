@@ -1,3 +1,5 @@
+import { checkJobCancelled } from './job-context'
+import { jobTransaction } from './job-transaction'
 import { randomUUID } from 'node:crypto'
 import { join, basename } from 'node:path'
 import { copyFile, writeFile } from 'node:fs/promises'
@@ -28,6 +30,7 @@ import { createVersionName } from '../../shared/version'
 import { translationTaskSchema } from '../../shared/translation'
 
 export async function executeJob(job: Job, progress: (value: number, message: string) => Promise<void>) {
+  checkJobCancelled()
   const p = await getProject(job.projectId)
   if (job.stage === 'export') {
     const [row] = await db.select({ input: jobs.input }).from(jobs).where(eq(jobs.id, job.id))
@@ -48,10 +51,12 @@ export async function executeJob(job: Job, progress: (value: number, message: st
   const dir = await projectDir(p.id)
   const rel = (name: string) => `${p.id}/${name}`
   const update = async (value: Partial<typeof p>) => {
-    await db
-      .update(projects)
-      .set({ ...value, updatedAt: Date.now() })
-      .where(eq(projects.id, p.id))
+    await jobTransaction(async (tx) => {
+      await tx
+        .update(projects)
+        .set({ ...value, updatedAt: Date.now() })
+        .where(eq(projects.id, p.id))
+    })
   }
   if (job.stage === 'extract') {
     if (!p.sourcePath) throw new Error('请先导入音视频素材')
@@ -86,7 +91,7 @@ export async function executeJob(job: Job, progress: (value: number, message: st
     await copyFile(join(dir, 'stems/htdemucs/original/vocals.wav'), assetPath(vocalsPath))
     await copyFile(join(dir, 'stems/htdemucs/original/no_vocals.wav'), assetPath(backgroundPath))
     // Publish both stems together; previous results remain usable if separation fails.
-    await db.transaction(async (tx) => {
+    await jobTransaction(async (tx) => {
       await tx
         .update(projects)
         .set({
@@ -132,7 +137,7 @@ export async function executeJob(job: Job, progress: (value: number, message: st
       rows.push({ id, projectId: p.id, start: span.start, end, referencePath: ref })
       await progress(15 + Math.round((80 * (i + 1)) / spans.length), `切分人声 ${i + 1} / ${spans.length}`)
     }
-    await db.transaction(async (tx) => {
+    await jobTransaction(async (tx) => {
       for (const row of rows) await tx.insert(segments).values(row)
     })
   }
@@ -148,7 +153,9 @@ export async function executeJob(job: Job, progress: (value: number, message: st
         if (!source) throw new Error('没有可识别的人声文件')
         ref = rel(`reference-${line.id}.wav`)
         await cutAudio(assetPath(source), assetPath(ref), line.start, line.end - line.start)
-        await db.update(segments).set({ referencePath: ref }).where(eq(segments.id, line.id))
+        await jobTransaction(async (tx) => {
+          await tx.update(segments).set({ referencePath: ref }).where(eq(segments.id, line.id))
+        })
       }
       inputs.push({ id: line.id, audio: assetPath(ref) })
     }
@@ -169,7 +176,7 @@ export async function executeJob(job: Job, progress: (value: number, message: st
       result.some((s) => typeof s.text !== 'string' || !lines.some((line) => line.id === s.id))
     )
       throw new Error('识别结果片段不完整，请重试')
-    await db.transaction(async (tx) => {
+    await jobTransaction(async (tx) => {
       for (const row of result) {
         const text = row.text.trim()
         await tx
@@ -211,7 +218,7 @@ export async function executeJob(job: Job, progress: (value: number, message: st
       translation.sourceLanguage || p.sourceLanguage,
       translation.prompt
     )
-    await db.transaction(async (tx) => {
+    await jobTransaction(async (tx) => {
       for (const s of lines) {
         const newText = result.get(s.id)!
         const history: TranslationVersion[] = [...(s.translationHistory || [])]
@@ -259,6 +266,7 @@ export async function executeJob(job: Job, progress: (value: number, message: st
       throw new Error('请先完成人声分离，再使用原声参考配音')
     await invalidateOutput(p.id)
     for (let i = 0; i < lines.length; i++) {
+      checkJobCancelled()
       const s = lines[i]!
       if (
         s.synthesisMode !== 'tts' &&
@@ -283,17 +291,19 @@ export async function executeJob(job: Job, progress: (value: number, message: st
             createdAt: Date.now() - 60000
           })
         }
-        await db
-          .update(segments)
-          .set({
-            referencePath,
-            generatedPath: null,
-            generatedHash: null,
-            generatedDuration: null,
-            subtitle: null,
-            audioHistory: audioHist.length ? audioHist : undefined
-          })
-          .where(eq(segments.id, s.id))
+        await jobTransaction(async (tx) => {
+          await tx
+            .update(segments)
+            .set({
+              referencePath,
+              generatedPath: null,
+              generatedHash: null,
+              generatedDuration: null,
+              subtitle: null,
+              audioHistory: audioHist.length ? audioHist : undefined
+            })
+            .where(eq(segments.id, s.id))
+        })
         s.referencePath = referencePath
         s.generatedPath = null
         s.generatedHash = null
@@ -339,16 +349,18 @@ export async function executeJob(job: Job, progress: (value: number, message: st
         subtitle: result.subtitle ?? null,
         createdAt: Date.now()
       })
-      await db
-        .update(segments)
-        .set({
-          generatedPath: output,
-          generatedHash: hash,
-          generatedDuration: result.duration,
-          subtitle: result.subtitle,
-          audioHistory
-        })
-        .where(eq(segments.id, s.id))
+      await jobTransaction(async (tx) => {
+        await tx
+          .update(segments)
+          .set({
+            generatedPath: output,
+            generatedHash: hash,
+            generatedDuration: result.duration,
+            subtitle: result.subtitle,
+            audioHistory
+          })
+          .where(eq(segments.id, s.id))
+      })
       s.generatedPath = output
       s.generatedHash = hash
       s.generatedDuration = result.duration

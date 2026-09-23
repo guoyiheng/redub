@@ -109,14 +109,17 @@ async function edgeSpeechAttempt(
   let failure: string | null = null
   try {
     return await new Promise<Buffer>((resolve, reject) => {
+      context?.signal?.throwIfAborted()
       const socket = new WebSocket(url, { headers, handshakeTimeout: 30000 })
       const audio: Buffer[] = []
       let completed = false
+      const abort = () => finish(new Error('任务已取消'))
       const timeout = setTimeout(() => finish(new Error('微软 TTS 请求超时')), 180000)
       function finish(error?: Error) {
         if (completed) return
         completed = true
         clearTimeout(timeout)
+        context?.signal?.removeEventListener('abort', abort)
         if (error) {
           socket.terminate()
           reject(error)
@@ -179,6 +182,8 @@ async function edgeSpeechAttempt(
         response.on('end', () => finish(new EdgeHandshakeError(responseStatus, response.headers.date)))
         response.on('error', (error) => finish(error))
       })
+      context?.signal?.addEventListener('abort', abort, { once: true })
+      if (context?.signal?.aborted) abort()
     })
   } catch (error) {
     failure = error instanceof Error ? error.message : String(error)

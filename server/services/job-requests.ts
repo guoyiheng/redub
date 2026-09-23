@@ -1,4 +1,5 @@
-import { AsyncLocalStorage } from 'node:async_hooks'
+import { jobContext } from './job-context'
+export { jobContext } from './job-context'
 import { randomUUID } from 'node:crypto'
 import { and, asc, eq, getTableColumns, isNull, sql } from 'drizzle-orm'
 import { createError } from 'h3'
@@ -6,10 +7,16 @@ import { db } from '../db'
 import { jobs, jobRequests, projects } from '../db/schema'
 import type { JobDetail, JobRequest } from '../../shared/types'
 
-export const jobContext = new AsyncLocalStorage<{ id: string; attempt: number }>()
 // Polling never loads potentially large request bodies or result snapshots.
 const { input: _input, result: _result, ...columns } = getTableColumns(jobs)
 export const jobColumns = columns
+export const jobListColumns = {
+  ...columns,
+  segmentIndex: sql<number | null>`(SELECT COUNT(*) FROM segments AS preceding
+    WHERE preceding.projectId = jobs.projectId AND
+    (preceding.start < (SELECT start FROM segments WHERE id = jobs.segmentId) OR
+     (preceding.start = (SELECT start FROM segments WHERE id = jobs.segmentId) AND preceding.id <= jobs.segmentId)))`
+}
 const {
   requestHeaders: _requestHeaders,
   requestBody: _requestBody,
@@ -127,7 +134,10 @@ export async function jobFetch(url: string, init: RequestInit, options: RequestO
     startedAt
   })
   try {
-    const response = await fetch(url, init)
+    const signal = context.signal
+      ? AbortSignal.any([context.signal, ...(init.signal ? [init.signal] : [])])
+      : init.signal
+    const response = await fetch(url, { ...init, signal })
     await db
       .update(jobRequests)
       .set({

@@ -81,8 +81,6 @@ const picker = ref<HTMLInputElement>()
 const referenceOpen = ref(false)
 const audioRef = ref<HTMLAudioElement>()
 const isPlaying = ref(false)
-const currentTime = ref(0)
-const duration = ref(0)
 const audioError = ref(false)
 
 const referenceSrc = computed(() =>
@@ -109,22 +107,8 @@ function togglePlay() {
   }
 }
 
-function onTimeUpdate() {
-  if (audioRef.value) {
-    currentTime.value = audioRef.value.currentTime
-  }
-}
-
-function onLoadedMetadata() {
-  if (audioRef.value) {
-    duration.value = audioRef.value.duration || 0
-    audioError.value = false
-  }
-}
-
 function onAudioEnded() {
   isPlaying.value = false
-  currentTime.value = 0
   if (audioRef.value) {
     audioRef.value.currentTime = 0
   }
@@ -148,8 +132,6 @@ watch(referenceSrc, () => {
     audioRef.value.pause()
   }
   isPlaying.value = false
-  currentTime.value = 0
-  duration.value = 0
   audioError.value = false
 })
 
@@ -175,7 +157,6 @@ function removeReference() {
     audioRef.value.pause()
   }
   isPlaying.value = false
-  currentTime.value = 0
   draft.value.aiUseReference = false
   customReference.value = null
   referenceOpen.value = false
@@ -247,7 +228,6 @@ async function generate() {
         "
         :rows="4"
         autoresize
-        :maxrows="10"
         :maxlength="2800"
         :disabled="busy"
         @keydown.meta.enter.prevent="generate"
@@ -263,8 +243,6 @@ async function generate() {
             :src="referenceSrc"
             preload="metadata"
             class="hidden"
-            @timeupdate="onTimeUpdate"
-            @loadedmetadata="onLoadedMetadata"
             @ended="onAudioEnded"
             @pause="onAudioPause"
             @play="onAudioPlay"

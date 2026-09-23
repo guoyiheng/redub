@@ -1,6 +1,10 @@
 <script setup lang="ts">
 const { projects, selected, detail, jobs, refresh, select, settingsProject, workspacePanels, errorMessage } =
   useStudio()
+const taskNavigation = useTaskNavigation()
+watch(taskNavigation, (target) => {
+  if (target) void choose(target.projectId, 'script')
+})
 const view = ref<'home' | 'project' | 'settings'>('home'),
   importing = ref(false),
   loading = ref(true),

@@ -95,6 +95,7 @@ export interface Job {
   projectId: string
   stage: Stage
   segmentId: string | null
+  segmentIndex?: number | null
   batchId?: string | null
   status: JobStatus
   progress: number

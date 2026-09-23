@@ -514,6 +514,40 @@ describe.sequential('production HTTP workflow', () => {
     expect(completed.jobs).toHaveLength(5)
     expect(completed.segments.every((line) => line.generatedPath)).toBe(true)
   })
+  it('cancels a running voice request without publishing a late result', async () => {
+    const project = await api('projects', 'POST', { name: '取消中的配音', text: '等待取消的句子。' })
+    const before: ProjectDetail = await api(`projects/${project.id}`)
+    const line = before.segments[0]!
+    let release!: () => void
+    holdSynthesis = new Promise((resolve) => {
+      release = resolve
+    })
+    let created: { jobs: Job[] }
+    try {
+      created = await api(`segments/${line.id}/generate`, 'POST', defaultVoiceSettings(false))
+      const running = await until(
+        (detail) => detail.jobs.find((job) => job.id === created.jobs[0]!.id)?.status === 'running',
+        project.id
+      )
+      await api(`jobs/${created.jobs[0]!.id}/cancel`, 'POST')
+      const cancelled = await until(
+        (detail) => detail.jobs.find((job) => job.id === created.jobs[0]!.id)?.status === 'cancelled',
+        project.id
+      )
+      expect(cancelled.segments[0]!.generatedPath).toBeNull()
+      expect((await api(`jobs/${created.jobs[0]!.id}`)).requests[0]!.error).toBe('任务已取消')
+      expect(running.jobs.find((job) => job.id === created.jobs[0]!.id)?.status).toBe('running')
+    } finally {
+      holdSynthesis = undefined
+      release()
+    }
+    const retried = await api(`segments/${line.id}/generate`, 'POST', defaultVoiceSettings(false))
+    const completed = await until(
+      (detail) => detail.jobs.find((job) => job.id === retried.jobs[0]!.id)?.status === 'completed',
+      project.id
+    )
+    expect(completed.segments[0]!.generatedPath).toBeTruthy()
+  })
   it('requires translation to finish and be reviewed before voice generation can be submitted', async () => {
     const project = await api('projects', 'POST', {
       name: 'Manual review',

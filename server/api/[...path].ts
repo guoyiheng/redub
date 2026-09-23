@@ -14,13 +14,13 @@ import { db, initDb } from '../db'
 import { projects, segments, jobs, channels, settings } from '../db/schema'
 import { getProject, getSegments, getSettings, assertIdle, invalidateOutput } from '../services/store'
 import { importProject } from '../services/importer'
-import { enqueue, enqueueOutput, generateSegment, serializeEnqueue, tick } from '../services/queue'
+import { enqueue, enqueueOutput, generateSegment, serializeEnqueue, cancelJob, tick } from '../services/queue'
 import { mediaHealth, assetPath, cutAudio } from '../services/media'
 import { safeError } from '../services/providers'
 import { stageLabels } from '../../shared/types'
 import type { TranslationVersion, AudioVersion } from '../../shared/types'
 import { createVersionName } from '../../shared/version'
-import { getJobDetail, getJobRequest, jobColumns } from '../services/job-requests'
+import { getJobDetail, getJobRequest, jobListColumns as jobColumns } from '../services/job-requests'
 import { getPreviewTracks } from '../services/preview-tracks'
 import { edgeSpeech } from '../services/edge-speech'
 import { translationTaskSchema } from '../../shared/translation'
@@ -529,6 +529,7 @@ export default defineEventHandler(async (event) => {
       }
       if (id && method === 'POST') {
         return await serializeEnqueue(async () => {
+          if (action === 'cancel') return cancelJob(id)
           const [job] = await db.select().from(jobs).where(eq(jobs.id, id))
           if (!job) throw createError({ statusCode: 404, statusMessage: '任务不存在' })
           if (job.status === 'running')
@@ -561,7 +562,8 @@ export default defineEventHandler(async (event) => {
               if (conflicts.length)
                 throw createError({ statusCode: 409, statusMessage: '项目有冲突的处理任务，请完成后再重试' })
             }
-            const allowed = action === 'retry' ? (['failed'] as const) : (['queued', 'failed'] as const)
+            const allowed =
+              action === 'retry' ? (['failed', 'completed'] as const) : (['queued', 'failed'] as const)
             const changed = await tx
               .update(jobs)
               .set({
@@ -576,6 +578,12 @@ export default defineEventHandler(async (event) => {
               .returning({ id: jobs.id })
             if (!changed.length)
               throw createError({ statusCode: 409, statusMessage: '任务状态已改变，请刷新后重试' })
+            if (action === 'retry' && job.stage === 'synthesize') {
+              await tx
+                .update(segments)
+                .set({ generatedHash: null })
+                .where(job.segmentId ? eq(segments.id, job.segmentId) : eq(segments.projectId, job.projectId))
+            }
             if (action === 'skip' && job.stage === 'synthesize') {
               const lines = await tx.select().from(segments).where(eq(segments.projectId, job.projectId))
               for (const line of lines.filter(
