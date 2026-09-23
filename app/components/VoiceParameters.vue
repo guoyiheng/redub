@@ -175,6 +175,7 @@ onBeforeUnmount(() => {
           ]"
           :disabled="disabled"
         />
+        <AiVoiceSelect v-if="draft.synthesisMode === 'ai'" v-model="draft" :disabled="disabled" />
         <UPopover
           v-if="draft.synthesisMode === 'tts'"
           v-model:open="voiceMenuOpen"
