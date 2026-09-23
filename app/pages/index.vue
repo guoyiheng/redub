@@ -114,7 +114,12 @@ onBeforeUnmount(() => clearInterval(timer))
           :class="{ 'is-selected': selected === p.id && view === 'project' }"
         >
           <div class="sidebar-project-item">
-            <button class="sidebar-project-main" @click="choose(p.id)">
+            <button
+              class="sidebar-project-main"
+              :title="p.name"
+              :aria-current="selected === p.id && view === 'project' ? 'page' : undefined"
+              @click="choose(p.id)"
+            >
               <UIcon
                 :name="
                   p.kind === 'video'

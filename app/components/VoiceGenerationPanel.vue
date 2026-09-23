@@ -196,12 +196,26 @@ async function generate() {
 <template>
   <ReferenceVoiceLibrary v-model:open="libraryOpen" selectable @select="useVoice" />
   <form class="generation-panel" @submit.prevent="generate">
+    <header class="generation-panel-header">
+      <h2>生成配音</h2>
+      <UButton
+        type="button"
+        color="neutral"
+        variant="ghost"
+        size="xs"
+        icon="i-carbon-close"
+        aria-label="关闭配音窗口"
+        @click="emit('close')"
+      />
+    </header>
     <VoiceParameters v-model="draft" :disabled="busy" :can-reference="canReference || !!customReference">
       <div v-if="draft.synthesisMode === 'ai'" class="voice-tone-bar">
         <div class="voice-tone-header">
           <span class="voice-tone-label">
             <UIcon name="i-carbon-microphone" class="mr-1" />
-            角色语气：<strong>{{ parsedPrompt.tone || '默认语气' }}</strong>
+            角色语气：<strong :title="parsedPrompt.tone || '默认语气'">{{
+              parsedPrompt.tone || '默认语气'
+            }}</strong>
           </span>
           <UButton
             size="xs"
@@ -215,16 +229,19 @@ async function generate() {
           </UButton>
         </div>
         <div class="voice-tone-tags">
-          <button
+          <UButton
             v-for="t in tonePresets"
             :key="t"
             type="button"
-            class="voice-tone-tag"
-            :class="{ active: parsedPrompt.tone?.includes(t) }"
+            size="xs"
+            color="neutral"
+            :variant="parsedPrompt.tone?.includes(t) ? 'soft' : 'outline'"
+            :aria-pressed="!!parsedPrompt.tone?.includes(t)"
+            :disabled="busy"
             @click="applyTone(t)"
           >
             {{ t }}
-          </button>
+          </UButton>
         </div>
       </div>
       <UTextarea
@@ -238,6 +255,7 @@ async function generate() {
             : '输入配音台词…'
         "
         :rows="5"
+        :maxrows="10"
         autoresize
         :maxlength="2800"
         :disabled="busy"

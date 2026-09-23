@@ -828,6 +828,24 @@ function generateLine(id: string) {
   current.value = id
   showGeneration.value = true
 }
+let generationTrigger: HTMLElement | null = null
+function focusGeneration(event: Event) {
+  event.preventDefault()
+  generationTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  if (event.target instanceof HTMLElement) {
+    const input =
+      event.target.querySelector<HTMLElement>('textarea, input:not([type="file"])') ||
+      event.target.querySelector<HTMLElement>('button')
+    input?.focus({ preventScroll: true })
+  }
+}
+function restoreGenerationFocus(event: Event) {
+  if (generationTrigger?.isConnected) {
+    event.preventDefault()
+    generationTrigger.focus({ preventScroll: true })
+  }
+  generationTrigger = null
+}
 function editLine(id: string) {
   current.value = id
   showEditor.value = true
@@ -901,6 +919,24 @@ async function onSegmentRestored(updated: Segment) {
     :class="{ 'workspace-preview': panel === 'preview', 'workspace-script': panel === 'script' }"
   >
     <header class="workspace-header">
+      <nav class="workspace-mode-switch" aria-label="当前项目工作区">
+        <UButton
+          color="neutral"
+          :variant="panel === 'script' ? 'soft' : 'outline'"
+          icon="i-carbon-microphone"
+          :aria-current="panel === 'script' ? 'page' : undefined"
+          @click="workspacePanels[project.id] = 'script'"
+          >配音</UButton
+        >
+        <UButton
+          color="neutral"
+          :variant="panel === 'preview' ? 'soft' : 'outline'"
+          icon="i-carbon-play-outline"
+          :aria-current="panel === 'preview' ? 'page' : undefined"
+          @click="workspacePanels[project.id] = 'preview'"
+          >预览</UButton
+        >
+      </nav>
       <div v-if="panel === 'script' && lines.length" class="workspace-filters">
         <USelect
           v-model="speakerFilter"
@@ -945,7 +981,7 @@ async function onSegmentRestored(updated: Segment) {
             v-if="lines.length"
             color="neutral"
             variant="outline"
-            icon="i-carbon-language"
+            icon="i-carbon-translate"
             :reason="dirty ? '请先保存台词修改' : ''"
             @click="openBatch('translate')"
             >批量翻译</StudioAction
@@ -1155,7 +1191,7 @@ async function onSegmentRestored(updated: Segment) {
                     variant="outline"
                     color="neutral"
                     size="md"
-                    icon="i-carbon-language"
+                    icon="i-carbon-translate"
                     :disabled="!!lineTaskReason(line.id) || !line.text?.trim()"
                     :title="lineTaskReason(line.id) || undefined"
                     :aria-label="`第 ${getGlobalIndex(line.id)} 句翻译`"
@@ -1431,6 +1467,8 @@ async function onSegmentRestored(updated: Segment) {
     ></USlideover>
     <UDrawer
       v-model:open="showTranslation"
+      title="翻译台词"
+      :content="{ onOpenAutoFocus: focusGeneration, onCloseAutoFocus: restoreGenerationFocus }"
       direction="bottom"
       :handle="false"
       :inset="true"
@@ -1449,6 +1487,8 @@ async function onSegmentRestored(updated: Segment) {
     </UDrawer>
     <UDrawer
       v-model:open="showGeneration"
+      title="生成配音"
+      :content="{ onOpenAutoFocus: focusGeneration, onCloseAutoFocus: restoreGenerationFocus }"
       direction="bottom"
       :handle="false"
       :inset="true"

@@ -87,6 +87,18 @@ async function translate() {
 </script>
 <template>
   <form class="generation-panel" @submit.prevent="translate">
+    <header class="generation-panel-header">
+      <h2>翻译台词</h2>
+      <UButton
+        type="button"
+        color="neutral"
+        variant="ghost"
+        size="xs"
+        icon="i-carbon-close"
+        aria-label="关闭翻译窗口"
+        @click="emit('close')"
+      />
+    </header>
     <div class="voice-composer" :class="{ 'is-disabled': busy }">
       <UTextarea
         v-model="content"
@@ -114,7 +126,7 @@ async function translate() {
             color="neutral"
             variant="outline"
             size="sm"
-            icon="i-carbon-language"
+            icon="i-carbon-translate"
             :items="sourceLangItems"
             aria-label="原始语言"
             :disabled="busy"

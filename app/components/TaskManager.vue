@@ -252,7 +252,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
               <UButton
                 v-if="['failed', 'completed'].includes(job.status)"
                 color="neutral"
-                variant="ghost"
+                variant="outline"
                 size="xs"
                 class="task-action-btn"
                 square
@@ -264,7 +264,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
               />
               <UButton
                 color="neutral"
-                variant="ghost"
+                variant="outline"
                 size="xs"
                 class="task-action-btn"
                 square
@@ -276,7 +276,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
               <UButton
                 v-if="isActiveTask(job.status)"
                 color="neutral"
-                variant="ghost"
+                variant="outline"
                 size="xs"
                 class="task-action-btn"
                 square
@@ -347,15 +347,15 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   align-items: center;
   padding: 1px 7px;
   border-radius: 9999px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   background: var(--ui-bg-muted);
   color: var(--ui-text-muted);
   white-space: nowrap;
 }
 .task-header-badge.live {
-  background: color-mix(in srgb, #c96442 12%, transparent);
-  color: #c96442;
+  background: color-mix(in srgb, var(--ui-primary) 12%, transparent);
+  color: var(--ui-primary);
   font-weight: 600;
 }
 .task-header-right {
@@ -437,11 +437,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   border-color: color-mix(in srgb, var(--ui-border) 80%, var(--ui-text-muted));
 }
 .task-card:focus-visible {
-  outline: 2px solid var(--ui-primary, #c96442);
+  outline: 2px solid var(--ui-primary);
   outline-offset: -1px;
 }
 .task-card.is-active {
-  border-color: color-mix(in srgb, #c96442 45%, var(--ui-border));
+  border-color: color-mix(in srgb, var(--ui-primary) 45%, var(--ui-border));
 }
 
 .task-card-header {
@@ -467,7 +467,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   white-space: nowrap;
 }
 .task-project-pill {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ui-text-muted);
   background: var(--ui-bg-muted);
   padding: 1px 6px;
@@ -483,7 +483,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   align-items: center;
   padding: 1px 7px;
   border-radius: 9999px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   line-height: 1.4;
   white-space: nowrap;
@@ -494,17 +494,17 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   color: var(--ui-text-muted);
 }
 .task-status-badge.status-running {
-  background: color-mix(in srgb, #c96442 12%, transparent);
-  color: #c96442;
+  background: color-mix(in srgb, var(--ui-primary) 12%, transparent);
+  color: var(--ui-primary);
   font-weight: 600;
 }
 .task-status-badge.status-completed {
-  background: color-mix(in srgb, #2e7d32 12%, transparent);
-  color: #2e7d32;
+  background: color-mix(in srgb, var(--ui-success) 12%, transparent);
+  color: var(--ui-success);
 }
 .task-status-badge.status-failed {
-  background: color-mix(in srgb, #b53333 12%, transparent);
-  color: #b53333;
+  background: color-mix(in srgb, var(--ui-error) 12%, transparent);
+  color: var(--ui-error);
 }
 .task-status-badge.status-skipped,
 .task-status-badge.status-cancelled {
@@ -519,7 +519,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   margin-top: 2px;
 }
 .task-progress-num {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--ui-text-muted);
   font-variant-numeric: tabular-nums;
   min-width: 28px;
@@ -529,15 +529,15 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 
 .task-card-error {
   margin: 0;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.4;
-  color: #b53333;
+  color: var(--ui-error);
   overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  background: color-mix(in srgb, #b53333 8%, transparent);
+  background: color-mix(in srgb, var(--ui-error) 8%, transparent);
   padding: 4px 8px;
   border-radius: 4px;
 }
@@ -550,7 +550,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   min-height: 24px;
 }
 .task-time {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ui-text-muted);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
@@ -563,15 +563,18 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   margin-left: auto;
 }
 :deep(.task-action-btn) {
-  width: 22px !important;
-  min-width: 22px !important;
-  height: 22px !important;
-  min-height: 22px !important;
-  padding: 0 !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  border-radius: 4px !important;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border-radius: 6px;
+}
+@media (pointer: coarse) {
+  :deep(.task-action-btn) {
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
 .task-scroll-loading {
   display: flex;

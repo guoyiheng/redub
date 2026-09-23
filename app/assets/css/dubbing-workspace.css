@@ -3,18 +3,18 @@
   container: dubbing-workspace / inline-size;
 
   .workspace-header {
-    gap: 12px 20px;
-    padding-block: 16px;
+    gap: 8px 12px;
+    padding-block: 10px;
   }
   .workspace-filters {
     gap: 8px;
     min-width: 0;
   }
   .speaker-filter {
-    width: 164px;
+    width: 144px;
   }
   .page-size-select {
-    width: 132px;
+    width: 124px;
   }
   .workspace-header > .row-actions {
     flex-wrap: wrap;
@@ -30,8 +30,8 @@
     font-variant-numeric: tabular-nums;
   }
   .studio-table {
-    --dialogue-columns: 136px minmax(0, 1fr) minmax(0, 1fr) 240px;
-    --dialogue-column-gap: 24px;
+    --dialogue-columns: 124px minmax(0, 1fr) minmax(0, 1fr) 224px;
+    --dialogue-column-gap: 16px;
     background: var(--ui-bg-elevated);
     border: 1px solid var(--ui-border);
     border-radius: 10px;
@@ -43,14 +43,14 @@
     display: grid;
     grid-template-columns: var(--dialogue-columns);
     column-gap: var(--dialogue-column-gap);
-    padding-inline: 20px;
+    padding-inline: 12px;
   }
   .studio-table-header {
     position: static;
     inset: auto;
     z-index: auto;
     align-items: center;
-    padding-block: 12px;
+    padding-block: 10px;
     background: var(--ui-bg-muted);
     border-bottom: 1px solid var(--ui-border);
     color: var(--ui-text-muted);
@@ -78,8 +78,8 @@
       'meta source-audio dub-audio actions';
     grid-template-rows: minmax(28px, auto) auto;
     align-items: start;
-    row-gap: 12px;
-    padding-block: 18px;
+    row-gap: 8px;
+    padding-block: 12px;
     border-bottom: 1px solid var(--ui-border);
   }
   .studio-row > * {
@@ -222,7 +222,7 @@
     grid-template-rows: minmax(28px, auto) auto;
     align-content: start;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
   }
   .status-wrapper {
     display: flex;
@@ -246,15 +246,15 @@
 
   @container dubbing-workspace (max-width: 1000px) {
     .studio-table {
-      --dialogue-columns: 120px minmax(0, 1fr) minmax(0, 1fr) 240px;
+      --dialogue-columns: 116px minmax(0, 1fr) minmax(0, 1fr) 216px;
       --dialogue-column-gap: 16px;
     }
     .studio-table-header,
     .studio-row {
-      padding-inline: 16px;
+      padding-inline: 12px;
     }
   }
-  @container dubbing-workspace (max-width: 880px) {
+  @container dubbing-workspace (max-width: 800px) {
     .studio-table-header {
       display: none;
     }
@@ -266,7 +266,7 @@
         'source-audio dub-audio'
         'actions actions';
       grid-template-rows: auto;
-      gap: 12px 24px;
+      gap: 10px 16px;
     }
     .row-meta {
       flex-direction: row;

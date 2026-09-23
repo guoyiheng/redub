@@ -87,6 +87,15 @@ const channelTitle = computed(() => {
 const dubbingChannels = computed(() => channels.value.filter((c) => c.type === 'volcengine'))
 const translationChannels = computed(() => channels.value.filter((c) => c.type === 'openai'))
 
+function channelConcurrency(channel: Channel) {
+  if (channel.enabled) {
+    return channel.type === 'openai'
+      ? settings.value.translationConcurrency
+      : settings.value.synthesisConcurrency
+  }
+  return channel.concurrency ?? (channel.type === 'openai' ? 10 : 5)
+}
+
 const engineReady = computed(() => !!health.value?.ffmpeg && !!health.value?.ffprobe)
 const modelReady = computed(() => !!health.value?.models)
 const updateBusy = computed(
@@ -251,7 +260,7 @@ function edit(channel?: Channel, defaultType: 'volcengine' | 'openai' = 'volceng
     model: currentModel,
     keyEnv: channel?.keyEnv || (type === 'volcengine' ? 'VOLCENGINE_API_KEY' : 'OPENAI_API_KEY'),
     apiKey: channel?.apiKey || '',
-    concurrency: channel?.concurrency ?? (type === 'openai' ? 10 : 5),
+    concurrency: channel ? channelConcurrency(channel) : type === 'openai' ? 10 : 5,
     enabled: channel?.enabled ?? true
   }
   modalOpen.value = true
@@ -529,6 +538,7 @@ onBeforeUnmount(() => {
           :key="item.id"
           type="button"
           :class="{ active: activeSection === item.id }"
+          :aria-current="activeSection === item.id ? 'page' : undefined"
           @click="activeSection = item.id"
         >
           <UIcon :name="item.icon" />
@@ -570,7 +580,7 @@ onBeforeUnmount(() => {
                     <strong class="channel-name">{{ channel.name }}</strong>
                     <div class="flex items-center gap-2">
                       <UBadge color="neutral" variant="subtle" size="sm"
-                        >并发: {{ channel.concurrency ?? 5 }}</UBadge
+                        >并发: {{ channelConcurrency(channel) }}</UBadge
                       >
                       <UBadge
                         :color="!channel.enabled ? 'neutral' : channel.configured ? 'success' : 'warning'"
@@ -625,7 +635,7 @@ onBeforeUnmount(() => {
                     <strong class="channel-name">{{ channel.name }}</strong>
                     <div class="flex items-center gap-2">
                       <UBadge color="neutral" variant="subtle" size="sm"
-                        >并发: {{ channel.concurrency ?? 10 }}</UBadge
+                        >并发: {{ channelConcurrency(channel) }}</UBadge
                       >
                       <UBadge
                         :color="!channel.enabled ? 'neutral' : channel.configured ? 'success' : 'warning'"
@@ -677,11 +687,7 @@ onBeforeUnmount(() => {
 
           <!-- 微软 Edge TTS 音色列表 -->
           <div v-if="voiceSourceTab === 'tts'" class="flex flex-col gap-2.5">
-            <div
-              v-for="voice in sortedTtsVoices"
-              :key="voice.value"
-              class="flex items-center justify-between gap-4 p-3 rounded-lg border border-default bg-muted/40 hover:bg-elevated transition-all"
-            >
+            <div v-for="voice in sortedTtsVoices" :key="voice.value" class="settings-voice-row">
               <div class="flex items-center gap-3 min-w-0 flex-1">
                 <div
                   class="flex items-center justify-center w-9 h-9 rounded-lg bg-elevated border border-default text-primary shrink-0"
@@ -690,7 +696,7 @@ onBeforeUnmount(() => {
                 </div>
                 <div class="min-w-0 flex-1">
                   <div class="flex items-center gap-2">
-                    <strong class="text-sm font-semibold text-text truncate">{{ voice.label }}</strong>
+                    <strong class="text-sm font-semibold text-default truncate">{{ voice.label }}</strong>
                     <UBadge
                       v-if="settings.defaultTtsVoice === voice.value"
                       color="primary"
@@ -789,11 +795,7 @@ onBeforeUnmount(() => {
             </div>
 
             <div v-if="sortedRefVoices.length" class="flex flex-col gap-2.5">
-              <div
-                v-for="voice in sortedRefVoices"
-                :key="voice.id"
-                class="flex items-center justify-between gap-4 p-3 rounded-lg border border-default bg-muted/40 hover:bg-elevated transition-all"
-              >
+              <div v-for="voice in sortedRefVoices" :key="voice.id" class="settings-voice-row">
                 <div class="flex items-center gap-3 min-w-0 flex-1">
                   <div
                     class="flex items-center justify-center w-9 h-9 rounded-lg bg-elevated border border-default text-primary shrink-0"
@@ -805,7 +807,8 @@ onBeforeUnmount(() => {
                       <div class="flex items-center gap-2">
                         <UInput
                           v-model="refEditName"
-                          class="flex-1"
+                          aria-label="修改参考音色名称"
+                          class="min-w-0 flex-1"
                           size="sm"
                           @keydown.enter.prevent="saveReferenceName"
                         />
@@ -819,7 +822,7 @@ onBeforeUnmount(() => {
                     </template>
                     <template v-else>
                       <div class="flex items-center gap-2">
-                        <strong class="text-sm font-semibold text-text truncate">{{ voice.name }}</strong>
+                        <strong class="text-sm font-semibold text-default truncate">{{ voice.name }}</strong>
                         <UBadge
                           v-if="settings.pinnedVoices?.includes(voice.id)"
                           color="neutral"
@@ -841,6 +844,7 @@ onBeforeUnmount(() => {
                     size="xs"
                     icon="i-carbon-edit"
                     title="重命名"
+                    aria-label="重命名参考音色"
                     @click="startReferenceRename(voice)"
                   />
                   <UButton
@@ -987,7 +991,7 @@ onBeforeUnmount(() => {
                     class="mt-3 pt-3 border-t border-default/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                   >
                     <div class="min-w-0 flex-1">
-                      <strong class="text-xs font-semibold text-text">本地识别模型</strong>
+                      <strong class="text-xs font-semibold text-default">本地识别模型</strong>
                       <p class="text-xs text-muted mt-0.5">本地识别模型模型越大，精度越高，内存占用越多。</p>
                     </div>
                     <div class="w-48 shrink-0">
@@ -1064,25 +1068,26 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <form class="space-y-6 max-w-xl" @submit.prevent="saveGeneral">
+          <form class="settings-general-form" @submit.prevent="saveGeneral">
             <div class="p-4 rounded-lg border border-default bg-muted/30 space-y-4">
               <div class="flex items-center justify-between gap-4">
                 <div>
-                  <strong class="text-sm font-semibold text-text">默认开启 NSFW 毛玻璃遮罩</strong>
+                  <strong class="text-sm font-semibold text-default">默认开启 NSFW 毛玻璃遮罩</strong>
                   <p class="text-xs text-muted mt-0.5">
                     新建项目或打开未单独配置的项目时，视频画面默认开启毛玻璃遮罩。
                   </p>
                 </div>
-                <USwitch v-model="generalDraft.nsfwDefaultEnabled" />
+                <USwitch v-model="generalDraft.nsfwDefaultEnabled" aria-label="默认开启 NSFW 遮罩" />
               </div>
 
               <div class="space-y-1.5 pt-3 border-t border-default/50">
                 <div class="flex items-center justify-between text-xs">
-                  <strong class="font-semibold text-text">默认毛玻璃遮罩透光度</strong>
+                  <strong class="font-semibold text-default">默认毛玻璃遮罩透光度</strong>
                   <span class="text-muted">{{ generalDraft.nsfwDefaultTransparency }}% 透光</span>
                 </div>
                 <input
                   v-model.number="generalDraft.nsfwDefaultTransparency"
+                  aria-label="默认遮罩透光度"
                   type="range"
                   min="0"
                   max="75"
@@ -1099,12 +1104,12 @@ onBeforeUnmount(() => {
             <div class="p-4 rounded-lg border border-default bg-muted/30">
               <div class="flex items-center justify-between gap-4">
                 <div>
-                  <strong class="text-sm font-semibold text-text">任务失败后暂停队列</strong>
+                  <strong class="text-sm font-semibold text-default">任务失败后暂停队列</strong>
                   <p class="text-xs text-muted mt-0.5">
                     当台词翻译或配音遇到错误时，自动暂停后续任务以防连续报错。
                   </p>
                 </div>
-                <USwitch v-model="generalDraft.pauseOnFailure" />
+                <USwitch v-model="generalDraft.pauseOnFailure" aria-label="任务失败后暂停队列" />
               </div>
             </div>
 
@@ -1222,7 +1227,8 @@ onBeforeUnmount(() => {
               <div class="relative flex items-center w-full">
                 <UInput
                   v-model="draft.apiKey"
-                  class="w-full pr-9"
+                  class="w-full"
+                  :ui="{ base: 'pr-10' }"
                   :type="showApiKey ? 'text' : 'password'"
                   placeholder="输入 API Key"
                 />
@@ -1234,6 +1240,7 @@ onBeforeUnmount(() => {
                   class="absolute right-1"
                   :icon="showApiKey ? 'i-carbon-view-off' : 'i-carbon-view'"
                   :title="showApiKey ? '隐藏 API Key' : '查看明文 API Key'"
+                  :aria-label="showApiKey ? '隐藏 API Key' : '查看明文 API Key'"
                   @click="showApiKey = !showApiKey"
                 />
               </div>

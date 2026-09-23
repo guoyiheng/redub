@@ -306,8 +306,9 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <span class="audio-time" :title="`当前进度 / 总时长`">
-        {{ formatAudioTime(currentTime) }} / {{ formatAudioTime(totalDuration) }}
+      <span class="audio-time" :title="`${formatAudioTime(currentTime)} / ${formatAudioTime(totalDuration)}`">
+        <span class="audio-elapsed">{{ formatAudioTime(currentTime) }} / </span
+        >{{ formatAudioTime(totalDuration) }}
       </span>
 
       <div v-if="$slots.trailing" class="audio-trailing">
@@ -334,12 +335,13 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .audio-player {
+  container: audio-player / inline-size;
   display: inline-flex;
   align-items: center;
   gap: 8px;
   width: 100%;
   min-width: 0;
-  height: 36px;
+  min-height: 36px;
   padding: 3px 8px;
   border-radius: 8px;
   background: var(--ui-bg);
@@ -348,15 +350,15 @@ onBeforeUnmount(() => {
 }
 
 .audio-player.is-compact {
-  height: 32px;
+  min-height: 34px;
   padding: 2px 6px;
   gap: 6px;
 }
 
 .audio-play-btn {
   flex-shrink: 0;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -373,7 +375,7 @@ onBeforeUnmount(() => {
 .audio-waveform-track {
   position: relative;
   flex: 1;
-  min-width: 60px;
+  min-width: 0;
   height: 24px;
   display: flex;
   align-items: center;
@@ -401,12 +403,11 @@ onBeforeUnmount(() => {
 
 .waveform-bar {
   flex: 1;
-  min-width: 2px;
+  min-width: 0;
   max-width: 5px;
   min-height: 15%;
   border-radius: 99px;
   background: color-mix(in srgb, var(--ui-text-muted) 35%, transparent);
-  transition: height 120ms ease;
 }
 
 .progress-bars {
@@ -420,7 +421,7 @@ onBeforeUnmount(() => {
 
 .audio-time {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--ui-text-muted);
   white-space: nowrap;
@@ -435,14 +436,31 @@ onBeforeUnmount(() => {
 }
 
 .audio-empty-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12px;
   color: var(--ui-text-muted);
   line-height: 1.5;
+}
+@container audio-player (max-width: 240px) {
+  .audio-elapsed {
+    display: none;
+  }
+  .waveform-bars {
+    gap: 1px;
+  }
 }
 
 .audio-error-text {
   font-size: 12px;
   color: var(--ui-error, #dc2626);
   line-height: 1.5;
+}
+@media (pointer: coarse) {
+  .audio-waveform-track {
+    min-height: 44px;
+  }
 }
 </style>
