@@ -84,191 +84,130 @@ export const defaultVoiceSettings = (useReference = true) =>
     aiUseReference: useReference
   })
 
-export const defaultDubbingRequirement = (language = '中文', useReference = true) => {
-  const lang = normalizeLanguage(language.trim() || '中文')
-  const langStr = lang === '中文' ? '用中文配音' : `用${lang}配音`
-  return useReference
-    ? `${langStr}，以原声为表演基准复刻音色、语气、情绪起伏、重音、呼吸和停顿，真实呈现人物关系与剧情语境。`
-    : `${langStr}，保持生动自然的影视对白口语，根据剧情控制情绪、重音、语速、音调和停顿。`
-}
-
 export type VoiceContextLine = Pick<Segment, 'id' | 'speaker' | 'text' | 'translation' | 'start' | 'end'>
 
-/**
- * 将用户填写的语音指令包装成稳定的影视配音提示词。
- * 用户指令保持原样并作为最高优先级，包装内容只负责约束模型的执行边界。
- */
-export function buildVoiceSynthesisPrompt(options: {
-  instruction: string
-  text: string
-  duration: number
-  inferredTone?: string
-  hasAudioReference?: boolean
-  hasVoiceReference?: boolean
-  context?: VoiceContextLine[]
-}) {
-  const reference = options.hasVoiceReference
-    ? options.hasAudioReference
-      ? '参考音频只用于复刻音色、说话方式、情绪力度和节奏；不要朗读参考音频的文字，也不要继承参考音频的语言。'
-      : '指定音色只用于确定音色和说话方式；请根据当前台词和用户指令重新表演。'
-    : '没有参考音色时，请依据用户指令和当前台词语境自然完成表演。'
-  const context = options.context?.filter((line) => (line.translation || line.text).trim()).slice(-3) || []
-  const contextBlock = context.length
-    ? [
-        '【语境参考（只供理解，不朗读）】',
-        ...context.map(
-          (line) => `${line.speaker?.trim() || '角色'}：${(line.translation || line.text).trim()}`
-        )
-      ]
-    : []
-  const instruction = options.instruction.trim() || '自然、清晰、符合剧情地完成当前台词。'
-  const currentLineBlock = instruction.includes(options.text.trim())
-    ? []
-    : ['【当前台词（只朗读这一段）】', `「${options.text.trim()}」`]
-  return [
-    '你是专业影视配音演员和语言导演。',
-    '【配音任务】只生成当前台词的语音，不要朗读提示词、标签、说明、引号或元数据，不要添加台词之外的内容。',
-    `【目标时长】约 ${options.duration.toFixed(2)} 秒；优先保证自然表达，在可接受范围内贴合时长，不要为了赶时长而含混，也不要无故拖长。`,
-    `【参考音频】${reference}`,
-    ...contextBlock,
-    '【表演执行规则】',
-    '1. 先理解人物、关系、场景和情绪，再执行语音指令；情绪要通过语调、音量、语速、音高、重音、呼吸和停顿自然呈现。',
-    '2. 用户指定的情绪（如悲伤、生气、害羞、暧昧、吵架、哭腔）、方言/口音、语气、语速和音调优先级最高；同一句有情绪变化时，要表现自然的层次、转折与收放。',
-    '3. 严格遵守当前台词的标点、换行、省略号，以及用户写出的停顿、拖音、重复、犹豫和哭腔；停顿要像真实说话，不要平均切分或机械加停顿。',
-    '4. “上文”“引用上文”或类似内容仅供理解语境、人物关系和情绪承接，不朗读其中内容；只朗读用户明确指定的当前台词。',
-    '5. 不翻译、不改写、不补充、不删减当前台词；方言只改变发音和口吻，不改变台词含义。',
-    ...(options.inferredTone
-      ? [`【自动语境参考】${options.inferredTone}；仅在用户没有明确指定相反表演方式时采用。`]
-      : []),
-    '【用户语音指令】',
-    instruction,
-    ...currentLineBlock
-  ].join('\n')
+/** 文档约定：[#指令] 中的内容不合成，方括号外仅保留要朗读的台词。 */
+function directive(content: string) {
+  return `[#${content.replace(/\[/g, '（').replace(/\]/g, '）').trim()}]`
 }
 
-export interface StructuredVoicePrompt {
-  requirement: string
-  tone: string
-  text: string
+export const voiceLanguageInstruction = (language: string) => {
+  const lang = normalizeLanguage(language.trim() || '中文')
+  return `配音语言：${lang}。用${lang}配音，不翻译或切换语言。`
 }
 
-export function composeStructuredVoicePrompt(options: {
+export function stripVoiceLanguageInstruction(prompt: string) {
+  // 兼容旧版放在方括号外的完整语言说明行。
+  const content = prompt
+    .trim()
+    .replace(/^配音语言：[^\r\n]*(?:\r?\n|$)/, '')
+    .trim()
+  // 只更新第一个指令块中的语言，不修改台词或引用上文的内容。
+  return content.replace(
+    /^\[#([^\]]*)\]/,
+    (_, instruction: string) =>
+      `[#${instruction.replace(/配音语言：[^。\r\n]+。用[^。\r\n]+配音，不翻译或切换语言。/g, '')}]`
+  )
+}
+
+export function withVoiceLanguage(prompt: string, language: string) {
+  const content = stripVoiceLanguageInstruction(prompt)
+  const instruction = voiceLanguageInstruction(language)
+  if (content.startsWith('[#')) {
+    return content.replace(/^\[#([^\]]*)\]/, (_, first: string) => directive(`${instruction}${first.trim()}`))
+  }
+  return `${directive(instruction)}${content}`
+}
+
+export function composeVoicePrompt(options: {
   language?: string
   direction?: string | null
-  requirement?: string
   useReference?: boolean
   tone?: string | null
   text: string
 }) {
   const language = options.language || '中文'
-  const requirement =
-    options.requirement?.trim() ||
-    options.direction?.trim() ||
-    defaultDubbingRequirement(language, options.useReference ?? true)
-  const tone = options.tone?.trim() || '自然生动，富有情感'
-  const text = options.text.trim()
-  return `【配音要求】：${requirement}\n【角色语气】：${tone}\n【配音台词】：「${text}」`
-}
-
-export function parseStructuredVoicePrompt(input: string, fallbackText = ''): StructuredVoicePrompt {
-  const trimmed = input.trim()
-  if (!trimmed) {
-    return { requirement: '', tone: '', text: fallbackText.trim() }
-  }
-  const reqMatch = trimmed.match(/【(?:配音要求|配音指导|要求)】[：:]\s*([^\n]+)/)
-  const toneMatch = trimmed.match(/【(?:角色语气|语气情绪|语气)】[：:]\s*([^\n]+)/)
-  const textMatch = trimmed.match(/【(?:配音台词|台词|内容)】[：:]\s*[「"“]?([\s\S]*?)[」"”]?$/)
-
-  if (reqMatch || toneMatch || textMatch) {
-    let text = textMatch ? textMatch[1]!.trim().replace(/^[「"“]|[\s」"”]+$/g, '') : ''
-    if (!text && fallbackText) text = fallbackText.trim()
-    return {
-      requirement: reqMatch ? reqMatch[1]!.trim() : '',
-      tone: toneMatch ? toneMatch[1]!.trim() : '',
-      text: text || trimmed
-    }
-  }
-  const quoteMatch = trimmed.match(/[「"“]([\s\S]*?)[」"”]/)
-  if (quoteMatch) {
-    const text = quoteMatch[1]!.trim()
-    const toneOrReq = (
-      trimmed.slice(0, quoteMatch.index) + trimmed.slice(quoteMatch.index! + quoteMatch[0].length)
-    ).trim()
-    return {
-      requirement: '',
-      tone: toneOrReq,
-      text: text || fallbackText.trim()
-    }
-  }
-  return {
-    requirement: '',
-    tone: '',
-    text: trimmed
-  }
-}
-
-export function inferToneFromContext(
-  segment: Pick<Segment, 'text' | 'translation' | 'start' | 'end' | 'speaker'>,
-  allSegments: Pick<Segment, 'id' | 'text' | 'translation' | 'start' | 'end' | 'speaker'>[] = []
-): string {
-  const content = (segment.translation || segment.text || '').trim()
-  if (!content) return '自然流畅，语气平缓'
-
-  const duration = segment.end - segment.start
-  const currIdx = allSegments.findIndex(
-    (s) => s === segment || ('id' in segment && (s as any).id === (segment as any).id)
+  const direction = stripVoiceLanguageInstruction(options.direction?.trim() || '').replace(
+    /\[#([^\]]*)\]/g,
+    '$1'
   )
-  const prevSegment = currIdx > 0 ? allSegments[currIdx - 1] : undefined
-  const prevContent = (prevSegment?.translation || prevSegment?.text || '').trim()
-
-  if (/[!！]/.test(content)) {
-    if (/快|跑|危险|小心|救命|别去|闪开|住手/.test(content)) return '焦急慌乱，大声呼喊'
-    if (/闭嘴|滚|混蛋|混账|可恶|疯了|去死/.test(content)) return '愤怒斥责，情绪爆发'
-    if (/太棒了|太好了|哈哈|成功了|终于/.test(content)) return '兴奋欢快，热情洋溢'
-    if (duration < 1.2) return '短促有力，情绪紧绷'
-    return '情绪激昂，语气坚定'
-  }
-
-  if (/[?？]/.test(content)) {
-    if (/怎么会|为什么|难道|凭什么|何必|怎么可能/.test(content)) return '难以置信，质疑质问'
-    if (/谁|哪儿|哪里|什么时候|真假|真的吗/.test(content)) return '疑惑探寻，语调上扬'
-    return '试探询问，语带好奇'
-  }
-
-  if (/(\.{3}|…{1,2}|~)/.test(content) || /对不起|抱歉|可惜|是我不好|没办法/.test(content)) {
-    if (/对不起|抱歉|是我/.test(content)) return '自责内疚，轻声低语'
-    if (/可是|但是|也许|不过/.test(content)) return '犹豫迟疑，欲言又止'
-    return '轻声叹息，略带低落'
-  }
-
-  if (/别怕|没事的|别担心|放心吧|有我在|别哭/.test(content)) {
-    return '温柔安慰，语调轻柔缓和'
-  }
-
-  if (prevContent && /[?？]/.test(prevContent) && prevSegment?.speaker !== segment.speaker) {
-    return '从容作答，条理清晰'
-  }
-
-  if (duration < 1.0) return '短促利落，语速偏快'
-  if (duration > 4.0) return '沉稳从容，语速平缓'
-
-  return '自然生动，符合剧情语境'
+  const instruction = [
+    direction || defaultVoicePrompt(options.useReference ?? true),
+    options.tone?.trim() ? `用${options.tone.trim()}的语气说。` : ''
+  ]
+    .filter(Boolean)
+    .join('；')
+  return withVoiceLanguage(`${directive(instruction)}${options.text.trim()}`, language)
 }
 
-export const voiceLanguageInstruction = (language: string) => {
-  const lang = normalizeLanguage(language.trim() || '中文')
-  const langDub = lang === '中文' ? '用中文配音' : `用${lang}配音`
-  return `配音语言：${lang}。${langDub}；只使用该语言发音和表达，不翻译或切换语言。参考音频仅用于音色、语气、情绪和节奏，不沿用参考音频的语言。`
+/** 将已保存的旧格式转为文档格式；新格式保留原有指令、上文和台词。 */
+export function normalizeVoicePrompt(input: string, language: string, fallbackText = '') {
+  const content = stripVoiceLanguageInstruction(input)
+  if (content.includes('[#')) return withVoiceLanguage(content, language)
+
+  const requirement = content.match(/【(?:配音要求|配音指导|要求)】[：:]\s*([\s\S]*?)(?=\n?【|$)/)
+  const tone = content.match(/【(?:角色语气|语气情绪|语气)】[：:]\s*([\s\S]*?)(?=\n?【|$)/)
+  const line = content.match(/【(?:配音台词|台词|内容)】[：:]\s*([\s\S]*)$/)
+  if (requirement || tone || line) {
+    return composeVoicePrompt({
+      language,
+      direction: requirement?.[1]?.trim(),
+      tone: tone?.[1]?.trim(),
+      text: unwrapQuotation(line?.[1]?.trim() || fallbackText)
+    })
+  }
+
+  // 兼容单字段旧输入，例如“用轻松的语气说：「你好。」”。
+  const quoted = content.match(/^([\s\S]*?(?:说|朗读|配音|念)[：:]\s*)([「“"])([\s\S]*)([」”"])$/)
+  if (quoted) {
+    return withVoiceLanguage(`${directive(quoted[1]!.replace(/[：:]\s*$/, ''))}${quoted[3]}`, language)
+  }
+  return withVoiceLanguage(content || fallbackText, language)
 }
 
-export function stripVoiceLanguageInstruction(prompt: string) {
-  return prompt
-    .replace(/配音语言：[^\r\n]*/g, '')
-    .replace(/【配音要求】[：:]\s*(?=\n|$)/g, '')
-    .trim()
+function unwrapQuotation(text: string) {
+  const pairs: Record<string, string> = { '「': '」', '“': '”', '"': '"' }
+  return pairs[text[0]!] === text.at(-1) ? text.slice(1, -1) : text
 }
 
-export function withVoiceLanguage(prompt: string, language: string) {
-  const content = stripVoiceLanguageInstruction(prompt)
-  return `${voiceLanguageInstruction(language)}\n${content}`
+export function buildVoiceSynthesisPrompt(options: {
+  prompt?: string
+  instruction?: string | null
+  language: string
+  text: string
+  duration: number
+  hasAudioReference?: boolean
+  hasVoiceReference?: boolean
+  context?: VoiceContextLine[]
+}) {
+  const prompt = options.prompt?.trim()
+    ? normalizeVoicePrompt(options.prompt, options.language, options.text)
+    : composeVoicePrompt({
+        language: options.language,
+        direction: options.instruction,
+        useReference: options.hasAudioReference ?? false,
+        text: options.text
+      })
+  const speech = prompt.replace(/\[#[^\]]*\]/g, '').trim()
+  if (speech.includes('[#')) throw new Error('语音指令格式不完整，请使用 [#指令]台词')
+  if (!speech) throw new Error('请输入配音台词')
+
+  const reference = options.hasAudioReference
+    ? '参考@音频1的音色、语气和节奏，不朗读参考音频的文字，不沿用参考音频的语言。'
+    : options.hasVoiceReference
+      ? '保持所选音色，根据指令和台词自然表演。'
+      : ''
+  const timing = `以自然表达为先，尽量在${options.duration.toFixed(2)}秒内说完。`
+  // 已有多个前置指令块时，保留用户填写的引用上文，不再重复添加。
+  const hasQuotedContext = /^\[#[^\]]*\]\s*\[#/.test(prompt)
+  const context = hasQuotedContext
+    ? ''
+    : (options.context || [])
+        .map((line) => (line.translation || line.text).trim())
+        .filter(Boolean)
+        .slice(-3)
+        .join('\n')
+  return prompt.replace(/^\[#([^\]]*)\]/, (_, instruction: string) =>
+    [directive(`${instruction}；${reference}${timing}`), context ? directive(context) : ''].join('')
+  )
 }

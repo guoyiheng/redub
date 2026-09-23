@@ -1,15 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Channel, Segment } from '../../shared/types'
-import {
-  buildVoiceSynthesisPrompt,
-  parseStructuredVoicePrompt,
-  speakerName,
-  type VoiceContextLine,
-  stripVoiceLanguageInstruction,
-  withVoiceLanguage,
-  inferToneFromContext
-} from '../../shared/voice'
+import { buildVoiceSynthesisPrompt, speakerName, type VoiceContextLine } from '../../shared/voice'
 import { assetPath, cutAudio, probe } from './media'
 import { edgeSpeech } from './edge-speech'
 import { jobFetch, requestRedactor } from './job-requests'
@@ -22,6 +14,7 @@ export function synthesisHash(
   return createHash('sha256')
     .update(
       JSON.stringify({
+        promptFormat: segment.synthesisMode === 'ai' ? 'voice-instruction-v1' : undefined,
         language: segment.synthesisMode === 'ai' ? targetLanguage : undefined,
         text: segment.translation || segment.text,
         start: segment.start,
@@ -210,25 +203,16 @@ export async function synthesizeSpeech(
   }
   const hasAudioRef = references?.some((item) => 'audio_data' in item)
   const hasVoiceReference = Boolean(references?.length)
-  const rawPrompt = segment.generationPrompt?.trim() || ''
-  const parsedPrompt = rawPrompt ? parseStructuredVoicePrompt(rawPrompt, text) : null
-  const hasExplicitText = rawPrompt.length > 0 && /【(?:配音台词|台词|内容)】|[「"“]/.test(rawPrompt)
-  const currentText = hasExplicitText ? parsedPrompt?.text || text : text
-  const cleanedPrompt = stripVoiceLanguageInstruction(rawPrompt)
-  const rawDirection = stripVoiceLanguageInstruction(segment.aiPrompt?.trim() || '')
-  const instruction = rawPrompt
-    ? cleanedPrompt || rawPrompt
-    : `${rawDirection || `${targetLanguage === '中文' ? '用中文配音' : `用${targetLanguage}配音`}，保持自然生动的影视对话口语`}${hasAudioRef ? '，严格以@音频1相同的音色、语气与情感感觉' : ''}`
-  const content = buildVoiceSynthesisPrompt({
-    instruction,
+  const prompt = buildVoiceSynthesisPrompt({
+    prompt: segment.generationPrompt || undefined,
+    instruction: segment.aiPrompt,
+    language: targetLanguage,
     duration,
-    text: currentText,
-    inferredTone: parsedPrompt?.tone || inferToneFromContext(segment, context),
+    text,
     hasAudioReference: hasAudioRef,
     hasVoiceReference,
     context
   })
-  const prompt = withVoiceLanguage(content, targetLanguage)
   if (prompt.length > 3000) throw new Error('配音文本超过 3000 字限制')
   const result = await responseJson(
     await jobFetch(

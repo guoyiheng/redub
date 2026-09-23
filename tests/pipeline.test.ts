@@ -93,6 +93,8 @@ describe.sequential('媒体处理与服务协议', () => {
       expect(body.model).toBe('seed-audio-1.0')
       expect(body.text_prompt).toContain('@音频1')
       expect(body.text_prompt).toContain('配音语言：中文')
+      expect(body.text_prompt).toMatch(/^\[#/)
+      expect(body.text_prompt.replace(/\[#[^\]]*\]/g, '')).toBe('你好')
       expect(body.references[0].audio_data).toBeTruthy()
       expect(body.audio_config.sample_rate).toBe(48000)
       return new Response(
@@ -139,16 +141,21 @@ describe.sequential('媒体处理与服务协议', () => {
     expect(result.duration).toBeGreaterThan(0)
     expect(fetcher).toHaveBeenCalledOnce()
   })
-  it('合并输入直接作为 AI 要求，替换和移除参考均作用于实际请求', async () => {
+  it.each([
+    '用轻松的语气说：「欢迎回来。」',
+    '[#用轻松的语气说]欢迎回来。',
+    '【配音要求】：用轻松的语气说\n【角色语气】：温柔期待\n【配音台词】：「欢迎回来。」'
+  ])('合并输入以文档格式发送，替换和移除参考作用于实际请求：%s', async (generationPrompt) => {
     const line = {
       ...(await getSegments(id))[0]!,
       aiPrompt: '不应附加的旧提示词',
-      generationPrompt: '用轻松的语气说：「欢迎回来。」',
+      generationPrompt,
       customReferencePath: `${id}/fixture.mp3`
     }
     const fetcher = vi.fn(async (_url, options) => {
       const body = JSON.parse(options.body)
-      expect(body.text_prompt).toContain(line.generationPrompt)
+      expect(body.text_prompt).toContain('用轻松的语气说')
+      expect(body.text_prompt.replace(/\[#[^\]]*\]/g, '')).toBe('欢迎回来。')
       expect(body.text_prompt).toContain('配音语言：中文')
       expect(body.text_prompt).not.toContain(line.translation)
       expect(body.text_prompt).not.toContain(line.aiPrompt)

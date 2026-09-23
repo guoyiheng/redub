@@ -1044,44 +1044,6 @@ button:disabled {
 .voice-composer-input textarea::placeholder {
   color: var(--ui-text-muted);
 }
-.voice-tone-bar {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px 12px;
-  margin: 8px 8px 0;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--ui-bg-elevated) 60%, transparent);
-  border: 1px solid color-mix(in srgb, var(--ui-border) 70%, transparent);
-}
-.voice-tone-header {
-  min-width: 0;
-  gap: 8px;
-  flex-wrap: wrap;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 12px;
-}
-.voice-tone-label {
-  min-width: 0;
-  flex: 1;
-  white-space: nowrap;
-  display: flex;
-  align-items: center;
-  color: var(--ui-text-muted);
-}
-.voice-tone-label strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--ui-primary);
-  margin-left: 4px;
-}
-.voice-tone-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
 .voice-reference-bar {
   display: flex;
   align-items: center;
@@ -3244,9 +3206,6 @@ button:disabled {
 }
 .voice-composer-tools > button {
   max-width: 100%;
-}
-.voice-tone-header > button {
-  flex-shrink: 0;
 }
 @media (max-width: 1100px) and (min-width: 721px) {
   :root {

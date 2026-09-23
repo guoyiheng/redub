@@ -25,7 +25,7 @@ import type { Job, Segment, TranslationVersion, AudioVersion } from '../../share
 import { exportProject } from './export'
 import { getPreviewTracks } from './preview-tracks'
 import { assertTimeline } from '../../shared/timeline'
-import { dubbedText, composeStructuredVoicePrompt, inferToneFromContext } from '../../shared/voice'
+import { dubbedText, composeVoicePrompt } from '../../shared/voice'
 import { createVersionName } from '../../shared/version'
 import { translationTaskSchema } from '../../shared/translation'
 
@@ -221,7 +221,7 @@ export async function executeJob(job: Job, progress: (value: number, message: st
     await jobTransaction(async (tx) => {
       for (const s of lines) {
         const newText = result.get(s.id)!
-        const tone = (result as any).tones?.get(s.id) || inferToneFromContext(s, lines)
+        const tone = result.tones?.get(s.id)
         const history: TranslationVersion[] = [...(s.translationHistory || [])]
         if (s.translation && s.translation.trim() && history.length === 0) {
           history.push({
@@ -239,7 +239,7 @@ export async function executeJob(job: Job, progress: (value: number, message: st
           language: targetLanguage,
           createdAt: Date.now()
         })
-        const generationPrompt = composeStructuredVoicePrompt({
+        const generationPrompt = composeVoicePrompt({
           language: targetLanguage,
           direction: s.aiPrompt,
           useReference: s.aiUseReference,
