@@ -33,15 +33,15 @@ jobs:
           - label: macOS Intel
             os: macos-14
             cache-id: macos-x64
-            command: npx electron-builder --mac dmg zip --x64 --publish never
+            command: npx electron-builder --config electron-builder.config.cjs --mac dmg zip --x64 --publish never
           - label: macOS Apple Silicon
             os: macos-14
             cache-id: macos-arm64
-            command: npx electron-builder --mac dmg zip --arm64 --publish never
+            command: npx electron-builder --config electron-builder.config.cjs --mac dmg zip --arm64 --publish never
           - label: Windows x64
             os: windows-latest
             cache-id: windows-x64
-            command: npx electron-builder --win nsis --x64 --publish never
+            command: npx electron-builder --config electron-builder.config.cjs --win nsis --x64 --publish never
     runs-on: ${{ matrix.os }}
     env:
       NPM_CONFIG_CACHE: ${{ github.workspace }}/.cache/npm
