@@ -143,6 +143,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
           v-model="statusFilter"
           :items="filters"
           size="sm"
+          class="task-status-filter"
           aria-label="按任务状态筛选"
           :portal="false"
         />
@@ -191,6 +192,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
                 color="neutral"
                 variant="outline"
                 size="xs"
+                class="task-action-button"
                 square
                 icon="i-carbon-renew"
                 aria-label="重试"
@@ -202,6 +204,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
                 color="neutral"
                 variant="outline"
                 size="xs"
+                class="task-action-button"
                 square
                 icon="i-carbon-document"
                 aria-label="查看详情"
@@ -213,6 +216,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
                 color="neutral"
                 variant="outline"
                 size="xs"
+                class="task-action-button"
                 square
                 icon="i-carbon-close"
                 aria-label="取消任务"
@@ -262,6 +266,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   padding: 12px 16px;
   border-bottom: 1px solid var(--ui-border);
   font-size: 13px;
+}
+.task-status-filter {
+  flex: 0 0 112px;
+  width: 112px;
 }
 .task-list-body {
   overflow-y: auto;
@@ -338,5 +346,12 @@ time {
   display: flex;
   flex-shrink: 0;
   gap: 6px;
+}
+:deep(.task-action-button) {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
 }
 </style>
