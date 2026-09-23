@@ -217,7 +217,7 @@ async function restoreVersion(type: 'translation' | 'audio', item: { id: string;
                 </div>
               </div>
               <div class="version-audio-player">
-                <ClipAudio :src="mediaUrl(item.audioPath)" :label="`${item.name} 试听`" />
+                <AudioPlayer :src="mediaUrl(item.audioPath)" :label="`${item.name} 试听`" />
               </div>
             </div>
           </div>

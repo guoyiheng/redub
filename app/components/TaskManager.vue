@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { onClickOutside } from '@vueuse/core'
+import { onClickOutside, useIntersectionObserver } from '@vueuse/core'
 import { isActiveTask } from '../../shared/task-groups'
 import { stageLabels, type Job } from '../../shared/types'
 const { jobs, projects, act, errorMessage } = useStudio()
 const open = ref(false)
 const panelRef = ref<HTMLElement | null>(null)
+const sentinelRef = ref<HTMLElement | null>(null)
 const statusFilter = ref('all')
 const route = useRoute()
 const router = useRouter()
@@ -81,7 +82,7 @@ function locate(job: Job) {
   }
 }
 async function loadHistory() {
-  if (historyLoading.value) return
+  if (historyLoading.value || !historyMore.value) return
   historyLoading.value = true
   historyError.value = ''
   try {
@@ -93,6 +94,24 @@ async function loadHistory() {
     historyError.value = errorMessage(error)
   } finally {
     historyLoading.value = false
+  }
+}
+
+useIntersectionObserver(
+  sentinelRef,
+  ([entry]) => {
+    if (entry?.isIntersecting && historyMore.value && !historyLoading.value) {
+      void loadHistory()
+    }
+  },
+  { threshold: 0.1 }
+)
+
+function onListScroll(event: Event) {
+  const el = event.target as HTMLElement
+  if (!el || historyLoading.value || !historyMore.value) return
+  if (el.scrollHeight - el.scrollTop - el.clientHeight < 100) {
+    void loadHistory()
   }
 }
 async function action(job: Job, value: 'retry' | 'cancel') {
@@ -177,7 +196,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
           </button>
         </div>
       </header>
-      <div class="task-list-body">
+      <div class="task-list-body" @scroll.passive="onListScroll">
         <div v-if="!visible.length" class="task-empty">
           <UIcon name="i-carbon-task" class="task-empty-icon" />
           <p>暂无{{ statusFilter === 'all' ? '' : '符合筛选的' }}任务</p>
@@ -271,19 +290,15 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
           </div>
         </article>
 
-        <p v-if="historyError" class="error-text" role="alert">{{ historyError }}</p>
-        <UButton
-          v-if="historyMore || historyError"
-          class="task-load-more"
-          block
-          size="xs"
-          color="neutral"
-          variant="subtle"
-          :loading="historyLoading"
-          @click="loadHistory"
-        >
-          加载更多历史任务
-        </UButton>
+        <div v-if="historyLoading" class="task-scroll-loading">
+          <UIcon name="i-carbon-circle-dash" class="animate-spin text-sm" />
+          <span>加载历史任务中…</span>
+        </div>
+        <div v-else-if="historyError" class="task-scroll-error">
+          <span class="error-text" role="alert">{{ historyError }}</span>
+          <UButton size="xs" color="neutral" variant="ghost" @click="loadHistory">重试</UButton>
+        </div>
+        <div ref="sentinelRef" class="task-sentinel" />
       </div>
     </aside>
   </div>
@@ -557,8 +572,26 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   align-items: center !important;
   justify-content: center !important;
   border-radius: 4px !important;
+.task-scroll-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 0 6px;
+  font-size: 12px;
+  color: var(--ui-text-muted);
 }
-.task-load-more {
-  margin-top: 4px;
+.task-scroll-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 0;
+  font-size: 12px;
+}
+.task-sentinel {
+  height: 4px;
+  pointer-events: none;
+  visibility: hidden;
 }
 </style>

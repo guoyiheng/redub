@@ -114,10 +114,6 @@ const saving = ref(false)
 const uploading = ref(false)
 const picker = ref<HTMLInputElement>()
 const referenceOpen = ref(false)
-const audioRef = ref<HTMLAudioElement>()
-const isPlaying = ref(false)
-const audioError = ref(false)
-
 const referenceSrc = computed(() =>
   customReference.value
     ? mediaUrl(customReference.value)
@@ -127,54 +123,6 @@ const referenceSrc = computed(() =>
         : `/api/segments/${props.segment.id}/original?t=${props.segment.start}-${props.segment.end}`
       : ''
 )
-
-function togglePlay() {
-  if (!audioRef.value) return
-  if (isPlaying.value) {
-    audioRef.value.pause()
-  } else {
-    document.querySelectorAll('audio, video').forEach((el) => {
-      if (el !== audioRef.value) (el as HTMLMediaElement).pause()
-    })
-    audioRef.value.play().catch(() => {
-      isPlaying.value = false
-    })
-  }
-}
-
-function onAudioEnded() {
-  isPlaying.value = false
-  if (audioRef.value) {
-    audioRef.value.currentTime = 0
-  }
-}
-
-function onAudioPause() {
-  isPlaying.value = false
-}
-
-function onAudioPlay() {
-  isPlaying.value = true
-}
-
-function onAudioError() {
-  audioError.value = true
-  isPlaying.value = false
-}
-
-watch(referenceSrc, () => {
-  if (audioRef.value) {
-    audioRef.value.pause()
-  }
-  isPlaying.value = false
-  audioError.value = false
-})
-
-onBeforeUnmount(() => {
-  if (audioRef.value) {
-    audioRef.value.pause()
-  }
-})
 
 const busy = computed(() => saving.value || uploading.value)
 const submitLabel = computed(() => (props.segment.enabled ? '生成本句配音' : '生成并启用替换'))
@@ -188,10 +136,6 @@ const unavailableReason = computed(() => {
   return ''
 })
 function removeReference() {
-  if (audioRef.value) {
-    audioRef.value.pause()
-  }
-  isPlaying.value = false
   draft.value.aiUseReference = false
   customReference.value = null
   referenceOpen.value = false
@@ -303,53 +247,40 @@ async function generate() {
       <template #reference>
         <div
           v-if="draft.synthesisMode === 'ai' && draft.aiUseReference && referenceSrc"
-          class="reference-chip"
+          class="voice-reference-wrapper"
         >
-          <audio
-            ref="audioRef"
-            :src="referenceSrc"
-            preload="metadata"
-            class="hidden"
-            @ended="onAudioEnded"
-            @pause="onAudioPause"
-            @play="onAudioPlay"
-            @error="onAudioError"
-          />
-          <UButton
-            type="button"
-            color="neutral"
-            variant="outline"
-            size="sm"
-            :icon="isPlaying ? 'i-carbon-pause-filled' : 'i-carbon-play-filled-alt'"
-            :aria-label="isPlaying ? '暂停参考音频' : '播放参考音频'"
-            @click.stop="togglePlay"
-          />
-          <div class="voice-reference-meta">
-            <span class="voice-reference-title" :title="referenceName">{{ referenceName }}</span>
-          </div>
-          <UDropdownMenu :items="referenceChoices" :content="{ side: 'top', align: 'start' }">
-            <UButton
-              type="button"
-              color="neutral"
-              variant="outline"
-              size="sm"
-              icon="i-carbon-chevron-down"
-              :disabled="busy"
-              aria-label="替换参考音色"
-              title="替换参考音色"
-            />
-          </UDropdownMenu>
-          <UButton
-            type="button"
-            color="neutral"
-            variant="outline"
-            size="sm"
-            icon="i-carbon-close"
-            :disabled="busy"
-            aria-label="移除参考音频"
-            title="移除参考音频"
-            @click.stop="removeReference"
-          />
+          <AudioPlayer :src="referenceSrc" :label="referenceName" :duration="segment.end - segment.start">
+            <template #leading>
+              <div class="voice-reference-meta">
+                <span class="voice-reference-title" :title="referenceName">{{ referenceName }}</span>
+              </div>
+            </template>
+            <template #trailing>
+              <UDropdownMenu :items="referenceChoices" :content="{ side: 'top', align: 'start' }">
+                <UButton
+                  type="button"
+                  color="neutral"
+                  variant="ghost"
+                  size="xs"
+                  icon="i-carbon-chevron-down"
+                  :disabled="busy"
+                  aria-label="替换参考音色"
+                  title="替换参考音色"
+                />
+              </UDropdownMenu>
+              <UButton
+                type="button"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                icon="i-carbon-close"
+                :disabled="busy"
+                aria-label="移除参考音频"
+                title="移除参考音频"
+                @click.stop="removeReference"
+              />
+            </template>
+          </AudioPlayer>
         </div>
       </template>
       <template #reference-control>
@@ -400,24 +331,16 @@ async function generate() {
 </template>
 
 <style scoped>
-.reference-chip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: fit-content;
-  max-width: calc(100% - 24px);
+.voice-reference-wrapper {
   margin: 0 12px 10px;
-  padding: 5px;
-  border: 1px solid var(--ui-border);
-  border-radius: 10px;
-  background: var(--ui-bg);
+  max-width: calc(100% - 24px);
 }
-.reference-chip .voice-reference-meta {
+.voice-reference-wrapper .voice-reference-meta {
   flex: 0 1 auto;
   min-width: 0;
-  max-width: 150px;
+  max-width: 140px;
 }
-.reference-chip .voice-reference-title {
+.voice-reference-wrapper .voice-reference-title {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;

@@ -1014,13 +1014,11 @@ async function onSegmentRestored(updated: Segment) {
       <template v-else>
         <div class="studio-table" aria-label="台词与配音对照">
           <div class="studio-table-header">
-            <div class="th-meta">片段 / 时间</div>
+            <div class="th-meta">片段与时间戳</div>
             <div class="th-col">
-              <UIcon name="i-carbon-volume-up" />
               <span>原文与原声</span>
             </div>
             <div class="th-col">
-              <UIcon name="i-carbon-microphone" />
               <span>翻译与配音</span>
             </div>
             <div class="th-actions">状态与操作</div>
@@ -1036,9 +1034,11 @@ async function onSegmentRestored(updated: Segment) {
               :class="{ selected: current === line.id, 'not-replaced': !line.enabled }"
             >
               <div class="row-meta">
-                <span class="segment-idx">#{{ String(getGlobalIndex(line.id)).padStart(2, '0') }}</span>
+                <div class="segment-meta-header">
+                  <span class="segment-idx">#{{ String(getGlobalIndex(line.id)).padStart(2, '0') }}</span>
+                  <span class="segment-speaker">{{ speakerName(line.speaker) }}</span>
+                </div>
                 <time class="segment-time">{{ formatTime(line.start) }} – {{ formatTime(line.end) }}</time>
-                <span class="segment-speaker">{{ speakerName(line.speaker) }}</span>
               </div>
 
               <div class="row-source-text">
@@ -1047,7 +1047,7 @@ async function onSegmentRestored(updated: Segment) {
               </div>
 
               <div class="row-source-audio">
-                <ClipAudio
+                <AudioPlayer
                   :src="
                     project.kind !== 'text' && project.sourcePath
                       ? `/api/segments/${line.id}/original?t=${line.start}-${line.end}`
@@ -1055,6 +1055,7 @@ async function onSegmentRestored(updated: Segment) {
                   "
                   :label="`第 ${getGlobalIndex(line.id)} 句原声`"
                   :empty="project.kind === 'text' ? '文本台词，无原声音频' : '尚无可试听的原声素材'"
+                  :duration="line.end - line.start"
                 />
               </div>
 
@@ -1073,10 +1074,11 @@ async function onSegmentRestored(updated: Segment) {
               </div>
 
               <div class="row-dub-audio">
-                <ClipAudio
+                <AudioPlayer
                   v-if="line.generatedPath"
                   :src="mediaUrl(line.generatedPath)"
                   :label="`第 ${getGlobalIndex(line.id)} 句生成配音`"
+                  :duration="line.end - line.start"
                 />
                 <div v-else class="audio-placeholder">
                   <UIcon name="i-carbon-waveform" />

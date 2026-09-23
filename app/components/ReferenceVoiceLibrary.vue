@@ -165,7 +165,7 @@ function selectVoice(voice: ReferenceVoice) {
               >
             </template>
           </div>
-          <ClipAudio :src="mediaUrl(voice.path)" :label="`试听${voice.name}`" />
+          <AudioPlayer :src="mediaUrl(voice.path)" :label="`试听${voice.name}`" />
         </div>
       </section>
     </template>
