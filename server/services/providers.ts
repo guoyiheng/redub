@@ -3,7 +3,10 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { Channel, Segment } from '../../shared/types'
 import {
   buildVoiceSynthesisPrompt,
+  parseStructuredVoicePrompt,
   speakerName,
+  type VoiceContextLine,
+  stripVoiceLanguageInstruction,
   withVoiceLanguage,
   inferToneFromContext
 } from '../../shared/voice'
@@ -170,7 +173,8 @@ export async function synthesizeSpeech(
   segment: Segment,
   channel: Channel,
   output: string,
-  targetLanguage = '中文'
+  targetLanguage = '中文',
+  context: VoiceContextLine[] = []
 ) {
   const text = segment.translation || segment.text
   if (!(segment.synthesisMode === 'ai' ? segment.generationPrompt || text : text).trim())
@@ -205,17 +209,24 @@ export async function synthesizeSpeech(
     references = [{ speaker: segment.aiSpeaker.trim() }]
   }
   const hasAudioRef = references?.some((item) => 'audio_data' in item)
-  const rawDirection = (segment.aiPrompt?.trim() || '')
-    .replace(/配音语言：[^\n]*(?:不沿用参考音频的语言|请使用该语言|用[^\n]+配音)。?(?:\r?\n)?/g, '')
-    .trim()
-  const instruction = segment.generationPrompt?.trim()
-    ? segment.generationPrompt.trim()
-    : `${rawDirection || `${targetLanguage === '中文' ? '用中文配音' : `用${targetLanguage}配音`}，保持自然生动的影视对话口语`}${hasAudioRef ? '，严格以@音频1相同的音色、语气与情感感觉' : ''}；朗读：「${text}」`
+  const hasVoiceReference = Boolean(references?.length)
+  const rawPrompt = segment.generationPrompt?.trim() || ''
+  const parsedPrompt = rawPrompt ? parseStructuredVoicePrompt(rawPrompt, text) : null
+  const hasExplicitText = rawPrompt.length > 0 && /【(?:配音台词|台词|内容)】|[「"“]/.test(rawPrompt)
+  const currentText = hasExplicitText ? parsedPrompt?.text || text : text
+  const cleanedPrompt = stripVoiceLanguageInstruction(rawPrompt)
+  const rawDirection = stripVoiceLanguageInstruction(segment.aiPrompt?.trim() || '')
+  const instruction = rawPrompt
+    ? cleanedPrompt || rawPrompt
+    : `${rawDirection || `${targetLanguage === '中文' ? '用中文配音' : `用${targetLanguage}配音`}，保持自然生动的影视对话口语`}${hasAudioRef ? '，严格以@音频1相同的音色、语气与情感感觉' : ''}`
   const content = buildVoiceSynthesisPrompt({
     instruction,
     duration,
-    inferredTone: inferToneFromContext(segment, []),
-    hasAudioReference: hasAudioRef
+    text: currentText,
+    inferredTone: parsedPrompt?.tone || inferToneFromContext(segment, context),
+    hasAudioReference: hasAudioRef,
+    hasVoiceReference,
+    context
   })
   const prompt = withVoiceLanguage(content, targetLanguage)
   if (prompt.length > 3000) throw new Error('配音文本超过 3000 字限制')

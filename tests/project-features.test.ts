@@ -100,4 +100,32 @@ describe('项目置顶与属性功能', () => {
     expect(referenceVoicePrompt).toContain('复刻人物的情感色彩、语调起伏')
     expect(referenceVoicePrompt).toContain('完全一致')
   })
+
+  it('AI 配音提示词强化语音指令、上下文承接与当前台词边界', async () => {
+    const { buildVoiceSynthesisPrompt } = await import('../shared/voice')
+    const prompt = buildVoiceSynthesisPrompt({
+      instruction: '用颤抖沙哑、带着崩溃与绝望的哭腔说：「我逆转时空九十九次救你。」',
+      text: '我逆转时空九十九次救你。',
+      duration: 2.4,
+      inferredTone: '悲伤哽咽，带着质问',
+      hasAudioReference: true,
+      hasVoiceReference: true,
+      context: [
+        {
+          id: 'previous',
+          speaker: '对方',
+          text: '你还好吗？',
+          translation: '你还好吗？',
+          start: 0,
+          end: 1
+        }
+      ]
+    })
+    expect(prompt).toContain('用户指定的情绪')
+    expect(prompt).toContain('方言/口音、语气、语速和音调优先级最高')
+    expect(prompt).toContain('语境参考（只供理解，不朗读）')
+    expect(prompt).toContain('自动语境参考')
+    expect(prompt).toContain('我逆转时空九十九次救你。')
+    expect(prompt).toContain('不要朗读参考音频的文字')
+  })
 })

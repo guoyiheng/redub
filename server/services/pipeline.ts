@@ -264,9 +264,8 @@ export async function executeJob(job: Job, progress: (value: number, message: st
     await progress(100, `已完成全部 ${lines.length} 句台词翻译`)
   }
   if (job.stage === 'synthesize') {
-    const lines = (await getSegments(p.id)).filter(
-      (s) => s.enabled && (!job.segmentId || s.id === job.segmentId)
-    )
+    const allLines = await getSegments(p.id)
+    const lines = allLines.filter((s) => s.enabled && (!job.segmentId || s.id === job.segmentId))
     if (!lines.length) throw new Error('没有启用的配音片段')
     const needsAi = lines.some((s) => s.synthesisMode !== 'tts')
     const needsReference = lines.some(
@@ -333,7 +332,8 @@ export async function executeJob(job: Job, progress: (value: number, message: st
         s,
         channel!,
         assetPath(output),
-        s.translationLanguage || p.targetLanguage
+        s.translationLanguage || p.targetLanguage,
+        allLines.filter((line) => line.id !== s.id && line.end <= s.start).slice(-3)
       )
       const audioHistory: AudioVersion[] = [...(s.audioHistory || [])]
       if (s.generatedPath && audioHistory.length === 0) {

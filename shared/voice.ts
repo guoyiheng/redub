@@ -28,6 +28,22 @@ export const voiceSettingsSchema = z.object({
   ttsVolume: z.number().int().min(-50).max(100).default(0)
 })
 export type VoiceSettings = z.infer<typeof voiceSettingsSchema>
+
+export const ttsVoices = [
+  { label: '晓晓 · 中文女声', value: 'zh-CN-XiaoxiaoNeural', lang: '中文' },
+  { label: '云希 · 中文男声', value: 'zh-CN-YunxiNeural', lang: '中文' },
+  { label: '晓伊 · 中文女声', value: 'zh-CN-XiaoyiNeural', lang: '中文' },
+  { label: '云健 · 中文男声', value: 'zh-CN-YunjianNeural', lang: '中文' },
+  { label: 'Jenny · 英语女声', value: 'en-US-JennyNeural', lang: '英语' },
+  { label: 'Guy · 英语男声', value: 'en-US-GuyNeural', lang: '英语' },
+  { label: 'Nanami · 日语女声', value: 'ja-JP-NanamiNeural', lang: '日语' },
+  { label: 'SunHi · 韩语女声', value: 'ko-KR-SunHiNeural', lang: '韩语' },
+  { label: 'Elvira · 西班牙语', value: 'es-ES-ElviraNeural', lang: '西班牙语' },
+  { label: 'Denise · 法语', value: 'fr-FR-DeniseNeural', lang: '法语' },
+  { label: 'Katja · 德语', value: 'de-DE-KatjaNeural', lang: '德语' },
+  { label: 'Elsa · 意大利语', value: 'it-IT-ElsaNeural', lang: '意大利语' },
+  { label: 'Svetlana · 俄语', value: 'ru-RU-SvetlanaNeural', lang: '俄语' }
+]
 export const generationSchema = voiceSettingsSchema.extend({
   generationPrompt: z.string().trim().min(1, '请输入配音内容').max(2800).optional(),
   translation: z.string().trim().min(1, '请输入配音台词').max(2800).optional(),
@@ -76,24 +92,45 @@ export const defaultDubbingRequirement = (language = '中文', useReference = tr
     : `${langStr}，保持生动自然的影视对白口语，根据剧情控制情绪、重音、语速、音调和停顿。`
 }
 
+export type VoiceContextLine = Pick<Segment, 'id' | 'speaker' | 'text' | 'translation' | 'start' | 'end'>
+
 /**
  * 将用户填写的语音指令包装成稳定的影视配音提示词。
  * 用户指令保持原样并作为最高优先级，包装内容只负责约束模型的执行边界。
  */
 export function buildVoiceSynthesisPrompt(options: {
   instruction: string
+  text: string
   duration: number
   inferredTone?: string
   hasAudioReference?: boolean
+  hasVoiceReference?: boolean
+  context?: VoiceContextLine[]
 }) {
-  const reference = options.hasAudioReference
-    ? '参考音频只用于复刻音色、说话方式、情绪力度和节奏；不要朗读参考音频的文字，也不要继承参考音频的语言。'
-    : '没有参考音频时，请依据用户指令和当前台词语境自然完成表演。'
+  const reference = options.hasVoiceReference
+    ? options.hasAudioReference
+      ? '参考音频只用于复刻音色、说话方式、情绪力度和节奏；不要朗读参考音频的文字，也不要继承参考音频的语言。'
+      : '指定音色只用于确定音色和说话方式；请根据当前台词和用户指令重新表演。'
+    : '没有参考音色时，请依据用户指令和当前台词语境自然完成表演。'
+  const context = options.context?.filter((line) => (line.translation || line.text).trim()).slice(-3) || []
+  const contextBlock = context.length
+    ? [
+        '【语境参考（只供理解，不朗读）】',
+        ...context.map(
+          (line) => `${line.speaker?.trim() || '角色'}：${(line.translation || line.text).trim()}`
+        )
+      ]
+    : []
+  const instruction = options.instruction.trim() || '自然、清晰、符合剧情地完成当前台词。'
+  const currentLineBlock = instruction.includes(options.text.trim())
+    ? []
+    : ['【当前台词（只朗读这一段）】', `「${options.text.trim()}」`]
   return [
     '你是专业影视配音演员和语言导演。',
     '【配音任务】只生成当前台词的语音，不要朗读提示词、标签、说明、引号或元数据，不要添加台词之外的内容。',
     `【目标时长】约 ${options.duration.toFixed(2)} 秒；优先保证自然表达，在可接受范围内贴合时长，不要为了赶时长而含混，也不要无故拖长。`,
     `【参考音频】${reference}`,
+    ...contextBlock,
     '【表演执行规则】',
     '1. 先理解人物、关系、场景和情绪，再执行语音指令；情绪要通过语调、音量、语速、音高、重音、呼吸和停顿自然呈现。',
     '2. 用户指定的情绪（如悲伤、生气、害羞、暧昧、吵架、哭腔）、方言/口音、语气、语速和音调优先级最高；同一句有情绪变化时，要表现自然的层次、转折与收放。',
@@ -103,8 +140,9 @@ export function buildVoiceSynthesisPrompt(options: {
     ...(options.inferredTone
       ? [`【自动语境参考】${options.inferredTone}；仅在用户没有明确指定相反表演方式时采用。`]
       : []),
-    '【用户语音指令与当前台词】',
-    options.instruction.trim()
+    '【用户语音指令】',
+    instruction,
+    ...currentLineBlock
   ].join('\n')
 }
 
@@ -223,9 +261,14 @@ export const voiceLanguageInstruction = (language: string) => {
   return `配音语言：${lang}。${langDub}；只使用该语言发音和表达，不翻译或切换语言。参考音频仅用于音色、语气、情绪和节奏，不沿用参考音频的语言。`
 }
 
-export function withVoiceLanguage(prompt: string, language: string) {
-  const content = prompt
-    .replace(/^配音语言：[^\n]*(?:不沿用参考音频的语言|请使用该语言|用[^\n]+配音)。?(?:\r?\n)?/gm, '')
+export function stripVoiceLanguageInstruction(prompt: string) {
+  return prompt
+    .replace(/配音语言：[^\r\n]*/g, '')
+    .replace(/【配音要求】[：:]\s*(?=\n|$)/g, '')
     .trim()
+}
+
+export function withVoiceLanguage(prompt: string, language: string) {
+  const content = stripVoiceLanguageInstruction(prompt)
   return `${voiceLanguageInstruction(language)}\n${content}`
 }
