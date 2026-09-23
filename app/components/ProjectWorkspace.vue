@@ -80,6 +80,9 @@ const trackEnabled = reactive<Record<PreviewTrackKey, boolean>>({
 })
 const exportTrack = ref<PreviewTrackKey>('optimized')
 const exportTarget = ref<'audio' | 'video'>('audio')
+const nsfwEnabled = ref(false)
+const nsfwTransparency = ref(30)
+const nsfwSettingsOpen = ref(false)
 let pendingSeek: number | undefined
 let resumeOnLoad = false
 let previewRequest = 0
@@ -933,6 +936,45 @@ async function onSegmentRestored(updated: Segment) {
               : '等待音轨'
           }}</UBadge>
           <UButton
+            v-if="project.kind === 'video'"
+            color="neutral"
+            :variant="nsfwEnabled ? 'solid' : 'outline'"
+            icon="i-carbon-view-off"
+            :aria-pressed="nsfwEnabled"
+            @click="nsfwEnabled = !nsfwEnabled"
+            >NSFW</UButton
+          >
+          <UPopover
+            v-if="project.kind === 'video'"
+            v-model:open="nsfwSettingsOpen"
+            :content="{ side: 'bottom', align: 'end' }"
+          >
+            <UButton
+              color="neutral"
+              variant="outline"
+              icon="i-carbon-settings-adjust"
+              aria-label="调整 NSFW 遮罩透光度"
+              title="调整 NSFW 遮罩透光度"
+            />
+            <template #content>
+              <div class="nsfw-settings">
+                <div class="nsfw-settings-heading">
+                  <strong>毛玻璃遮罩</strong>
+                  <span>{{ nsfwTransparency }}% 透光</span>
+                </div>
+                <input
+                  v-model.number="nsfwTransparency"
+                  type="range"
+                  min="0"
+                  max="75"
+                  step="1"
+                  aria-label="NSFW 遮罩透光度"
+                />
+                <div class="nsfw-settings-scale"><span>遮挡</span><span>透光</span></div>
+              </div>
+            </template>
+          </UPopover>
+          <UButton
             color="neutral"
             variant="ghost"
             icon="i-carbon-renew"
@@ -1140,20 +1182,29 @@ async function onSegmentRestored(updated: Segment) {
               class="preview-stage preview-stage-large"
               :class="{ 'audio-stage': project.kind !== 'video' }"
             >
-              <video
-                v-if="project.kind === 'video'"
-                ref="clockPlayer"
-                :src="mediaUrl(clockSource)"
-                muted
-                playsinline
-                preload="metadata"
-                @loadedmetadata="onClockLoaded"
-                @play="onClockPlay"
-                @pause="onClockPause"
-                @ended="onClockEnded"
-                @timeupdate="onClockTimeUpdate"
-                @seeking="onClockSeeking"
-              />
+              <template v-if="project.kind === 'video'">
+                <video
+                  ref="clockPlayer"
+                  :src="mediaUrl(clockSource)"
+                  muted
+                  playsinline
+                  preload="metadata"
+                  @loadedmetadata="onClockLoaded"
+                  @play="onClockPlay"
+                  @pause="onClockPause"
+                  @ended="onClockEnded"
+                  @timeupdate="onClockTimeUpdate"
+                  @seeking="onClockSeeking"
+                />
+                <div
+                  v-if="nsfwEnabled"
+                  class="nsfw-overlay"
+                  :style="{ '--nsfw-alpha': `${1 - nsfwTransparency / 100}` }"
+                  aria-label="NSFW 毛玻璃遮罩已开启"
+                >
+                  <span>NSFW</span>
+                </div>
+              </template>
               <template v-else>
                 <UIcon
                   :name="project.kind === 'text' ? 'i-carbon-quotes' : 'i-carbon-waveform'"
@@ -1516,3 +1567,53 @@ async function onSegmentRestored(updated: Segment) {
 </template>
 
 <style src="../assets/css/dubbing-workspace.css"></style>
+
+<style scoped>
+.nsfw-settings {
+  width: 220px;
+  padding: 12px;
+}
+.nsfw-settings-heading,
+.nsfw-settings-scale {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.nsfw-settings-heading {
+  color: var(--ui-text);
+  font-size: 12px;
+}
+.nsfw-settings-heading span,
+.nsfw-settings-scale {
+  color: var(--ui-text-muted);
+  font-size: 11px;
+}
+.nsfw-settings input {
+  width: 100%;
+  margin: 12px 0 4px;
+  accent-color: var(--ui-primary);
+}
+.nsfw-overlay {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  background: rgb(18 18 18 / var(--nsfw-alpha, 0.7));
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+.nsfw-overlay span {
+  padding: 6px 10px;
+  border: 1px solid rgb(255 255 255 / 0.32);
+  border-radius: 6px;
+  color: rgb(255 255 255 / 0.82);
+  background: rgb(255 255 255 / 0.08);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+</style>
