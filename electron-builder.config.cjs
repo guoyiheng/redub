@@ -2,6 +2,7 @@ module.exports = {
   appId: 'run.yiheng.redub',
   productName: 'ReDub',
   icon: 'build/icon.png',
+  artifactName: 'ReDub-${version}-${os}-${arch}.${ext}',
   directories: { output: 'release' },
   files: ['electron/**/*', 'package.json'],
   extraResources: [
@@ -27,7 +28,7 @@ module.exports = {
       { x: 415, y: 160, type: 'link', path: '/Applications' }
     ]
   },
-  win: { target: ['nsis'] },
+  win: { target: ['nsis'], icon: 'build/icon.ico' },
   nsis: { oneClick: false, allowToChangeInstallationDirectory: true },
   linux: { target: ['AppImage'], category: 'AudioVideo' },
   ...(process.env.REDUB_UPDATE_URL

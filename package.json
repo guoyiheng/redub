@@ -2,6 +2,7 @@
   "name": "redub",
   "version": "0.0.1",
   "private": true,
+  "repository": "https://github.com/guoyiheng/redub",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
