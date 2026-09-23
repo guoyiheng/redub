@@ -121,7 +121,7 @@ export function enqueue(
       ? batchPlan(p, availableLines, batch)
       : stages
         ? stages.flatMap((stage): { stage: Stage; segmentId?: string }[] => {
-            if (!segmentId && ['synthesize', 'translate'].includes(stage))
+            if (!segmentId && stage === 'synthesize')
               return availableLines
                 .filter((line) => line.enabled)
                 .map((line) => ({ stage, segmentId: line.id }))

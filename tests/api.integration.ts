@@ -824,7 +824,7 @@ describe.sequential('production HTTP workflow', () => {
       const completed: JobDetail = await api(`jobs/${jobId}`)
       const request: JobRequest = await api(`jobs/${jobId}/requests/${completed.requests[0]!.id}`)
       expect(request.responseStatus).toBe(200)
-      expect(request.requestBody).toContain(stage === 'translate' ? line.text : '只朗读以下台词')
+      expect(request.requestBody).toContain(stage === 'translate' ? line.text : '用中文配音')
       expect(request.responseBody).toContain(
         stage === 'translate' ? 'translations' : voice.toString('base64')
       )

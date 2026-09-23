@@ -5,7 +5,10 @@ import {
   naturalVoicePrompt,
   referenceVoicePrompt,
   dubbedText,
-  withVoiceLanguage
+  withVoiceLanguage,
+  composeStructuredVoicePrompt,
+  parseStructuredVoicePrompt,
+  inferToneFromContext
 } from '../../shared/voice'
 import type { Segment, ReferenceVoice } from '../../shared/types'
 const props = defineProps<{ segment: Segment }>()
@@ -56,17 +59,25 @@ const draft = ref(
 const activeChannel = computed(() => channels.value.find((c) => c.type === 'volcengine' && c.enabled))
 const originalText = (props.segment.translation || props.segment.text || '').trim()
 const hasReference = draft.value.aiUseReference && (canReference.value || !!customReference.value)
+const targetLanguage = props.segment.translationLanguage || detail.value?.project.targetLanguage || '中文'
 const direction = props.segment.aiPrompt?.trim()
   ? props.segment.aiPrompt.trim()
   : hasReference
     ? referenceVoicePrompt
     : naturalVoicePrompt
-const aiContent = ref(
-  withVoiceLanguage(
-    props.segment.generationPrompt || `${direction}\n朗读：「${originalText}」`,
-    props.segment.translationLanguage || detail.value?.project.targetLanguage || '中文'
-  )
-)
+
+const initialTone = inferToneFromContext(props.segment, detail.value?.segments || [])
+const initialPrompt =
+  props.segment.generationPrompt ||
+  composeStructuredVoicePrompt({
+    language: targetLanguage,
+    direction,
+    useReference: hasReference,
+    tone: initialTone,
+    text: originalText
+  })
+
+const aiContent = ref(withVoiceLanguage(initialPrompt, targetLanguage))
 const ttsContent = ref(dubbedText(props.segment) || originalText)
 const content = computed({
   get: () => (draft.value.synthesisMode === 'ai' ? aiContent.value : ttsContent.value),
@@ -75,6 +86,30 @@ const content = computed({
     else ttsContent.value = value
   }
 })
+
+const parsedPrompt = computed(() => parseStructuredVoicePrompt(aiContent.value, originalText))
+
+const tonePresets = ['轻松调侃', '焦急催促', '温柔安慰', '愤怒质问', '轻声叹息', '庄重严肃', '平静从容']
+
+function applyTone(newTone: string) {
+  const parsed = parseStructuredVoicePrompt(aiContent.value, originalText)
+  aiContent.value = withVoiceLanguage(
+    composeStructuredVoicePrompt({
+      language: targetLanguage,
+      requirement: parsed.requirement || direction,
+      useReference: hasReference,
+      tone: newTone,
+      text: parsed.text || originalText
+    }),
+    targetLanguage
+  )
+}
+
+function inferContextTone() {
+  const tone = inferToneFromContext(props.segment, detail.value?.segments || [])
+  applyTone(tone)
+  toast.add({ title: `已根据台词上下文判断语气：「${tone}」`, color: 'info' })
+}
 const saving = ref(false)
 const uploading = ref(false)
 const picker = ref<HTMLInputElement>()
@@ -218,15 +253,47 @@ async function generate() {
   <ReferenceVoiceLibrary v-model:open="libraryOpen" selectable @select="useVoice" />
   <form class="generation-panel" @submit.prevent="generate">
     <VoiceParameters v-model="draft" :disabled="busy" :can-reference="canReference || !!customReference">
+      <div v-if="draft.synthesisMode === 'ai'" class="voice-tone-bar">
+        <div class="voice-tone-header">
+          <span class="voice-tone-label">
+            <UIcon name="i-carbon-microphone" class="mr-1" />
+            角色语气：<strong>{{ parsedPrompt.tone || '默认语气' }}</strong>
+          </span>
+          <UButton
+            size="xs"
+            color="neutral"
+            variant="ghost"
+            icon="i-carbon-magic-wand"
+            title="结合上下文对话流重新判断语气"
+            @click="inferContextTone"
+          >
+            根据上下文判断
+          </UButton>
+        </div>
+        <div class="voice-tone-tags">
+          <button
+            v-for="t in tonePresets"
+            :key="t"
+            type="button"
+            class="voice-tone-tag"
+            :class="{ active: parsedPrompt.tone?.includes(t) }"
+            @click="applyTone(t)"
+          >
+            {{ t }}
+          </button>
+        </div>
+      </div>
       <UTextarea
         v-model="content"
         class="voice-composer-input w-full"
         variant="none"
-        :aria-label="draft.synthesisMode === 'ai' ? '配音内容与提示词' : '朗读文字'"
+        :aria-label="draft.synthesisMode === 'ai' ? '配音内容与提示词' : '配音台词'"
         :placeholder="
-          draft.synthesisMode === 'ai' ? '用轻松的语气说：「你好，欢迎回来。」' : '输入要朗读的文字…'
+          draft.synthesisMode === 'ai'
+            ? '【配音要求】：用中文配音…\n【角色语气】：轻松调侃…\n【配音台词】：「你好，欢迎回来。」'
+            : '输入配音台词…'
         "
-        :rows="4"
+        :rows="5"
         autoresize
         :maxlength="2800"
         :disabled="busy"

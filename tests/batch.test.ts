@@ -64,7 +64,6 @@ describe('批量处理范围与事务', () => {
     expect(await getSegments(id)).toEqual(before)
     expect((await getProject(id)).outputPath).toBe('old.mp3')
     expect((await db.select().from(jobs).where(eq(jobs.projectId, id))).map((job) => job.stage)).toEqual([
-      'translate',
       'translate'
     ])
   })

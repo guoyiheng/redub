@@ -145,7 +145,7 @@ button:disabled {
   flex-direction: column;
   gap: 4px;
 }
-.sidebar-footer button {
+.sidebar-footer > button {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -156,10 +156,10 @@ button:disabled {
   color: #62615a;
   text-align: left;
 }
-.sidebar-footer button:hover {
+.sidebar-footer > button:hover {
   background: color-mix(in srgb, var(--ui-bg-elevated) 60%, var(--ui-bg-muted));
 }
-.sidebar-footer button.active {
+.sidebar-footer > button.active {
   background: var(--ui-bg-elevated);
   color: var(--ui-text);
   font-weight: 600;
@@ -995,6 +995,57 @@ button:disabled {
 .voice-composer-input textarea::placeholder {
   color: var(--ui-text-muted);
 }
+.voice-tone-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  margin: 0 8px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ui-bg-elevated) 60%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ui-border) 70%, transparent);
+}
+.voice-tone-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+}
+.voice-tone-label {
+  display: flex;
+  align-items: center;
+  color: var(--ui-text-muted);
+}
+.voice-tone-label strong {
+  color: var(--ui-primary);
+  margin-left: 4px;
+}
+.voice-tone-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.voice-tone-tag {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--ui-border);
+  background: var(--ui-bg);
+  color: var(--ui-text-muted);
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+.voice-tone-tag:hover {
+  background: var(--ui-bg-elevated);
+  color: var(--ui-text);
+  border-color: var(--ui-text-muted);
+}
+.voice-tone-tag.active {
+  background: color-mix(in srgb, var(--ui-primary) 15%, transparent);
+  border-color: var(--ui-primary);
+  color: var(--ui-primary);
+  font-weight: 500;
+}
 .voice-reference-bar {
   display: flex;
   align-items: center;
@@ -1623,7 +1674,7 @@ button:disabled {
   left: 224px;
   bottom: 16px;
   z-index: 50;
-  width: 380px;
+  width: 400px;
   max-width: calc(100vw - 240px);
   border-radius: 12px;
   background: var(--ui-bg-elevated);
@@ -1636,10 +1687,8 @@ button:disabled {
   flex-direction: column;
   animation: popover-fade-in 150ms ease;
 }
-.task-tabs-header {
-  padding: 0 16px;
-  border-bottom: 1px solid var(--ui-border);
-  background: color-mix(in srgb, var(--ui-bg-muted) 40%, var(--ui-bg-elevated));
+.task-popover-panel button {
+  text-align: initial;
 }
 @keyframes popover-fade-in {
   from {
@@ -1662,121 +1711,20 @@ button:disabled {
   background: #c96442;
   animation: pulse 1.5s ease-in-out infinite;
 }
-.task-body {
-  max-height: min(520px, calc(100dvh - 160px));
-  padding: 14px 16px 16px;
-  overflow-y: auto;
-}
-.task-tabs {
-  gap: 0;
-}
-.task-body > .task-item:first-child {
-  margin-top: 0;
-  padding-top: 0;
-  border-top: 0;
-}
-.task-empty {
-  padding: 24px 0;
-  color: var(--ui-text-muted);
-  text-align: center;
-}
-.task-item {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--ui-border);
-}
-.task-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 13px;
-  min-height: 24px;
-}
-.task-title-main {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  gap: 6px;
-}
-.task-title strong {
-  overflow: hidden;
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.task-title > span,
-.task-title-main > span {
-  flex-shrink: 0;
-  font-size: 12px;
-  font-weight: 500;
-}
-.task-count {
-  padding: 1px 5px;
-  border-radius: 999px;
-  background: var(--ui-bg-muted);
-  color: var(--ui-text-muted);
-  font-size: 11px !important;
-  line-height: 1.5;
-}
-.task-project-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 3px;
-  min-height: 24px;
-}
-.task-project-row .task-project {
-  display: flex;
-  gap: 4px;
-  margin: 0;
-  overflow-wrap: anywhere;
-  font-size: 11px;
-}
-.task-project-row .task-project span {
-  color: var(--ui-text-muted);
-}
-.task-item-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex-shrink: 0;
-}
-.task-progress {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 6px;
-}
-.task-progress > :first-child {
-  min-width: 0;
-  flex: 1;
-}
-.task-progress > span {
-  width: 34px;
-  color: var(--ui-text-muted);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-.job-message {
-  margin: 3px 0 0;
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--ui-text-muted);
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
 .status-failed,
 .error-text {
-  color: #b53333;
+  color: var(--ui-error, #b53333);
 }
 .status-completed {
-  color: #62774d;
+  color: var(--ui-success, #2e7d32);
 }
 .status-running {
-  color: var(--ui-primary);
+  color: #c96442;
+}
+.status-queued,
+.status-skipped,
+.status-cancelled {
+  color: var(--ui-text-muted, #73726c);
 }
 @keyframes pulse {
   50% {
@@ -1842,7 +1790,7 @@ button:disabled {
     padding: 0;
     border: 0;
   }
-  .sidebar-footer button {
+  .sidebar-footer > button {
     min-height: 36px;
     padding: 8px;
   }
