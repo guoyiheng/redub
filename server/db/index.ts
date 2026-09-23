@@ -55,7 +55,8 @@ export function initDb() {
       CREATE TABLE IF NOT EXISTS channels (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, endpoint TEXT NOT NULL, model TEXT NOT NULL,
         keyEnv TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, pitch INTEGER NOT NULL DEFAULT 0,
-        speed INTEGER NOT NULL DEFAULT 0, loudness INTEGER NOT NULL DEFAULT 0, apiKey TEXT
+        speed INTEGER NOT NULL DEFAULT 0, loudness INTEGER NOT NULL DEFAULT 0, apiKey TEXT,
+        concurrency INTEGER NOT NULL DEFAULT 5
       );
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS reference_voices (
@@ -71,6 +72,8 @@ export function initDb() {
     const columns = await client.execute('PRAGMA table_info(channels)')
     if (!columns.rows.some((row) => row.name === 'apiKey'))
       await client.execute('ALTER TABLE channels ADD COLUMN apiKey TEXT')
+    if (!columns.rows.some((row) => row.name === 'concurrency'))
+      await client.execute('ALTER TABLE channels ADD COLUMN concurrency INTEGER NOT NULL DEFAULT 5')
     const projectColumns = await client.execute('PRAGMA table_info(projects)')
     if (!projectColumns.rows.some((row) => row.name === 'pinned'))
       await client.execute('ALTER TABLE projects ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0')
@@ -108,7 +111,8 @@ export function initDb() {
           type: 'volcengine',
           endpoint: 'https://openspeech.bytedance.com/api/v3/tts/create',
           model: 'seed-audio-1.0',
-          keyEnv: 'VOLCENGINE_API_KEY'
+          keyEnv: 'VOLCENGINE_API_KEY',
+          concurrency: 5
         },
         {
           id: 'translation-default',
@@ -116,7 +120,8 @@ export function initDb() {
           type: 'openai',
           endpoint: process.env.TRANSLATION_BASE_URL || 'https://api.openai.com/v1',
           model: process.env.TRANSLATION_MODEL || 'gpt-4o-mini',
-          keyEnv: 'TRANSLATION_API_KEY'
+          keyEnv: 'TRANSLATION_API_KEY',
+          concurrency: 10
         }
       ])
       .onConflictDoNothing()

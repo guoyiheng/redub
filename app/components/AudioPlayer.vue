@@ -192,6 +192,12 @@ function seekFromEvent(event: PointerEvent) {
   }
 }
 
+function seekBy(seconds: number) {
+  if (!audioRef.value || failed.value) return
+  currentTime.value = Math.max(0, Math.min(totalDuration.value, currentTime.value + seconds))
+  audioRef.value.currentTime = currentTime.value
+}
+
 function onPointerDown(event: PointerEvent) {
   if (!props.src || failed.value) return
   isDragging.value = true
@@ -271,14 +277,8 @@ onBeforeUnmount(() => {
         :aria-valuemax="totalDuration"
         tabindex="0"
         @pointerdown.stop="onPointerDown"
-        @keydown.left.prevent="
-          currentTime = Math.max(0, currentTime - 1)
-          if (audioRef) audioRef.currentTime = currentTime
-        "
-        @keydown.right.prevent="
-          currentTime = Math.min(totalDuration, currentTime + 1)
-          if (audioRef) audioRef.currentTime = currentTime
-        "
+        @keydown.left.prevent.stop="seekBy(-1)"
+        @keydown.right.prevent.stop="seekBy(1)"
         @keydown.space.prevent.stop="togglePlay"
       >
         <!-- 底层未播放波形 -->

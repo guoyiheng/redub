@@ -40,3 +40,12 @@ it('非法渠道不会停用当前渠道，数据库也拒绝同功能同时启�
       .where(and(eq(channels.type, 'volcengine'), eq(channels.enabled, true)))
   ).toHaveLength(1)
 })
+
+it('渠道配置独立保存并发数并同步生效', async () => {
+  const channel = await getActiveChannel('openai')
+  await saveChannel(channel.id, { ...channel, concurrency: 18 })
+  const [updated] = await db.select().from(channels).where(eq(channels.id, channel.id))
+  expect(updated.concurrency).toBe(18)
+  const currentSettings = await getSettings()
+  expect(currentSettings.translationConcurrency).toBe(18)
+})

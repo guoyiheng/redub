@@ -3,10 +3,17 @@ import {
   defaultVoicePrompt,
   referenceVoicePrompt,
   naturalVoicePrompt,
+  ttsVoices,
   type VoiceSettings
 } from '../../shared/voice'
 defineProps<{ disabled?: boolean; canReference: boolean }>()
 const draft = defineModel<VoiceSettings>({ required: true })
+const { settings, toast, errorMessage } = useStudio()
+
+if (!draft.value.ttsVoice && settings.value?.defaultTtsVoice) {
+  draft.value.ttsVoice = settings.value.defaultTtsVoice
+}
+
 watch(
   () => draft.value.aiUseReference,
   (value) => {
@@ -17,23 +24,17 @@ watch(
       draft.value.aiPrompt = defaultVoicePrompt(value)
   }
 )
-const ttsVoices = [
-  { label: '晓晓 · 中文女声', value: 'zh-CN-XiaoxiaoNeural' },
-  { label: '云希 · 中文男声', value: 'zh-CN-YunxiNeural' },
-  { label: '晓伊 · 中文女声', value: 'zh-CN-XiaoyiNeural' },
-  { label: '云健 · 中文男声', value: 'zh-CN-YunjianNeural' },
-  { label: 'Jenny · 英语女声', value: 'en-US-JennyNeural' },
-  { label: 'Guy · 英语男声', value: 'en-US-GuyNeural' },
-  { label: 'Nanami · 日语女声', value: 'ja-JP-NanamiNeural' },
-  { label: 'SunHi · 韩语女声', value: 'ko-KR-SunHiNeural' },
-  { label: 'Elvira · 西班牙语', value: 'es-ES-ElviraNeural' },
-  { label: 'Denise · 法语', value: 'fr-FR-DeniseNeural' },
-  { label: 'Katja · 德语', value: 'de-DE-KatjaNeural' },
-  { label: 'Elsa · 意大利语', value: 'it-IT-ElsaNeural' },
-  { label: 'Svetlana · 俄语', value: 'ru-RU-SvetlanaNeural' }
-]
 
-const { toast, errorMessage } = useStudio()
+const sortedTtsVoices = computed(() => {
+  const pinned = new Set(settings.value?.pinnedVoices || [])
+  return [...ttsVoices].sort((a, b) => {
+    const aPinned = pinned.has(a.value) ? 1 : 0
+    const bPinned = pinned.has(b.value) ? 1 : 0
+    if (aPinned !== bPinned) return bPinned - aPinned
+    return 0
+  })
+})
+
 const voiceMenuOpen = ref(false)
 const selectedVoiceLabel = computed(
   () => ttsVoices.find((voice) => voice.value === draft.value.ttsVoice)?.label || draft.value.ttsVoice
@@ -193,16 +194,22 @@ onBeforeUnmount(() => {
           >
           <template #content>
             <div class="max-h-80 w-72 max-w-[calc(100vw-2rem)] overflow-y-auto p-2" aria-label="微软音色列表">
-              <div v-for="voice in ttsVoices" :key="voice.value" class="flex items-center gap-2 py-1">
+              <div v-for="voice in sortedTtsVoices" :key="voice.value" class="flex items-center gap-2 py-1">
                 <UButton
                   color="neutral"
                   :variant="draft.ttsVoice === voice.value ? 'soft' : 'ghost'"
-                  class="min-w-0 flex-1"
+                  class="min-w-0 flex-1 justify-start"
                   :aria-pressed="draft.ttsVoice === voice.value"
                   :disabled="disabled"
                   @click="selectVoice(voice.value)"
-                  >{{ voice.label }}</UButton
                 >
+                  <UIcon
+                    v-if="settings?.pinnedVoices?.includes(voice.value)"
+                    name="i-carbon-pin-filled"
+                    class="text-primary w-3.5 h-3.5 shrink-0"
+                  />
+                  <span class="truncate">{{ voice.label }}</span>
+                </UButton>
                 <UButton
                   color="neutral"
                   variant="outline"

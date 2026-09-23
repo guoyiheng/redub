@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { eq, and, ne } from 'drizzle-orm'
 import { z } from 'zod'
 import { db, initDb } from '../db'
-import { channels } from '../db/schema'
+import { channels, settings } from '../db/schema'
 
 const channelSchema = z.object({
   name: z.string().trim().min(1).max(80),
@@ -13,10 +13,11 @@ const channelSchema = z.object({
   model: z.string().trim().min(1).max(100),
   keyEnv: z.string().regex(/^[A-Z][A-Z0-9_]*_API_KEY$/, '密钥环境变量名需以 _API_KEY 结尾'),
   enabled: z.boolean(),
+  concurrency: z.number().int().min(1).max(32).optional(),
   pitch: z.number().int().min(-12).max(12).default(0),
   speed: z.number().int().min(-50).max(100).default(0),
   loudness: z.number().int().min(-50).max(100).default(0),
-  apiKey: z.string().max(10000).optional()
+  apiKey: z.string().max(10000).nullable().optional()
 })
 
 export async function saveChannel(id: string | undefined, input: unknown) {
@@ -30,14 +31,23 @@ export async function saveChannel(id: string | undefined, input: unknown) {
         .update(channels)
         .set({ enabled: false })
         .where(and(eq(channels.type, data.type), ne(channels.id, channelId)))
+    const concurrency = data.concurrency ?? existing?.concurrency ?? (data.type === 'openai' ? 10 : 5)
     const values = {
       ...data,
+      concurrency,
       ...(apiKey?.trim() ? { apiKey: apiKey.trim() } : existing ? {} : { apiKey: null })
     }
     await tx
       .insert(channels)
       .values({ id: channelId, ...values })
       .onConflictDoUpdate({ target: channels.id, set: values })
+    if (data.enabled && concurrency) {
+      const settingKey = data.type === 'openai' ? 'translationConcurrency' : 'synthesisConcurrency'
+      await tx
+        .insert(settings)
+        .values({ key: settingKey, value: JSON.stringify(concurrency) })
+        .onConflictDoUpdate({ target: settings.key, set: { value: JSON.stringify(concurrency) } })
+    }
   })
   return { id: channelId }
 }

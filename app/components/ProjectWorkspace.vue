@@ -22,7 +22,8 @@ const trackDescriptions: Record<PreviewTrackKey, string> = {
   background: '分离后保留的环境声与音乐',
   dubbed: '按时间轴对齐后的新配音'
 }
-const { detail, channels, settingsProject, workspacePanels, act, toast, errorMessage, refresh } = useStudio()
+const { detail, channels, settings, settingsProject, workspacePanels, act, toast, errorMessage, refresh } =
+  useStudio()
 const taskWait = new AbortController()
 const timelineScrollRef = ref<HTMLElement>()
 const timelineContainerWidth = ref(800)
@@ -80,9 +81,49 @@ const trackEnabled = reactive<Record<PreviewTrackKey, boolean>>({
 })
 const exportTrack = ref<PreviewTrackKey>('optimized')
 const exportTarget = ref<'audio' | 'video'>('audio')
-const nsfwEnabled = ref(false)
-const nsfwTransparency = ref(30)
+const nsfwEnabled = ref(true)
+const nsfwTransparency = ref(0)
 const nsfwSettingsOpen = ref(false)
+
+function getProjectNsfwStorageKey(id: string) {
+  return `redub:nsfw:${id}`
+}
+
+function loadProjectNsfw(id: string) {
+  if (!import.meta.client) return
+  const raw = localStorage.getItem(getProjectNsfwStorageKey(id))
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw)
+      if (typeof parsed.enabled === 'boolean') nsfwEnabled.value = parsed.enabled
+      if (typeof parsed.transparency === 'number') nsfwTransparency.value = parsed.transparency
+      return
+    } catch {}
+  }
+  nsfwEnabled.value = settings.value?.nsfwDefaultEnabled ?? true
+  nsfwTransparency.value = settings.value?.nsfwDefaultTransparency ?? 0
+}
+
+function saveProjectNsfw() {
+  if (!import.meta.client || !detail.value?.project?.id) return
+  localStorage.setItem(
+    getProjectNsfwStorageKey(detail.value.project.id),
+    JSON.stringify({ enabled: nsfwEnabled.value, transparency: nsfwTransparency.value })
+  )
+}
+
+watch(
+  () => detail.value?.project?.id,
+  (id) => {
+    if (id) loadProjectNsfw(id)
+  },
+  { immediate: true }
+)
+
+watch([nsfwEnabled, nsfwTransparency], () => {
+  saveProjectNsfw()
+})
+
 let pendingSeek: number | undefined
 let resumeOnLoad = false
 let previewRequest = 0
@@ -100,7 +141,6 @@ const project = computed(() => detail.value!.project)
 const panel = computed(() => workspacePanels.value[project.value.id] || 'script')
 const lines = computed(() => detail.value?.segments || [])
 const selected = computed(() => lines.value.find((s) => s.id === current.value))
-const referenceLibraryOpen = ref(false)
 const currentPage = ref(1)
 const pageSize = ref(50)
 const speakerFilter = ref<string | number>(0)
@@ -855,7 +895,6 @@ async function onSegmentRestored(updated: Segment) {
 }
 </script>
 <template>
-  <ReferenceVoiceLibrary v-model:open="referenceLibraryOpen" />
   <section
     v-if="detail"
     class="workspace"
@@ -875,13 +914,6 @@ async function onSegmentRestored(updated: Segment) {
           :items="pageSizeOptions"
           aria-label="每页显示条数"
         />
-        <UButton
-          color="neutral"
-          variant="outline"
-          icon="i-carbon-waveform"
-          @click="referenceLibraryOpen = true"
-          >参考音色</UButton
-        >
         <div v-if="totalPages > 1" class="toolbar-pagination">
           <UButton
             size="md"

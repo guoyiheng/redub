@@ -116,6 +116,7 @@ export const channels = sqliteTable('channels', {
   model: text().notNull(),
   keyEnv: text().notNull(),
   enabled: integer({ mode: 'boolean' }).notNull().default(true),
+  concurrency: integer().notNull().default(5),
   pitch: integer().notNull().default(0),
   speed: integer().notNull().default(0),
   loudness: integer().notNull().default(0),

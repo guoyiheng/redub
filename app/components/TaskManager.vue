@@ -572,6 +572,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   align-items: center !important;
   justify-content: center !important;
   border-radius: 4px !important;
+}
 .task-scroll-loading {
   display: flex;
   align-items: center;

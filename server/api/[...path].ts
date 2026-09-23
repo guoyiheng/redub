@@ -168,9 +168,10 @@ export default defineEventHandler(async (event) => {
         return { models: [] }
       }
       if (method === 'GET')
-        return (await db.select().from(channels)).map(({ apiKey: _apiKey, ...c }) => ({
+        return (await db.select().from(channels)).map((c) => ({
           ...c,
-          configured: !!_apiKey || !!process.env[c.keyEnv]
+          apiKey: c.apiKey || '',
+          configured: !!c.apiKey || !!process.env[c.keyEnv]
         }))
       if (method === 'POST' || (method === 'PATCH' && id)) {
         return await serializeEnqueue(async () => {

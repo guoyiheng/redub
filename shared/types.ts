@@ -143,6 +143,7 @@ export interface Channel {
   model: string
   keyEnv: string
   enabled: boolean
+  concurrency?: number
   pitch?: number
   speed?: number
   loudness?: number
@@ -155,6 +156,10 @@ export interface Settings {
   pauseOnFailure: boolean
   whisperModel: 'tiny' | 'base' | 'small' | 'medium' | 'large-v3'
   translationChannelId: string
+  nsfwDefaultEnabled: boolean
+  nsfwDefaultTransparency: number
+  defaultTtsVoice: string
+  pinnedVoices: string[]
 }
 export interface ProjectDetail {
   project: Project

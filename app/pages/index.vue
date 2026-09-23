@@ -183,7 +183,8 @@ onBeforeUnmount(() => clearInterval(timer))
       class="main-content"
       :class="{
         'project-main': view === 'project' && !importing,
-        'preview-mode': isPreviewMode
+        'preview-mode': isPreviewMode,
+        'settings-main': view === 'settings'
       }"
     >
       <div v-if="error" class="page-error">

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Channel } from '../../shared/types'
-import { settingsSchema } from '../../shared/settings'
+import { ttsVoices } from '../../shared/voice'
+import { mediaUrl } from '../composables/useStudio'
 
 interface Health {
   ffmpeg: boolean
@@ -42,29 +43,27 @@ interface DesktopUpdateState {
   configured: boolean
 }
 
-type SettingsSection = 'channels' | 'local' | 'queue' | 'desktop'
+type SettingsSection = 'channels' | 'voices' | 'local' | 'general' | 'desktop'
 
 const { channels, settings, act, toast, errorMessage } = useStudio()
+const {
+  voices: refVoices,
+  load: loadRefVoices,
+  add: addRefVoice,
+  rename: renameRefVoice
+} = useReferenceVoices()
+
 const activeSection = ref<SettingsSection>('channels')
-const modalOpen = ref(false),
-  selected = ref<string>(),
-  saving = ref(false)
+const modalOpen = ref(false)
+const selected = ref<string>()
+const saving = ref(false)
+const showApiKey = ref(false)
 const draft = ref<Channel & { apiKey: string }>()
-const health = ref<Health>(),
-  checking = ref(false)
-const queueDraft = ref({ ...settings.value }),
-  desktopStatus = ref(''),
-  desktopBusy = ref(false)
-const queueSaving = ref(false)
-async function saveQueue() {
-  if (queueSaving.value) return
-  queueSaving.value = true
-  try {
-    await act(() => $fetch('/api/settings', { method: 'PATCH', body: queueDraft.value }), '任务设置已保存')
-  } finally {
-    queueSaving.value = false
-  }
-}
+const health = ref<Health>()
+const checking = ref(false)
+
+const desktopStatus = ref('')
+const desktopBusy = ref(false)
 const desktopUpdate = ref<DesktopUpdateState>({
   currentVersion: '',
   state: 'idle',
@@ -76,8 +75,18 @@ const desktopUpdate = ref<DesktopUpdateState>({
 })
 let stopUpdateListener: (() => void) | undefined
 const updateRequestBusy = ref(false)
+
 const desktop = computed(() => import.meta.client && !!(window as any).redub)
-const channelTitle = computed(() => (selected.value ? '编辑渠道' : '添加渠道'))
+const channelTitle = computed(() => {
+  if (selected.value) {
+    return draft.value?.type === 'volcengine' ? '编辑配音渠道' : '编辑翻译渠道'
+  }
+  return draft.value?.type === 'volcengine' ? '添加配音渠道' : '添加翻译渠道'
+})
+
+const dubbingChannels = computed(() => channels.value.filter((c) => c.type === 'volcengine'))
+const translationChannels = computed(() => channels.value.filter((c) => c.type === 'openai'))
+
 const engineReady = computed(() => !!health.value?.ffmpeg && !!health.value?.ffprobe)
 const modelReady = computed(() => !!health.value?.models)
 const updateBusy = computed(
@@ -125,10 +134,16 @@ function onTypeChange(val: unknown) {
   if (!preset.includes(draft.value.model)) {
     draft.value.model = preset[0] || ''
   }
-  if (type === 'volcengine' && draft.value.endpoint.includes('openai.com')) {
-    draft.value.endpoint = 'https://openspeech.bytedance.com/api/v3/tts/create'
-  } else if (type === 'openai' && draft.value.endpoint.includes('bytedance.com')) {
-    draft.value.endpoint = 'https://api.openai.com/v1'
+  if (type === 'volcengine') {
+    if (draft.value.endpoint.includes('openai.com')) {
+      draft.value.endpoint = 'https://openspeech.bytedance.com/api/v3/tts/create'
+    }
+    if (!draft.value.concurrency) draft.value.concurrency = 5
+  } else if (type === 'openai') {
+    if (draft.value.endpoint.includes('bytedance.com')) {
+      draft.value.endpoint = 'https://api.openai.com/v1'
+    }
+    if (!draft.value.concurrency) draft.value.concurrency = 10
   }
 }
 
@@ -187,8 +202,14 @@ const sections: {
   {
     id: 'channels',
     label: 'AI 渠道',
-    description: '配音与翻译服务',
+    description: '配音与翻译渠道',
     icon: 'i-carbon-api'
+  },
+  {
+    id: 'voices',
+    label: '音色管理',
+    description: '渠道音色与参考音色',
+    icon: 'i-carbon-volume-up'
   },
   {
     id: 'local',
@@ -197,10 +218,10 @@ const sections: {
     icon: 'i-carbon-chip'
   },
   {
-    id: 'queue',
-    label: '任务与识别',
-    description: '并发和识别参数',
-    icon: 'i-carbon-task'
+    id: 'general',
+    label: '通用设置',
+    description: 'NSFW 遮罩与偏好',
+    icon: 'i-carbon-settings'
   },
   {
     id: 'desktop',
@@ -211,15 +232,16 @@ const sections: {
   }
 ]
 
-function edit(channel?: Channel) {
+function edit(channel?: Channel, defaultType: 'volcengine' | 'openai' = 'volcengine') {
   selected.value = channel?.id
-  const type = channel?.type || 'volcengine'
+  showApiKey.value = false
+  const type = channel?.type || defaultType
   const preset = defaultModelPresets[type]
   const currentModel = channel?.model || (type === 'volcengine' ? 'seed-audio-1.0' : 'gpt-4o')
   modelOptions.value = Array.from(new Set([currentModel, ...preset]))
   draft.value = {
     id: channel?.id || '',
-    name: channel?.name || '新的配音渠道',
+    name: channel?.name || (type === 'volcengine' ? '火山 Audio 配音' : 'OpenAI 兼容翻译'),
     type,
     endpoint:
       channel?.endpoint ||
@@ -227,12 +249,14 @@ function edit(channel?: Channel) {
         ? 'https://openspeech.bytedance.com/api/v3/tts/create'
         : 'https://api.openai.com/v1'),
     model: currentModel,
-    keyEnv: channel?.keyEnv || 'CUSTOM_API_KEY',
-    apiKey: '',
+    keyEnv: channel?.keyEnv || (type === 'volcengine' ? 'VOLCENGINE_API_KEY' : 'OPENAI_API_KEY'),
+    apiKey: channel?.apiKey || '',
+    concurrency: channel?.concurrency ?? (type === 'openai' ? 10 : 5),
     enabled: channel?.enabled ?? true
   }
   modalOpen.value = true
 }
+
 async function save() {
   if (!draft.value) return
   saving.value = true
@@ -249,6 +273,7 @@ async function save() {
   if (ok) modalOpen.value = false
   saving.value = false
 }
+
 async function check() {
   checking.value = true
   await act(async () => {
@@ -256,6 +281,201 @@ async function check() {
   })
   checking.value = false
 }
+
+async function onWhisperModelChange(model: unknown) {
+  if (typeof model !== 'string') return
+  await act(
+    () => $fetch('/api/settings', { method: 'PATCH', body: { whisperModel: model } }),
+    '本地识别模型已切换'
+  )
+}
+
+// 音色管理状态
+const voiceSourceTab = ref<'tts' | 'reference'>('tts')
+const auditionVoice = ref('')
+const isAuditionLoading = ref(false)
+const isAuditionPlaying = ref(false)
+let auditionAudio: HTMLAudioElement | null = null
+let auditionController: AbortController | null = null
+let auditionUrl = ''
+
+function stopAudition() {
+  auditionController?.abort()
+  auditionController = null
+  if (auditionAudio) {
+    auditionAudio.pause()
+    auditionAudio = null
+  }
+  if (auditionUrl) URL.revokeObjectURL(auditionUrl)
+  auditionUrl = ''
+  auditionVoice.value = ''
+  isAuditionPlaying.value = false
+  isAuditionLoading.value = false
+}
+
+async function toggleTtsAudition(voice: string) {
+  if (auditionVoice.value === voice && (isAuditionPlaying.value || isAuditionLoading.value)) {
+    stopAudition()
+    return
+  }
+  stopAudition()
+  const controller = new AbortController()
+  auditionController = controller
+  auditionVoice.value = voice
+  isAuditionLoading.value = true
+  try {
+    const blob = await $fetch<Blob>('/api/tts/preview', {
+      method: 'POST',
+      signal: controller.signal,
+      responseType: 'blob',
+      body: { voice }
+    })
+    if (controller.signal.aborted) return
+    auditionUrl = URL.createObjectURL(blob)
+    const audio = new Audio(auditionUrl)
+    auditionAudio = audio
+    audio.onended = stopAudition
+    audio.onerror = () => {
+      stopAudition()
+      toast.add({ title: '音色试听播放失败', color: 'error' })
+    }
+    await audio.play()
+    if (!controller.signal.aborted) isAuditionPlaying.value = true
+  } catch (error) {
+    if (controller.signal.aborted) return
+    stopAudition()
+    toast.add({ title: '音色试听失败', description: errorMessage(error), color: 'error' })
+  } finally {
+    if (auditionController === controller) isAuditionLoading.value = false
+  }
+}
+
+async function setAsDefaultTtsVoice(voice: string) {
+  await act(
+    () => $fetch('/api/settings', { method: 'PATCH', body: { defaultTtsVoice: voice } }),
+    '已设置为默认音色'
+  )
+}
+
+async function togglePinVoice(id: string) {
+  const current = new Set(settings.value.pinnedVoices || [])
+  const isPinned = current.has(id)
+  if (isPinned) {
+    current.delete(id)
+  } else {
+    current.add(id)
+  }
+  const updated = Array.from(current)
+  await act(
+    () => $fetch('/api/settings', { method: 'PATCH', body: { pinnedVoices: updated } }),
+    isPinned ? '已取消置顶' : '已置顶音色'
+  )
+}
+
+const sortedTtsVoices = computed(() => {
+  const pinned = new Set(settings.value.pinnedVoices || [])
+  return [...ttsVoices].sort((a, b) => {
+    const aPinned = pinned.has(a.value) ? 1 : 0
+    const bPinned = pinned.has(b.value) ? 1 : 0
+    if (aPinned !== bPinned) return bPinned - aPinned
+    return 0
+  })
+})
+
+const sortedRefVoices = computed(() => {
+  const pinned = new Set(settings.value.pinnedVoices || [])
+  return [...refVoices.value].sort((a, b) => {
+    const aPinned = pinned.has(a.id) ? 1 : 0
+    const bPinned = pinned.has(b.id) ? 1 : 0
+    if (aPinned !== bPinned) return bPinned - aPinned
+    return 0
+  })
+})
+
+// 参考音色管理
+const refFile = ref<File | null>(null)
+const refName = ref('')
+const refSaving = ref(false)
+const refEditing = ref('')
+const refEditName = ref('')
+
+watch(refFile, (val) => {
+  if (val && !refName.value) {
+    refName.value = val.name.replace(/\.[^.]+$/, '').slice(0, 80)
+  }
+})
+
+async function addReferenceVoice() {
+  if (!refFile.value || refSaving.value) return
+  refSaving.value = true
+  try {
+    if (refFile.value.size > 10 * 1024 ** 2) throw new Error('参考音频不能超过 10 MB')
+    await addRefVoice(refFile.value, refName.value)
+    refFile.value = null
+    refName.value = ''
+    toast.add({ title: '参考音色已添加', color: 'success' })
+  } catch (e) {
+    toast.add({ title: '添加失败', description: errorMessage(e), color: 'error' })
+  } finally {
+    refSaving.value = false
+  }
+}
+
+function startReferenceRename(voice: { id: string; name: string }) {
+  refEditing.value = voice.id
+  refEditName.value = voice.name
+}
+
+async function saveReferenceName() {
+  if (!refEditing.value || !refEditName.value.trim()) return
+  refSaving.value = true
+  try {
+    await renameRefVoice(refEditing.value, refEditName.value.trim())
+    refEditing.value = ''
+    toast.add({ title: '音色已重命名', color: 'success' })
+  } catch (e) {
+    toast.add({ title: '修改失败', description: errorMessage(e), color: 'error' })
+  } finally {
+    refSaving.value = false
+  }
+}
+
+// 通用设置（NSFW与偏好）
+const generalDraft = ref({
+  nsfwDefaultEnabled: true,
+  nsfwDefaultTransparency: 0,
+  pauseOnFailure: true
+})
+
+watchEffect(() => {
+  if (settings.value) {
+    generalDraft.value.nsfwDefaultEnabled = settings.value.nsfwDefaultEnabled ?? true
+    generalDraft.value.nsfwDefaultTransparency = settings.value.nsfwDefaultTransparency ?? 0
+    generalDraft.value.pauseOnFailure = settings.value.pauseOnFailure ?? true
+  }
+})
+
+const generalSaving = ref(false)
+async function saveGeneral() {
+  generalSaving.value = true
+  try {
+    await act(
+      () =>
+        $fetch('/api/settings', {
+          method: 'PATCH',
+          body: {
+            nsfwDefaultEnabled: generalDraft.value.nsfwDefaultEnabled,
+            nsfwDefaultTransparency: generalDraft.value.nsfwDefaultTransparency,
+            pauseOnFailure: generalDraft.value.pauseOnFailure
+          }
+        }),
+      '通用设置已保存'
+    )
+  } finally {
+    generalSaving.value = false
+  }
+}
+
 async function updateDesktop(action: 'status' | 'check' | 'download' | 'install' | 'models') {
   if (action === 'models') {
     desktopBusy.value = true
@@ -278,26 +498,30 @@ async function updateDesktop(action: 'status' | 'check' | 'download' | 'install'
     updateRequestBusy.value = false
   }
 }
+
+watch(activeSection, (sec) => {
+  if (sec !== 'voices') stopAudition()
+  if (sec === 'voices') void loadRefVoices()
+})
+
 onMounted(async () => {
   check()
+  void loadRefVoices()
   if (!desktop.value) return
   stopUpdateListener = (window as any).redub.onUpdateStatus?.((state: DesktopUpdateState) => {
     desktopUpdate.value = state
   })
   await updateDesktop('status')
 })
-onBeforeUnmount(() => stopUpdateListener?.())
+
+onBeforeUnmount(() => {
+  stopAudition()
+  stopUpdateListener?.()
+})
 </script>
 
 <template>
   <section class="settings-page">
-    <header class="page-header settings-header">
-      <div>
-        <h1>设置</h1>
-        <p class="help">管理 AI 渠道、本机引擎与任务参数。所有密钥和模型均保存在本机。</p>
-      </div>
-    </header>
-
     <div class="settings-layout">
       <nav class="settings-menu" aria-label="设置分类">
         <button
@@ -308,73 +532,346 @@ onBeforeUnmount(() => stopUpdateListener?.())
           @click="activeSection = item.id"
         >
           <UIcon :name="item.icon" />
-          <span
-            ><strong>{{ item.label }}</strong
-            ><small>{{ item.description }}</small></span
-          >
+          <span>
+            <strong>{{ item.label }}</strong>
+            <small>{{ item.description }}</small>
+          </span>
           <UIcon name="i-carbon-chevron-right" class="menu-chevron" />
         </button>
       </nav>
 
       <div class="settings-content">
-        <section v-if="activeSection === 'channels'" class="settings-card settings-section">
-          <div class="settings-card-header">
-            <div>
-              <h2>AI 渠道</h2>
-              <p class="help">配音和翻译使用的服务。可以添加多个渠道，并在项目中切换启用的配音渠道。</p>
-            </div>
-            <UButton icon="i-carbon-add" size="sm" @click="edit()">添加渠道</UButton>
-          </div>
-          <div v-if="channels.length" class="channel-list">
-            <button
-              v-for="channel in channels"
-              :key="channel.id"
-              type="button"
-              class="channel-row"
-              @click="edit(channel)"
-            >
-              <div class="channel-icon-badge">
-                <UIcon :name="channel.type === 'volcengine' ? 'i-carbon-microphone' : 'i-carbon-language'" />
+        <!-- AI 渠道（翻译和配音分开，一行一个渠道） -->
+        <section v-if="activeSection === 'channels'" class="space-y-6">
+          <!-- 配音渠道 -->
+          <div class="settings-card settings-section">
+            <div class="settings-card-header">
+              <div>
+                <h2>配音渠道</h2>
+                <p class="help">AI 配音使用的服务。每次启用一个配音渠道，生成时自动使用配置的并发数。</p>
               </div>
-              <div class="channel-info">
-                <div class="channel-title-row">
-                  <strong class="channel-name">{{ channel.name }}</strong>
-                  <UBadge
-                    :color="!channel.enabled ? 'neutral' : channel.configured ? 'success' : 'warning'"
-                    variant="soft"
-                    size="sm"
-                    >{{ !channel.enabled ? '已停用' : channel.configured ? '已启用' : '待配置密钥' }}</UBadge
-                  >
+              <UButton icon="i-carbon-add" size="sm" @click="edit(undefined, 'volcengine')"
+                >添加配音渠道</UButton
+              >
+            </div>
+            <div v-if="dubbingChannels.length" class="channel-list">
+              <button
+                v-for="channel in dubbingChannels"
+                :key="channel.id"
+                type="button"
+                class="channel-row"
+                @click="edit(channel)"
+              >
+                <div class="channel-icon-badge">
+                  <UIcon name="i-carbon-microphone" />
                 </div>
-                <div class="channel-meta-row">
-                  <span class="channel-type-tag">{{ channel.type === 'volcengine' ? '配音' : '翻译' }}</span>
-                  <span class="channel-meta-sep">·</span>
-                  <span class="channel-model-name" :title="channel.model">{{ channel.model }}</span>
+                <div class="channel-info">
+                  <div class="channel-title-row">
+                    <strong class="channel-name">{{ channel.name }}</strong>
+                    <div class="flex items-center gap-2">
+                      <UBadge color="neutral" variant="subtle" size="sm"
+                        >并发: {{ channel.concurrency ?? 5 }}</UBadge
+                      >
+                      <UBadge
+                        :color="!channel.enabled ? 'neutral' : channel.configured ? 'success' : 'warning'"
+                        variant="soft"
+                        size="sm"
+                        >{{
+                          !channel.enabled ? '已停用' : channel.configured ? '已启用' : '待配置密钥'
+                        }}</UBadge
+                      >
+                    </div>
+                  </div>
+                  <div class="channel-meta-row">
+                    <span class="channel-type-tag">火山 Audio</span>
+                    <span class="channel-meta-sep">·</span>
+                    <span class="channel-model-name" :title="channel.model">{{ channel.model }}</span>
+                  </div>
                 </div>
+                <UIcon name="i-carbon-chevron-right" class="channel-chevron" />
+              </button>
+            </div>
+            <div v-else class="settings-empty">
+              <UIcon name="i-carbon-microphone" />
+              <div>
+                <strong>暂无配音渠道</strong>
+                <p>添加火山 Audio 配音渠道后即可开始生成配音。</p>
               </div>
-              <UIcon name="i-carbon-chevron-right" class="channel-chevron" />
-            </button>
-          </div>
-          <div v-else class="settings-empty">
-            <UIcon name="i-carbon-api" />
-            <div>
-              <strong>还没有 AI 渠道</strong>
-              <p>添加火山 Audio 或 OpenAI 兼容渠道后即可开始处理。</p>
             </div>
           </div>
-          <div class="settings-note">
-            <strong>渠道可以切换吗？</strong>
-            <p>
-              可以。配音和翻译各启用一个渠道。启用新渠道会自动停用同功能的其他渠道，之后生成时自动使用这里的配置；已有配音和译文会保留。
-            </p>
+
+          <!-- 翻译渠道 -->
+          <div class="settings-card settings-section">
+            <div class="settings-card-header">
+              <div>
+                <h2>翻译渠道</h2>
+                <p class="help">台词翻译使用的服务。每次启用一个翻译渠道，翻译时自动使用配置的并发数。</p>
+              </div>
+              <UButton icon="i-carbon-add" size="sm" @click="edit(undefined, 'openai')">添加翻译渠道</UButton>
+            </div>
+            <div v-if="translationChannels.length" class="channel-list">
+              <button
+                v-for="channel in translationChannels"
+                :key="channel.id"
+                type="button"
+                class="channel-row"
+                @click="edit(channel)"
+              >
+                <div class="channel-icon-badge">
+                  <UIcon name="i-carbon-translate" />
+                </div>
+                <div class="channel-info">
+                  <div class="channel-title-row">
+                    <strong class="channel-name">{{ channel.name }}</strong>
+                    <div class="flex items-center gap-2">
+                      <UBadge color="neutral" variant="subtle" size="sm"
+                        >并发: {{ channel.concurrency ?? 10 }}</UBadge
+                      >
+                      <UBadge
+                        :color="!channel.enabled ? 'neutral' : channel.configured ? 'success' : 'warning'"
+                        variant="soft"
+                        size="sm"
+                        >{{
+                          !channel.enabled ? '已停用' : channel.configured ? '已启用' : '待配置密钥'
+                        }}</UBadge
+                      >
+                    </div>
+                  </div>
+                  <div class="channel-meta-row">
+                    <span class="channel-type-tag">OpenAI 兼容</span>
+                    <span class="channel-meta-sep">·</span>
+                    <span class="channel-model-name" :title="channel.model">{{ channel.model }}</span>
+                  </div>
+                </div>
+                <UIcon name="i-carbon-chevron-right" class="channel-chevron" />
+              </button>
+            </div>
+            <div v-else class="settings-empty">
+              <UIcon name="i-carbon-translate" />
+              <div>
+                <strong>暂无翻译渠道</strong>
+                <p>添加 OpenAI 兼容翻译渠道后即可开始台词翻译。</p>
+              </div>
+            </div>
           </div>
         </section>
 
+        <!-- 音色管理 -->
+        <section v-else-if="activeSection === 'voices'" class="settings-card settings-section">
+          <div class="settings-card-header">
+            <div>
+              <h2>音色管理</h2>
+              <p class="help">按渠道管理和试听音色，可将音色置顶或设置为全局默认音色。</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <USelect
+                v-model="voiceSourceTab"
+                class="w-44"
+                :items="[
+                  { label: '微软 Edge TTS', value: 'tts' },
+                  { label: '本地参考音色', value: 'reference' }
+                ]"
+              />
+            </div>
+          </div>
+
+          <!-- 微软 Edge TTS 音色列表 -->
+          <div v-if="voiceSourceTab === 'tts'" class="flex flex-col gap-2.5">
+            <div
+              v-for="voice in sortedTtsVoices"
+              :key="voice.value"
+              class="flex items-center justify-between gap-4 p-3 rounded-lg border border-default bg-muted/40 hover:bg-elevated transition-all"
+            >
+              <div class="flex items-center gap-3 min-w-0 flex-1">
+                <div
+                  class="flex items-center justify-center w-9 h-9 rounded-lg bg-elevated border border-default text-primary shrink-0"
+                >
+                  <UIcon name="i-carbon-volume-up" class="w-5 h-5" />
+                </div>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center gap-2">
+                    <strong class="text-sm font-semibold text-text truncate">{{ voice.label }}</strong>
+                    <UBadge
+                      v-if="settings.defaultTtsVoice === voice.value"
+                      color="primary"
+                      variant="solid"
+                      size="xs"
+                      >默认音色</UBadge
+                    >
+                    <UBadge
+                      v-if="settings.pinnedVoices?.includes(voice.value)"
+                      color="neutral"
+                      variant="soft"
+                      size="xs"
+                      >已置顶</UBadge
+                    >
+                  </div>
+                  <p class="text-xs text-muted font-mono mt-0.5 truncate">
+                    {{ voice.value }} · {{ voice.lang }}
+                  </p>
+                </div>
+              </div>
+              <div class="flex items-center gap-2 shrink-0">
+                <UButton
+                  color="neutral"
+                  variant="outline"
+                  size="xs"
+                  :icon="
+                    auditionVoice === voice.value && isAuditionPlaying
+                      ? 'i-carbon-stop-filled'
+                      : 'i-carbon-play-filled-alt'
+                  "
+                  :loading="auditionVoice === voice.value && isAuditionLoading"
+                  @click="toggleTtsAudition(voice.value)"
+                >
+                  {{ auditionVoice === voice.value && isAuditionPlaying ? '停止' : '试听' }}
+                </UButton>
+                <UButton
+                  color="neutral"
+                  variant="ghost"
+                  size="xs"
+                  :disabled="settings.defaultTtsVoice === voice.value"
+                  @click="setAsDefaultTtsVoice(voice.value)"
+                >
+                  设为默认
+                </UButton>
+                <UButton
+                  color="neutral"
+                  variant="ghost"
+                  size="xs"
+                  :icon="
+                    settings.pinnedVoices?.includes(voice.value) ? 'i-carbon-pin-filled' : 'i-carbon-pin'
+                  "
+                  :title="settings.pinnedVoices?.includes(voice.value) ? '取消置顶' : '置顶音色'"
+                  @click="togglePinVoice(voice.value)"
+                >
+                  {{ settings.pinnedVoices?.includes(voice.value) ? '取消置顶' : '置顶' }}
+                </UButton>
+              </div>
+            </div>
+          </div>
+
+          <!-- 本地参考音色列表 -->
+          <div v-else-if="voiceSourceTab === 'reference'" class="space-y-4">
+            <div class="p-4 rounded-lg border border-default bg-muted/30 space-y-3">
+              <strong class="text-sm font-semibold">添加本地参考音频</strong>
+              <UFileUpload
+                v-model="refFile"
+                accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg,.aac"
+                label="拖入音频，或点击选择"
+                description="30 秒以内 · 最大 10 MB"
+                icon="i-carbon-music"
+                file-icon="i-carbon-music"
+                :disabled="refSaving"
+                :file-image="false"
+                class="w-full min-h-24"
+              />
+              <div class="flex items-center gap-2">
+                <UInput
+                  v-model="refName"
+                  aria-label="音色名称"
+                  placeholder="音色名称（默认使用文件名）"
+                  :maxlength="80"
+                  :disabled="refSaving"
+                  class="flex-1"
+                />
+                <UButton
+                  type="button"
+                  color="primary"
+                  icon="i-carbon-add"
+                  :disabled="!refFile"
+                  :loading="refSaving"
+                  @click="addReferenceVoice"
+                >
+                  添加音色
+                </UButton>
+              </div>
+            </div>
+
+            <div v-if="sortedRefVoices.length" class="flex flex-col gap-2.5">
+              <div
+                v-for="voice in sortedRefVoices"
+                :key="voice.id"
+                class="flex items-center justify-between gap-4 p-3 rounded-lg border border-default bg-muted/40 hover:bg-elevated transition-all"
+              >
+                <div class="flex items-center gap-3 min-w-0 flex-1">
+                  <div
+                    class="flex items-center justify-center w-9 h-9 rounded-lg bg-elevated border border-default text-primary shrink-0"
+                  >
+                    <UIcon name="i-carbon-waveform" class="w-5 h-5" />
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <template v-if="refEditing === voice.id">
+                      <div class="flex items-center gap-2">
+                        <UInput
+                          v-model="refEditName"
+                          class="flex-1"
+                          size="sm"
+                          @keydown.enter.prevent="saveReferenceName"
+                        />
+                        <UButton size="xs" color="primary" :loading="refSaving" @click="saveReferenceName"
+                          >保存</UButton
+                        >
+                        <UButton size="xs" color="neutral" variant="ghost" @click="refEditing = ''"
+                          >取消</UButton
+                        >
+                      </div>
+                    </template>
+                    <template v-else>
+                      <div class="flex items-center gap-2">
+                        <strong class="text-sm font-semibold text-text truncate">{{ voice.name }}</strong>
+                        <UBadge
+                          v-if="settings.pinnedVoices?.includes(voice.id)"
+                          color="neutral"
+                          variant="soft"
+                          size="xs"
+                          >已置顶</UBadge
+                        >
+                      </div>
+                      <p class="text-xs text-muted mt-0.5">时长 {{ voice.duration.toFixed(1) }}s</p>
+                    </template>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2 shrink-0">
+                  <ClipAudio :src="mediaUrl(voice.path)" :label="`试听 ${voice.name}`" />
+                  <UButton
+                    v-if="refEditing !== voice.id"
+                    color="neutral"
+                    variant="ghost"
+                    size="xs"
+                    icon="i-carbon-edit"
+                    title="重命名"
+                    @click="startReferenceRename(voice)"
+                  />
+                  <UButton
+                    color="neutral"
+                    variant="ghost"
+                    size="xs"
+                    :icon="settings.pinnedVoices?.includes(voice.id) ? 'i-carbon-pin-filled' : 'i-carbon-pin'"
+                    :title="settings.pinnedVoices?.includes(voice.id) ? '取消置顶' : '置顶音色'"
+                    @click="togglePinVoice(voice.id)"
+                  >
+                    {{ settings.pinnedVoices?.includes(voice.id) ? '取消置顶' : '置顶' }}
+                  </UButton>
+                </div>
+              </div>
+            </div>
+            <div v-else class="settings-empty">
+              <UIcon name="i-carbon-waveform" />
+              <div>
+                <strong>暂无参考音色</strong>
+                <p>上传本地音频后，即可在配音时复用参考音色。</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 本机处理（单列展示，Whisper模型直接在卡片内设置） -->
         <section v-else-if="activeSection === 'local'" class="settings-card settings-section">
           <div class="settings-card-header">
             <div>
               <h2>本机处理</h2>
-              <p class="help">检查本机媒体引擎和 AI 模型是否完整。处理过程不会把素材上传到模型服务。</p>
+              <p class="help">检查本机媒体引擎和 AI 模型是否完整。处理过程不会把素材上传到外部服务。</p>
             </div>
             <UButton
               color="neutral"
@@ -390,24 +887,24 @@ onBeforeUnmount(() => stopUpdateListener?.())
           <div class="health-summary">
             <div>
               <i :class="{ ok: engineReady }" />
-              <span
-                ><strong>音视频引擎</strong
-                ><small>{{ !health ? '检查中' : engineReady ? '已就绪' : '待安装' }}</small></span
-              >
+              <span>
+                <strong>音视频引擎</strong>
+                <small>{{ !health ? '检查中' : engineReady ? '已就绪' : '待安装' }}</small>
+              </span>
             </div>
             <div>
               <i :class="{ ok: modelReady }" />
-              <span
-                ><strong>本地模型环境</strong
-                ><small>{{ !health ? '检查中' : modelReady ? '已就绪' : '待安装' }}</small></span
-              >
+              <span>
+                <strong>本地模型环境</strong>
+                <small>{{ !health ? '检查中' : modelReady ? '已就绪' : '待安装' }}</small>
+              </span>
             </div>
           </div>
 
           <div class="settings-block">
             <div class="settings-block-heading">
               <div>
-                <h3>音视频引擎是什么</h3>
+                <h3>音视频引擎</h3>
                 <p class="help">负责读取素材、提取音轨、分离声道、混音和封装成片。</p>
               </div>
               <UBadge color="neutral" variant="soft">应用内置，不支持页面切换</UBadge>
@@ -450,7 +947,7 @@ onBeforeUnmount(() => stopUpdateListener?.())
           <div class="settings-block">
             <div class="settings-block-heading">
               <div>
-                <h3>本地模型是什么</h3>
+                <h3>本地模型</h3>
                 <p class="help">用于人声分离、语音活动检测和台词识别，首次使用时可能自动下载权重。</p>
               </div>
               <UBadge :color="modelReady ? 'success' : 'warning'" variant="soft">{{
@@ -485,7 +982,29 @@ onBeforeUnmount(() => stopUpdateListener?.())
                       >{{ health?.modelStatus?.fasterWhisper ? '已安装' : '待安装' }}</UBadge
                     >
                   </div>
-                  <p>把语音识别为文字。可在“任务与识别”中切换 tiny、base、small、medium 或 large-v3。</p>
+                  <p>把语音识别为文字。可在下方直接选择识别模型，模型首次使用时会自动下载权重。</p>
+                  <div
+                    class="mt-3 pt-3 border-t border-default/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                  >
+                    <div class="min-w-0 flex-1">
+                      <strong class="text-xs font-semibold text-text">本地识别模型</strong>
+                      <p class="text-xs text-muted mt-0.5">本地识别模型模型越大，精度越高，内存占用越多。</p>
+                    </div>
+                    <div class="w-48 shrink-0">
+                      <USelect
+                        :model-value="settings.whisperModel || 'small'"
+                        class="w-full"
+                        :items="[
+                          { label: 'Tiny · 最快', value: 'tiny' },
+                          { label: 'Base · 轻量', value: 'base' },
+                          { label: 'Small · 推荐', value: 'small' },
+                          { label: 'Medium · 更准确', value: 'medium' },
+                          { label: 'Large v3 · 最准确', value: 'large-v3' }
+                        ]"
+                        @update:model-value="onWhisperModelChange"
+                      />
+                    </div>
+                  </div>
                 </div>
               </article>
               <article>
@@ -536,81 +1055,66 @@ onBeforeUnmount(() => stopUpdateListener?.())
           <p v-if="desktopBusy" class="help">正在安装，请保持应用打开。</p>
         </section>
 
-        <section v-else-if="activeSection === 'queue'" class="settings-card settings-section">
+        <!-- 通用设置（NSFW 遮罩与队列偏好） -->
+        <section v-else-if="activeSection === 'general'" class="settings-card settings-section">
           <div class="settings-card-header">
             <div>
-              <h2>任务与识别</h2>
-              <p class="help">翻译和配音分别控制并发，互不占用额度。</p>
+              <h2>通用设置</h2>
+              <p class="help">配置全局默认偏好。每个项目仍可单独调整自己的选项并自动记住。</p>
             </div>
           </div>
-          <UForm
-            class="settings-form"
-            :schema="settingsSchema"
-            :state="queueDraft"
-            :disabled="queueSaving"
-            @submit="saveQueue"
-          >
-            <div class="settings-form-grid">
-              <UFormField
-                name="translationConcurrency"
-                label="翻译并发数"
-                description="同时翻译的台词数量，默认 10。"
-              >
-                <UInputNumber
-                  v-model="queueDraft.translationConcurrency"
-                  increment-icon="i-carbon-add"
-                  decrement-icon="i-carbon-subtract"
-                  class="w-full"
-                  :min="1"
-                  :max="32"
-                  :step="1"
+
+          <form class="space-y-6 max-w-xl" @submit.prevent="saveGeneral">
+            <div class="p-4 rounded-lg border border-default bg-muted/30 space-y-4">
+              <div class="flex items-center justify-between gap-4">
+                <div>
+                  <strong class="text-sm font-semibold text-text">默认开启 NSFW 毛玻璃遮罩</strong>
+                  <p class="text-xs text-muted mt-0.5">
+                    新建项目或打开未单独配置的项目时，视频画面默认开启毛玻璃遮罩。
+                  </p>
+                </div>
+                <USwitch v-model="generalDraft.nsfwDefaultEnabled" />
+              </div>
+
+              <div class="space-y-1.5 pt-3 border-t border-default/50">
+                <div class="flex items-center justify-between text-xs">
+                  <strong class="font-semibold text-text">默认毛玻璃遮罩透光度</strong>
+                  <span class="text-muted">{{ generalDraft.nsfwDefaultTransparency }}% 透光</span>
+                </div>
+                <input
+                  v-model.number="generalDraft.nsfwDefaultTransparency"
+                  type="range"
+                  min="0"
+                  max="75"
+                  step="1"
+                  class="w-full accent-primary"
                 />
-              </UFormField>
-              <UFormField
-                name="synthesisConcurrency"
-                label="配音并发数"
-                description="同时生成的配音数量，默认 5。"
-              >
-                <UInputNumber
-                  v-model="queueDraft.synthesisConcurrency"
-                  increment-icon="i-carbon-add"
-                  decrement-icon="i-carbon-subtract"
-                  class="w-full"
-                  :min="1"
-                  :max="32"
-                  :step="1"
-                />
-              </UFormField>
+                <div class="flex justify-between text-[11px] text-muted">
+                  <span>0%（完全遮挡）</span>
+                  <span>75%（高透光）</span>
+                </div>
+              </div>
             </div>
-            <div class="settings-form-grid">
-              <UFormField label="本地识别模型" description="模型越大，精度越高，内存占用越多。">
-                <USelect
-                  v-model="queueDraft.whisperModel"
-                  class="w-full"
-                  :items="[
-                    { label: 'Tiny · 最快', value: 'tiny' },
-                    { label: 'Base · 轻量', value: 'base' },
-                    { label: 'Small · 推荐', value: 'small' },
-                    { label: 'Medium · 更准确', value: 'medium' },
-                    { label: 'Large v3 · 最准确', value: 'large-v3' }
-                  ]"
-                />
-              </UFormField>
+
+            <div class="p-4 rounded-lg border border-default bg-muted/30">
+              <div class="flex items-center justify-between gap-4">
+                <div>
+                  <strong class="text-sm font-semibold text-text">任务失败后暂停队列</strong>
+                  <p class="text-xs text-muted mt-0.5">
+                    当台词翻译或配音遇到错误时，自动暂停后续任务以防连续报错。
+                  </p>
+                </div>
+                <USwitch v-model="generalDraft.pauseOnFailure" />
+              </div>
             </div>
-            <div class="settings-form-footer">
-              <UCheckbox v-model="queueDraft.pauseOnFailure" label="任务失败后暂停队列" />
-              <UButton
-                color="neutral"
-                variant="outline"
-                type="submit"
-                class="settings-save"
-                :loading="queueSaving"
-                >保存任务设置</UButton
-              >
+
+            <div class="flex justify-end">
+              <UButton type="submit" :loading="generalSaving">保存通用设置</UButton>
             </div>
-          </UForm>
+          </form>
         </section>
 
+        <!-- 桌面应用 -->
         <section v-else-if="activeSection === 'desktop' && desktop" class="settings-card settings-section">
           <div class="settings-card-header">
             <div>
@@ -681,9 +1185,10 @@ onBeforeUnmount(() => stopUpdateListener?.())
       </div>
     </div>
 
+    <!-- 渠道编辑弹窗 -->
     <UModal v-model:open="modalOpen" :title="channelTitle" :ui="{ content: 'sm:max-w-xl' }">
       <template #body>
-        <form v-if="draft" class="channel-editor" @submit.prevent="save">
+        <form v-if="draft" class="channel-editor space-y-4" @submit.prevent="save">
           <div class="channel-editor-grid">
             <UFormField label="渠道名称"><UInput v-model="draft.name" class="w-full" /></UFormField>
             <UFormField label="类型">
@@ -704,9 +1209,36 @@ onBeforeUnmount(() => stopUpdateListener?.())
               <UInput v-model="draft.keyEnv" class="w-full" placeholder="CUSTOM_API_KEY" />
             </UFormField>
           </div>
-          <UFormField label="API Key" description="只保存在本机；编辑已有渠道时留空表示不修改。">
-            <UInput v-model="draft.apiKey" class="w-full" type="password" placeholder="输入 API Key" />
-          </UFormField>
+          <div class="channel-editor-grid">
+            <UFormField
+              :label="draft.type === 'openai' ? '翻译并发数' : '配音并发数'"
+              :description="
+                draft.type === 'openai' ? '同时翻译的台词数量，默认 10。' : '同时生成的配音数量，默认 5。'
+              "
+            >
+              <UInputNumber v-model="draft.concurrency" :min="1" :max="32" :step="1" class="w-full" />
+            </UFormField>
+            <UFormField label="API Key" description="只保存在本机数据库中；点击右侧眼睛可查看明文。">
+              <div class="relative flex items-center w-full">
+                <UInput
+                  v-model="draft.apiKey"
+                  class="w-full pr-9"
+                  :type="showApiKey ? 'text' : 'password'"
+                  placeholder="输入 API Key"
+                />
+                <UButton
+                  type="button"
+                  color="neutral"
+                  variant="ghost"
+                  size="xs"
+                  class="absolute right-1"
+                  :icon="showApiKey ? 'i-carbon-view-off' : 'i-carbon-view'"
+                  :title="showApiKey ? '隐藏 API Key' : '查看明文 API Key'"
+                  @click="showApiKey = !showApiKey"
+                />
+              </div>
+            </UFormField>
+          </div>
           <UFormField label="模型 ID" description="支持手动输入，或从接口拉取后在右侧下拉选择">
             <div class="channel-model-picker">
               <UInput

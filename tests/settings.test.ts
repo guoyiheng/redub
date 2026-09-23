@@ -20,3 +20,16 @@ it.each([0, -1, 1.5, 33, '5'])('拒绝非法并发数 %s', (value) => {
   expect(settingsSchema.safeParse({ translationConcurrency: value }).success).toBe(false)
   expect(settingsSchema.safeParse({ synthesisConcurrency: value }).success).toBe(false)
 })
+
+it('NSFW 默认开启且遮罩默认为 0%，音色默认与置顶字段校验正确', () => {
+  const defaults = defaultSettings()
+  expect(defaults.nsfwDefaultEnabled).toBe(true)
+  expect(defaults.nsfwDefaultTransparency).toBe(0)
+  expect(defaults.defaultTtsVoice).toBe('zh-CN-XiaoxiaoNeural')
+  expect(defaults.pinnedVoices).toEqual([])
+
+  expect(settingsSchema.safeParse({ nsfwDefaultTransparency: -1 }).success).toBe(false)
+  expect(settingsSchema.safeParse({ nsfwDefaultTransparency: 101 }).success).toBe(false)
+  expect(settingsSchema.safeParse({ nsfwDefaultTransparency: 50 }).success).toBe(true)
+  expect(settingsSchema.safeParse({ pinnedVoices: ['voice-1', 'voice-2'] }).success).toBe(true)
+})
