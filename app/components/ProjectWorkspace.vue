@@ -1487,7 +1487,8 @@ async function onSegmentRestored(updated: Segment) {
     </UDrawer>
     <UDrawer
       v-model:open="showGeneration"
-      title="生成配音"
+      aria-label="AI 配音生成"
+      :close="false"
       :content="{ onOpenAutoFocus: focusGeneration, onCloseAutoFocus: restoreGenerationFocus }"
       direction="bottom"
       :handle="false"

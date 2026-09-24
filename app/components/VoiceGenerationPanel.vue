@@ -179,18 +179,6 @@ async function generate() {
 <template>
   <ReferenceVoiceLibrary v-model:open="libraryOpen" selectable @select="useVoice" />
   <form class="generation-panel" @submit.prevent="generate">
-    <header class="generation-panel-header">
-      <h2>生成配音</h2>
-      <UButton
-        type="button"
-        color="neutral"
-        variant="ghost"
-        size="xs"
-        icon="i-carbon-close"
-        aria-label="关闭配音窗口"
-        @click="emit('close')"
-      />
-    </header>
     <VoiceParameters v-model="draft" :disabled="busy" :can-reference="canReference || !!customReference">
       <UTextarea
         v-model="content"
