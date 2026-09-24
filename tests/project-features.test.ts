@@ -101,7 +101,7 @@ describe('项目置顶与属性功能', () => {
     expect(referenceVoicePrompt).toContain('完全一致')
   })
 
-  it('语音指令和引用上文使用文档标记，只有当前台词位于标记外', async () => {
+  it('语音指令、引用上文和引用下文使用文档标签，只有合成文本会被朗读', async () => {
     const { buildVoiceSynthesisPrompt } = await import('../shared/voice')
     const prompt = buildVoiceSynthesisPrompt({
       prompt: '[#用颤抖沙哑、带着崩溃与绝望的哭腔说]我逆转时空九十九次救你。',
@@ -110,21 +110,35 @@ describe('项目置顶与属性功能', () => {
       duration: 2.4,
       hasAudioReference: true,
       hasVoiceReference: true,
-      context: [
-        {
-          id: 'previous',
-          speaker: '对方',
-          text: '你还好吗？',
-          translation: '你还好吗？',
-          start: 0,
-          end: 1
-        }
-      ]
+      context: {
+        previous: [
+          {
+            id: 'previous',
+            speaker: '对方',
+            text: '你还好吗？',
+            translation: '你还好吗？',
+            start: 0,
+            end: 1
+          }
+        ],
+        next: [
+          {
+            id: 'next',
+            speaker: '谢珩',
+            text: '别再说了。',
+            translation: '别再说了。',
+            start: 3,
+            end: 4
+          }
+        ]
+      }
     })
-    expect(prompt).toMatch(/^\[#.*用颤抖沙哑、带着崩溃与绝望的哭腔说/)
-    expect(prompt).toContain('[#你还好吗？]')
-    expect(prompt.replace(/\[#[^\]]*\]/g, '')).toBe('我逆转时空九十九次救你。')
+    expect(prompt).toMatch(/^\*指令：\* \[#.*用颤抖沙哑、带着崩溃与绝望的哭腔说/)
+    expect(prompt).toContain('*引用上文：* [#你还好吗？]')
+    expect(prompt).toContain('*引用下文：* [#别再说了。]')
+    expect(prompt).toContain('*合成文本：* 我逆转时空九十九次救你。')
     expect(prompt).toContain('不朗读参考音频的文字')
     expect(prompt).not.toMatch(/【配音任务】|【表演执行规则】|【用户语音指令】/)
   })
+
 })

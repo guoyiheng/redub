@@ -6,7 +6,8 @@ import {
   referenceVoicePrompt,
   dubbedText,
   normalizeVoicePrompt,
-  composeVoicePrompt
+  composeVoicePrompt,
+  selectVoiceContextLines
 } from '../../shared/voice'
 import type { Segment, ReferenceVoice } from '../../shared/types'
 const props = defineProps<{ segment: Segment }>()
@@ -64,16 +65,18 @@ const direction = props.segment.aiPrompt?.trim()
     ? referenceVoicePrompt
     : naturalVoicePrompt
 
+const voiceContext = computed(() => selectVoiceContextLines(props.segment, detail.value?.segments || []))
 const initialPrompt =
   props.segment.generationPrompt ||
   composeVoicePrompt({
     language: targetLanguage,
     direction,
     useReference: hasReference,
-    text: originalText
+    text: originalText,
+    context: voiceContext.value
   })
 
-const aiContent = ref(normalizeVoicePrompt(initialPrompt, targetLanguage, originalText))
+const aiContent = ref(normalizeVoicePrompt(initialPrompt, targetLanguage, originalText, voiceContext.value))
 const ttsContent = ref(dubbedText(props.segment) || originalText)
 const content = computed({
   get: () => (draft.value.synthesisMode === 'ai' ? aiContent.value : ttsContent.value),
@@ -154,7 +157,14 @@ async function generate() {
             ...draft.value,
             customReferencePath: customReference.value,
             ...(draft.value.synthesisMode === 'ai'
-              ? { generationPrompt: normalizeVoicePrompt(aiContent.value.trim(), targetLanguage) }
+              ? {
+                  generationPrompt: normalizeVoicePrompt(
+                    aiContent.value.trim(),
+                    targetLanguage,
+                    originalText,
+                    voiceContext.value
+                  )
+                }
               : { translation: ttsContent.value.trim() })
           }
         }),
@@ -188,7 +198,9 @@ async function generate() {
         variant="none"
         :aria-label="draft.synthesisMode === 'ai' ? '配音内容与提示词' : '配音台词'"
         :placeholder="
-          draft.synthesisMode === 'ai' ? '[#用中文、轻松自然的语气说]你好，欢迎回来。' : '输入配音台词…'
+          draft.synthesisMode === 'ai'
+            ? '*指令：* [#用中文、轻松自然的语气说]\n*合成文本：* 你好，欢迎回来。'
+            : '输入配音台词…'
         "
         :rows="5"
         :maxrows="10"

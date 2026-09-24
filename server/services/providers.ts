@@ -1,7 +1,12 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Channel, Segment } from '../../shared/types'
-import { buildVoiceSynthesisPrompt, speakerName, type VoiceContextLine } from '../../shared/voice'
+import {
+  buildVoiceSynthesisPrompt,
+  speakerName,
+  type VoiceContextLine,
+  type VoiceContextSelection
+} from '../../shared/voice'
 import { assetPath, cutAudio, probe } from './media'
 import { edgeSpeech } from './edge-speech'
 import { jobFetch, requestRedactor } from './job-requests'
@@ -9,12 +14,13 @@ import { jobFetch, requestRedactor } from './job-requests'
 export function synthesisHash(
   segment: Segment,
   channel: Channel | null | undefined,
-  targetLanguage = '中文'
+  targetLanguage = '中文',
+  context?: VoiceContextSelection | VoiceContextLine[]
 ) {
   return createHash('sha256')
     .update(
       JSON.stringify({
-        promptFormat: segment.synthesisMode === 'ai' ? 'voice-instruction-v1' : undefined,
+        promptFormat: segment.synthesisMode === 'ai' ? 'voice-instruction-v2' : undefined,
         language: segment.synthesisMode === 'ai' ? targetLanguage : undefined,
         text: segment.translation || segment.text,
         start: segment.start,
@@ -35,7 +41,8 @@ export function synthesisHash(
         ttsRate: segment.ttsRate,
         ttsPitch: segment.ttsPitch,
         ttsVolume: segment.ttsVolume,
-        channel
+        channel,
+        context
       })
     )
     .digest('hex')
@@ -167,7 +174,7 @@ export async function synthesizeSpeech(
   channel: Channel,
   output: string,
   targetLanguage = '中文',
-  context: VoiceContextLine[] = []
+  context?: VoiceContextSelection | VoiceContextLine[]
 ) {
   const text = segment.translation || segment.text
   if (!(segment.synthesisMode === 'ai' ? segment.generationPrompt || text : text).trim())

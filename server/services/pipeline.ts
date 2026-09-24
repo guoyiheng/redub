@@ -25,7 +25,7 @@ import type { Job, Segment, TranslationVersion, AudioVersion } from '../../share
 import { exportProject } from './export'
 import { getPreviewTracks } from './preview-tracks'
 import { assertTimeline } from '../../shared/timeline'
-import { dubbedText, composeVoicePrompt } from '../../shared/voice'
+import { dubbedText, composeVoicePrompt, selectVoiceContextLines } from '../../shared/voice'
 import { createVersionName } from '../../shared/version'
 import { translationTaskSchema } from '../../shared/translation'
 
@@ -200,9 +200,8 @@ export async function executeJob(job: Job, progress: (value: number, message: st
     })
   }
   if (job.stage === 'translate') {
-    const lines = (await getSegments(p.id)).filter((s) =>
-      job.segmentId ? s.id === job.segmentId : s.enabled
-    )
+    const allLines = await getSegments(p.id)
+    const lines = allLines.filter((s) => (job.segmentId ? s.id === job.segmentId : s.enabled))
     if (!lines.length || lines.some((s) => !s.text.trim()))
       throw new Error('请先识别或填写所有启用片段的原文')
     const channel = await getActiveChannel('openai')
@@ -218,6 +217,10 @@ export async function executeJob(job: Job, progress: (value: number, message: st
       translation.sourceLanguage || p.sourceLanguage,
       translation.prompt
     )
+    const translatedLines = allLines.map((line) => ({
+      ...line,
+      translation: result.get(line.id) || line.translation
+    }))
     await jobTransaction(async (tx) => {
       for (const s of lines) {
         const newText = result.get(s.id)!
@@ -244,7 +247,8 @@ export async function executeJob(job: Job, progress: (value: number, message: st
           direction: s.aiPrompt,
           useReference: s.aiUseReference,
           tone,
-          text: newText
+          text: newText,
+          context: selectVoiceContextLines(s, translatedLines)
         })
         await tx
           .update(segments)
@@ -319,7 +323,8 @@ export async function executeJob(job: Job, progress: (value: number, message: st
         s.generatedHash = null
         s.audioHistory = audioHist
       }
-      const hash = synthesisHash(s, channel, s.translationLanguage || p.targetLanguage)
+      const context = selectVoiceContextLines(s, allLines)
+      const hash = synthesisHash(s, channel, s.translationLanguage || p.targetLanguage, context)
       if (s.generatedPath && s.generatedHash === hash && existsSync(assetPath(s.generatedPath))) continue
       await progress(
         Math.round((i / lines.length) * 100),
@@ -333,7 +338,7 @@ export async function executeJob(job: Job, progress: (value: number, message: st
         channel!,
         assetPath(output),
         s.translationLanguage || p.targetLanguage,
-        allLines.filter((line) => line.id !== s.id && line.end <= s.start).slice(-3)
+        context
       )
       const audioHistory: AudioVersion[] = [...(s.audioHistory || [])]
       if (s.generatedPath && audioHistory.length === 0) {

@@ -16,6 +16,8 @@ import { edgeSpeech } from '../server/services/edge-speech'
 import { dubbedText, voiceLanguageInstruction } from '../shared/voice'
 vi.mock('../server/services/edge-speech', () => ({ edgeSpeech: vi.fn() }))
 
+const promptText = (prompt: string) => prompt.match(/\*合成文本：\*\s*([\s\S]*)$/)?.[1]?.trim() ?? ''
+
 let id: string, dir: string, voice: Buffer
 const progress = async () => {}
 const run = (stage: Stage) =>
@@ -93,8 +95,9 @@ describe.sequential('媒体处理与服务协议', () => {
       expect(body.model).toBe('seed-audio-1.0')
       expect(body.text_prompt).toContain('@音频1')
       expect(body.text_prompt).toContain('配音语言：中文')
-      expect(body.text_prompt).toMatch(/^\[#/)
-      expect(body.text_prompt.replace(/\[#[^\]]*\]/g, '')).toBe('你好')
+      expect(body.text_prompt).toMatch(/^\*指令：\* \[#/)
+      expect(body.text_prompt).toContain('*引用下文：* [#Keep this]')
+      expect(promptText(body.text_prompt)).toBe('你好')
       expect(body.references[0].audio_data).toBeTruthy()
       expect(body.audio_config.sample_rate).toBe(48000)
       return new Response(
@@ -155,7 +158,7 @@ describe.sequential('媒体处理与服务协议', () => {
     const fetcher = vi.fn(async (_url, options) => {
       const body = JSON.parse(options.body)
       expect(body.text_prompt).toContain('用轻松的语气说')
-      expect(body.text_prompt.replace(/\[#[^\]]*\]/g, '')).toBe('欢迎回来。')
+      expect(promptText(body.text_prompt)).toBe('欢迎回来。')
       expect(body.text_prompt).toContain('配音语言：中文')
       expect(body.text_prompt).not.toContain(line.translation)
       expect(body.text_prompt).not.toContain(line.aiPrompt)

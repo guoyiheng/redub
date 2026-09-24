@@ -86,9 +86,128 @@ export const defaultVoiceSettings = (useReference = true) =>
 
 export type VoiceContextLine = Pick<Segment, 'id' | 'speaker' | 'text' | 'translation' | 'start' | 'end'>
 
+export interface VoiceContextSelection {
+  previous?: VoiceContextLine[]
+  next?: VoiceContextLine[]
+}
+
+export interface VoicePromptParts {
+  instruction: string
+  previous: string
+  next: string
+  text: string
+}
+
+const promptLabels = {
+  instruction: '指令',
+  previous: '引用上文',
+  next: '引用下文',
+  text: '合成文本'
+} as const
+
 /** 文档约定：[#指令] 中的内容不合成，方括号外仅保留要朗读的台词。 */
 function directive(content: string) {
   return `[#${content.replace(/\[/g, '（').replace(/\]/g, '）').trim()}]`
+}
+
+function unwrapDirective(content: string) {
+  const value = content.trim()
+  const match = value.match(/^\[#([\s\S]*)\]$/)
+  return (match?.[1] || value).trim()
+}
+
+function extractDirectives(content: string) {
+  const values = [...content.matchAll(/\[#([\s\S]*?)\]/g)].map((match) => match[1]!.trim())
+  return values.length ? values.join('\n') : unwrapDirective(content)
+}
+
+export function formatVoicePrompt(parts: VoicePromptParts) {
+  const sections: string[] = []
+  if (parts.instruction.trim())
+    sections.push(`*${promptLabels.instruction}：* ${directive(parts.instruction)}`)
+  if (parts.previous.trim()) sections.push(`*${promptLabels.previous}：* ${directive(parts.previous)}`)
+  if (parts.next.trim()) sections.push(`*${promptLabels.next}：* ${directive(parts.next)}`)
+  sections.push(`*${promptLabels.text}：* ${parts.text.trim()}`)
+  return sections.join('\n')
+}
+
+function parseLabeledPrompt(input: string): VoicePromptParts | null {
+  const label = '(?:指令|引用上文|引用下文|合成文本)'
+  const separator = String.raw`\s*(?:\*\s*)?(?:[：:]\s*)?(?:\*\s*)?`
+  const pattern = new RegExp(
+    `(?:^|\\n)\\s*\\*?\\s*(${label})${separator}([\\s\\S]*?)(?=\\n\\s*\\*?\\s*${label}${separator}|$)`,
+    'g'
+  )
+  const parts: VoicePromptParts = { instruction: '', previous: '', next: '', text: '' }
+  let found = false
+  for (const match of input.matchAll(pattern)) {
+    found = true
+    const key = match[1]!
+    const value = match[2]!.trim()
+    if (key === '指令') parts.instruction = extractDirectives(value)
+    else if (key === '引用上文') parts.previous = extractDirectives(value)
+    else if (key === '引用下文') parts.next = extractDirectives(value)
+    else parts.text = unwrapDirective(value).trim()
+  }
+  return found ? parts : null
+}
+
+function parseLegacySections(input: string): VoicePromptParts | null {
+  const requirement = input.match(/【(?:配音要求|配音指导|要求)】[：:]\s*([\s\S]*?)(?=\n?【|$)/)
+  const tone = input.match(/【(?:角色语气|语气情绪|语气)】[：:]\s*([\s\S]*?)(?=\n?【|$)/)
+  const line = input.match(/【(?:配音台词|台词|内容)】[：:]\s*([\s\S]*)$/)
+  if (!requirement && !tone && !line) return null
+  return {
+    instruction: [requirement?.[1], tone?.[1] ? `台词情绪与语气：${tone[1].trim()}。` : '']
+      .filter(Boolean)
+      .join('；'),
+    previous: '',
+    next: '',
+    text: unwrapDirective(line?.[1]?.trim() || '')
+      .replace(/^[「“"]|[\s」”"]+$/g, '')
+      .trim()
+  }
+}
+
+function parseBareDirectives(input: string): VoicePromptParts | null {
+  const match = input.match(/^((?:\[#[^\]]*\]\s*)+)([\s\S]*)$/)
+  if (!match) return null
+  const directives = [...match[1]!.matchAll(/\[#([^\]]*)\]/g)].map((item) => item[1]!.trim())
+  const text = match[2]!.trim()
+  if (!directives.length) return null
+  return {
+    instruction: directives[0]!,
+    previous: directives.slice(1).join('\n'),
+    next: '',
+    text
+  }
+}
+
+function parseQuotedPrompt(input: string): VoicePromptParts | null {
+  const match = input.match(/^([\s\S]*?(?:说|朗读|配音|念)[：:]\s*)([「“"])([\s\S]*)([」”"])$/)
+  if (!match) return null
+  return {
+    instruction: match[1]!.replace(/[：:]\s*$/, '').trim(),
+    previous: '',
+    next: '',
+    text: match[3]!.trim()
+  }
+}
+
+function parseVoicePrompt(input: string, fallbackText = ''): VoicePromptParts {
+  const content = input.trim()
+  const parsed =
+    (content ? parseLabeledPrompt(content) : null) ||
+    (content ? parseLegacySections(content) : null) ||
+    (content ? parseBareDirectives(content) : null) ||
+    (content ? parseQuotedPrompt(content) : null)
+  if (parsed) return parsed
+  return {
+    instruction: '',
+    previous: '',
+    next: '',
+    text: content || fallbackText.trim()
+  }
 }
 
 export const voiceLanguageInstruction = (language: string) => {
@@ -96,27 +215,74 @@ export const voiceLanguageInstruction = (language: string) => {
   return `配音语言：${lang}。用${lang}配音，不翻译或切换语言。`
 }
 
+function removeLanguageInstruction(instruction: string) {
+  return instruction
+    .replace(/配音语言：[^。\r\n]+。用[^。\r\n]+配音，不翻译或切换语言。?/g, '')
+    .replace(/^[；;，,\s]+|[；;，,\s]+$/g, '')
+    .trim()
+}
+
 export function stripVoiceLanguageInstruction(prompt: string) {
-  // 兼容旧版放在方括号外的完整语言说明行。
-  const content = prompt
-    .trim()
-    .replace(/^配音语言：[^\r\n]*(?:\r?\n|$)/, '')
-    .trim()
-  // 只更新第一个指令块中的语言，不修改台词或引用上文的内容。
-  return content.replace(
-    /^\[#([^\]]*)\]/,
-    (_, instruction: string) =>
-      `[#${instruction.replace(/配音语言：[^。\r\n]+。用[^。\r\n]+配音，不翻译或切换语言。/g, '')}]`
-  )
+  const parts = parseVoicePrompt(prompt)
+  parts.instruction = removeLanguageInstruction(parts.instruction)
+  return formatVoicePrompt(parts)
 }
 
 export function withVoiceLanguage(prompt: string, language: string) {
-  const content = stripVoiceLanguageInstruction(prompt)
-  const instruction = voiceLanguageInstruction(language)
-  if (content.startsWith('[#')) {
-    return content.replace(/^\[#([^\]]*)\]/, (_, first: string) => directive(`${instruction}${first.trim()}`))
+  const parts = parseVoicePrompt(prompt)
+  const direction = removeLanguageInstruction(parts.instruction)
+  parts.instruction = [voiceLanguageInstruction(language), direction].filter(Boolean).join('；')
+  return formatVoicePrompt(parts)
+}
+
+function contextText(line: VoiceContextLine) {
+  return (line.translation || line.text).trim()
+}
+
+export function selectVoiceContextLines(
+  current: VoiceContextLine,
+  lines: VoiceContextLine[],
+  options: { maxPrevious?: number; maxNext?: number; maxGapSeconds?: number } = {}
+): VoiceContextSelection {
+  const maxPrevious = options.maxPrevious ?? 3
+  const maxNext = options.maxNext ?? 2
+  const maxGap = options.maxGapSeconds ?? 8
+  const ordered = [...lines].sort((a, b) => a.start - b.start || a.end - b.end || a.id.localeCompare(b.id))
+  const index = ordered.findIndex(
+    (line) =>
+      line.id === current.id ||
+      (line.start === current.start && line.end === current.end && line.speaker === current.speaker)
+  )
+  if (index < 0) return {}
+
+  const previous: VoiceContextLine[] = []
+  for (let i = index - 1; i >= 0 && previous.length < maxPrevious; i--) {
+    const line = ordered[i]!
+    const next = ordered[i + 1]!
+    const gap = Math.max(0, next.start - line.end)
+    if (gap > maxGap) break
+    if (contextText(line)) previous.unshift(line)
   }
-  return `${directive(instruction)}${content}`
+
+  const next: VoiceContextLine[] = []
+  for (let i = index + 1; i < ordered.length && next.length < maxNext; i++) {
+    const line = ordered[i]!
+    const previousLine = ordered[i - 1]!
+    const gap = Math.max(0, line.start - previousLine.end)
+    if (gap > maxGap) break
+    if (contextText(line)) next.push(line)
+  }
+  return { previous, next }
+}
+
+function contextFromInput(context?: VoiceContextSelection | VoiceContextLine[]) {
+  if (!context) return {}
+  if (Array.isArray(context)) return { previous: context, next: [] }
+  return context
+}
+
+function contextBlock(lines: VoiceContextLine[] | undefined) {
+  return (lines || []).map(contextText).filter(Boolean).join('\n')
 }
 
 export function composeVoicePrompt(options: {
@@ -125,49 +291,53 @@ export function composeVoicePrompt(options: {
   useReference?: boolean
   tone?: string | null
   text: string
+  context?: VoiceContextSelection | VoiceContextLine[]
 }) {
   const language = options.language || '中文'
-  const direction = stripVoiceLanguageInstruction(options.direction?.trim() || '').replace(
-    /\[#([^\]]*)\]/g,
-    '$1'
-  )
+  const direction = removeLanguageInstruction(options.direction?.trim() || '')
+    .replace(/\[#([\s\S]*?)\]/g, '$1')
+    .trim()
+  const tone = options.tone?.trim()
   const instruction = [
+    voiceLanguageInstruction(language),
     direction || defaultVoicePrompt(options.useReference ?? true),
-    options.tone?.trim() ? `用${options.tone.trim()}的语气说。` : ''
+    tone
+      ? `台词情绪与语气：${tone}。请按此情绪与语气说。`
+      : '台词情绪与语气：自然生动，符合剧情与人物当下的情绪。'
   ]
     .filter(Boolean)
     .join('；')
-  return withVoiceLanguage(`${directive(instruction)}${options.text.trim()}`, language)
+  const context = contextFromInput(options.context)
+  return formatVoicePrompt({
+    instruction,
+    previous: contextBlock(context.previous),
+    next: contextBlock(context.next),
+    text: options.text.trim()
+  })
 }
 
-/** 将已保存的旧格式转为文档格式；新格式保留原有指令、上文和台词。 */
-export function normalizeVoicePrompt(input: string, language: string, fallbackText = '') {
-  const content = stripVoiceLanguageInstruction(input)
-  if (content.includes('[#')) return withVoiceLanguage(content, language)
-
-  const requirement = content.match(/【(?:配音要求|配音指导|要求)】[：:]\s*([\s\S]*?)(?=\n?【|$)/)
-  const tone = content.match(/【(?:角色语气|语气情绪|语气)】[：:]\s*([\s\S]*?)(?=\n?【|$)/)
-  const line = content.match(/【(?:配音台词|台词|内容)】[：:]\s*([\s\S]*)$/)
-  if (requirement || tone || line) {
-    return composeVoicePrompt({
-      language,
-      direction: requirement?.[1]?.trim(),
-      tone: tone?.[1]?.trim(),
-      text: unwrapQuotation(line?.[1]?.trim() || fallbackText)
-    })
-  }
-
-  // 兼容单字段旧输入，例如“用轻松的语气说：「你好。」”。
-  const quoted = content.match(/^([\s\S]*?(?:说|朗读|配音|念)[：:]\s*)([「“"])([\s\S]*)([」”"])$/)
-  if (quoted) {
-    return withVoiceLanguage(`${directive(quoted[1]!.replace(/[：:]\s*$/, ''))}${quoted[3]}`, language)
-  }
-  return withVoiceLanguage(content || fallbackText, language)
+/** 将旧格式转为统一结构；已使用新格式时保留用户填写的指令、上文和下文。 */
+export function normalizeVoicePrompt(
+  input: string,
+  language: string,
+  fallbackText = '',
+  context?: VoiceContextSelection | VoiceContextLine[]
+) {
+  const parts = parseVoicePrompt(input, fallbackText)
+  const selected = contextFromInput(context)
+  if (!parts.previous.trim()) parts.previous = contextBlock(selected.previous)
+  if (!parts.next.trim()) parts.next = contextBlock(selected.next)
+  const direction = removeLanguageInstruction(parts.instruction)
+  parts.instruction = [voiceLanguageInstruction(language), direction || defaultVoicePrompt(false)]
+    .filter(Boolean)
+    .join('；')
+  return formatVoicePrompt(parts)
 }
 
-function unwrapQuotation(text: string) {
-  const pairs: Record<string, string> = { '「': '」', '“': '”', '"': '"' }
-  return pairs[text[0]!] === text.at(-1) ? text.slice(1, -1) : text
+function trimContext(text: string, limit: number, fromEnd = false) {
+  if (text.length <= limit) return text
+  const value = fromEnd ? text.slice(-Math.max(1, limit - 1)) : text.slice(0, Math.max(1, limit - 1))
+  return fromEnd ? `…${value.trimStart()}` : `${value.trimEnd()}…`
 }
 
 export function buildVoiceSynthesisPrompt(options: {
@@ -178,19 +348,27 @@ export function buildVoiceSynthesisPrompt(options: {
   duration: number
   hasAudioReference?: boolean
   hasVoiceReference?: boolean
-  context?: VoiceContextLine[]
+  context?: VoiceContextSelection | VoiceContextLine[]
 }) {
-  const prompt = options.prompt?.trim()
-    ? normalizeVoicePrompt(options.prompt, options.language, options.text)
-    : composeVoicePrompt({
-        language: options.language,
-        direction: options.instruction,
-        useReference: options.hasAudioReference ?? false,
-        text: options.text
-      })
-  const speech = prompt.replace(/\[#[^\]]*\]/g, '').trim()
-  if (speech.includes('[#')) throw new Error('语音指令格式不完整，请使用 [#指令]台词')
-  if (!speech) throw new Error('请输入配音台词')
+  const hasInputPrompt = Boolean(options.prompt?.trim())
+  const parts = hasInputPrompt
+    ? parseVoicePrompt(options.prompt!, options.text)
+    : parseVoicePrompt(
+        composeVoicePrompt({
+          language: options.language,
+          direction: options.instruction,
+          useReference: options.hasAudioReference ?? false,
+          text: options.text
+        })
+      )
+  if (!parts.text.trim()) throw new Error('请输入配音台词')
+  if (/\[#(?![^\]]*\])/.test(parts.text)) throw new Error('语音指令格式不完整，请使用 [#指令]台词')
+
+  const context = contextFromInput(options.context)
+  if (!parts.previous.trim()) parts.previous = contextBlock(context.previous)
+  if (!parts.next.trim()) parts.next = contextBlock(context.next)
+  parts.previous = trimContext(parts.previous, 900, true)
+  parts.next = trimContext(parts.next, 700)
 
   const reference = options.hasAudioReference
     ? '参考@音频1的音色、语气和节奏，不朗读参考音频的文字，不沿用参考音频的语言。'
@@ -198,16 +376,14 @@ export function buildVoiceSynthesisPrompt(options: {
       ? '保持所选音色，根据指令和台词自然表演。'
       : ''
   const timing = `以自然表达为先，尽量在${options.duration.toFixed(2)}秒内说完。`
-  // 已有多个前置指令块时，保留用户填写的引用上文，不再重复添加。
-  const hasQuotedContext = /^\[#[^\]]*\]\s*\[#/.test(prompt)
-  const context = hasQuotedContext
-    ? ''
-    : (options.context || [])
-        .map((line) => (line.translation || line.text).trim())
-        .filter(Boolean)
-        .slice(-3)
-        .join('\n')
-  return prompt.replace(/^\[#([^\]]*)\]/, (_, instruction: string) =>
-    [directive(`${instruction}；${reference}${timing}`), context ? directive(context) : ''].join('')
-  )
+  const direction = removeLanguageInstruction(parts.instruction)
+  parts.instruction = [
+    voiceLanguageInstruction(options.language),
+    direction || defaultVoicePrompt(options.hasAudioReference ?? false),
+    reference,
+    timing
+  ]
+    .filter(Boolean)
+    .join('；')
+  return formatVoicePrompt(parts)
 }

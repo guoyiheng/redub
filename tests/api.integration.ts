@@ -1019,8 +1019,10 @@ describe.sequential('production HTTP workflow', () => {
       generationPrompt,
       customReferencePath: second.path
     })
-    expect(synthesisRequests[before]!.text_prompt).toMatch(/^\[#.*用轻松的语气说/)
-    expect(synthesisRequests[before]!.text_prompt.replace(/\[#[^\]]*\]/g, '')).toBe('配音测试')
+    expect(synthesisRequests[before]!.text_prompt).toMatch(/^\*指令：\* \[#.*用轻松的语气说/)
+    expect(synthesisRequests[before]!.text_prompt.match(/\*合成文本：\*\s*([\s\S]*)$/)?.[1]?.trim()).toBe(
+      '配音测试'
+    )
     expect(synthesisRequests[before]!.text_prompt).not.toContain(line.text)
     expect(synthesisRequests[before]!.references?.[0]?.audio_data).toBe(
       (await readFile(join(process.env.REDUB_DATA_DIR!, second.path))).toString('base64')
