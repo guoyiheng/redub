@@ -53,7 +53,15 @@ async function install(userDir, resources) {
     await execute(selected, ['-m', 'venv', join(userDir, 'models')])
   }
   await execute(target, ['-m', 'pip', 'install', '--upgrade', 'pip'])
-  await execute(target, ['-m', 'pip', 'install', '-r', join(resources, 'scripts', 'requirements.txt')])
+  const pipArgs = ['-m', 'pip', 'install']
+  if (process.platform === 'win32') {
+    pipArgs.push('--extra-index-url', 'https://download.pytorch.org/whl/cu124')
+  }
+  pipArgs.push('-r', join(resources, 'scripts', 'requirements.txt'))
+  if (process.platform === 'win32') {
+    pipArgs.push('nvidia-cublas-cu12', 'nvidia-cudnn-cu12')
+  }
+  await execute(target, pipArgs)
   await execute(target, ['-c', 'import demucs, faster_whisper, soundfile, opencc'])
   return '本地模型环境已安装。请重启应用后开始处理，首次运行会下载模型。'
 }

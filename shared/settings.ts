@@ -9,6 +9,8 @@ export const settingsSchema = z.object({
   nsfwDefaultEnabled: z.boolean().default(true),
   nsfwDefaultTransparency: z.number().int().min(0).max(100).default(0),
   defaultTtsVoice: z.string().default('zh-CN-XiaoxiaoNeural'),
+  defaultAiSpeaker: z.string().default(''),
+  defaultReferenceVoice: z.string().default(''),
   pinnedVoices: z.array(z.string()).default([])
 })
 export const defaultSettings = () => settingsSchema.parse({})

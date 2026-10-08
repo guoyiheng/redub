@@ -12,7 +12,7 @@ import {
 import type { Segment, ReferenceVoice } from '../../shared/types'
 const props = defineProps<{ segment: Segment }>()
 const emit = defineEmits<{ close: []; generated: [] }>()
-const { act, channels, detail, toast, errorMessage } = useStudio()
+const { act, channels, detail, toast, errorMessage, settings } = useStudio()
 const canReference = computed(
   () => !!detail.value?.project.vocalsPath && detail.value?.project.kind !== 'text'
 )
@@ -28,6 +28,21 @@ const referenceName = computed(() =>
 onMounted(() => {
   void loadVoices().catch(() => {})
 })
+
+watch(
+  [() => settings.value?.defaultReferenceVoice, voices],
+  ([defaultId]) => {
+    if (!props.segment.customReferencePath && !canReference.value && !customReference.value && defaultId) {
+      const found = voices.value.find((v) => v.id === defaultId)
+      if (found) {
+        customReference.value = found.path
+        draft.value.aiUseReference = true
+      }
+    }
+  },
+  { immediate: true }
+)
+
 function useVoice(voice: ReferenceVoice) {
   customReference.value = voice.path
   draft.value.aiUseReference = true
@@ -36,7 +51,7 @@ function useVoice(voice: ReferenceVoice) {
 const referenceChoices = computed(() => [
   ...(canReference.value ? [{ label: '本句原声', icon: 'i-carbon-waveform', onSelect: useOriginal }] : []),
   ...voices.value.map((voice) => ({
-    label: voice.name,
+    label: voice.name + (settings.value?.defaultReferenceVoice === voice.id ? '（默认）' : ''),
     icon: 'i-carbon-music',
     onSelect: () => useVoice(voice)
   })),

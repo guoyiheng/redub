@@ -141,4 +141,29 @@ describe('项目置顶与属性功能', () => {
     expect(prompt).not.toMatch(/【配音任务】|【表演执行规则】|【用户语音指令】/)
   })
 
+  it('支持项目归档隐藏状态与更新', async () => {
+    const id = randomUUID()
+    await db.insert(projects).values({
+      id,
+      name: '测试归档项目',
+      kind: 'text',
+      duration: 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      archived: false
+    })
+
+    const [created] = await db.select().from(projects).where(eq(projects.id, id))
+    expect(created.archived).toBe(false)
+
+    // Archive the project
+    await db.update(projects).set({ archived: true }).where(eq(projects.id, id))
+    const [archived] = await db.select().from(projects).where(eq(projects.id, id))
+    expect(archived.archived).toBe(true)
+
+    // Unarchive the project
+    await db.update(projects).set({ archived: false }).where(eq(projects.id, id))
+    const [unarchived] = await db.select().from(projects).where(eq(projects.id, id))
+    expect(unarchived.archived).toBe(false)
+  })
 })

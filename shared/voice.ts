@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { Segment } from './types'
 import { normalizeLanguage } from './languages'
+import { aiVoices } from './ai-voices'
 
 export const voiceSettingsSchema = z.object({
   synthesisMode: z.enum(['ai', 'tts']).default('ai'),
@@ -386,4 +387,22 @@ export function buildVoiceSynthesisPrompt(options: {
     .filter(Boolean)
     .join('；')
   return formatVoicePrompt(parts)
+}
+
+export function formatVoiceName(speaker?: string | null, mode?: 'ai' | 'tts'): string {
+  if (!speaker) return ''
+  const trimmed = speaker.trim()
+  if (!trimmed) return ''
+  if (mode === 'ai') {
+    const ai = aiVoices.find((v) => v.value === trimmed || v.label === trimmed)
+    if (ai) return ai.label
+  } else if (mode === 'tts') {
+    const tts = ttsVoices.find((v) => v.value === trimmed || v.label === trimmed)
+    if (tts) return tts.label.split(' · ')[0] || tts.label
+  }
+  const ai = aiVoices.find((v) => v.value === trimmed || v.label === trimmed)
+  if (ai) return ai.label
+  const tts = ttsVoices.find((v) => v.value === trimmed || v.label === trimmed)
+  if (tts) return tts.label.split(' · ')[0] || tts.label
+  return trimmed
 }

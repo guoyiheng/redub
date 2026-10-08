@@ -8,7 +8,8 @@ export const stageLabels = {
   mix: '音轨合并',
   preview: '合成成片',
   export: '导出成片',
-  'preview-tracks': '准备预览音轨'
+  'preview-tracks': '准备预览音轨',
+  'preview-voice': '音色试听'
 } as const
 export type Stage = keyof typeof stageLabels
 export type JobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'skipped' | 'cancelled'
@@ -31,6 +32,7 @@ export interface Project {
   channelId: string
   paused: boolean
   pinned?: boolean
+  archived?: boolean
   createdAt: number
   updatedAt: number
   audioPath: string | null
@@ -92,7 +94,7 @@ export interface Segment {
 }
 export interface Job {
   id: string
-  projectId: string
+  projectId: string | null
   stage: Stage
   segmentId: string | null
   segmentIndex?: number | null
@@ -103,6 +105,8 @@ export interface Job {
   error: string | null
   dependsOn: string | null
   attempts: number
+  input?: unknown
+  result?: unknown
   createdAt: number
   updatedAt: number
 }
@@ -159,6 +163,8 @@ export interface Settings {
   nsfwDefaultEnabled: boolean
   nsfwDefaultTransparency: number
   defaultTtsVoice: string
+  defaultAiSpeaker: string
+  defaultReferenceVoice: string
   pinnedVoices: string[]
 }
 export interface ProjectDetail {

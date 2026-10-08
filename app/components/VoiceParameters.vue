@@ -8,10 +8,13 @@ import {
 } from '../../shared/voice'
 defineProps<{ disabled?: boolean; canReference: boolean }>()
 const draft = defineModel<VoiceSettings>({ required: true })
-const { settings, toast, errorMessage } = useStudio()
+const { settings, toast, errorMessage, selected, refresh } = useStudio()
 
 if (!draft.value.ttsVoice && settings.value?.defaultTtsVoice) {
   draft.value.ttsVoice = settings.value.defaultTtsVoice
+}
+if (!draft.value.aiSpeaker && settings.value?.defaultAiSpeaker) {
+  draft.value.aiSpeaker = settings.value.defaultAiSpeaker
 }
 
 watch(
@@ -51,9 +54,10 @@ function selectVoice(voice: string) {
   voiceMenuOpen.value = false
 }
 
+const ttsAuditionCache = new Map<string, Blob>()
+const inFlightTtsFetches = new Map<string, Promise<Blob>>()
+
 function stopAudition() {
-  auditionController?.abort()
-  auditionController = null
   if (auditionAudio) {
     auditionAudio.pause()
     auditionAudio = null
@@ -65,48 +69,107 @@ function stopAudition() {
   isAuditionLoading.value = false
 }
 
+async function playAuditionBlob(blob: Blob) {
+  if (auditionAudio) {
+    auditionAudio.pause()
+    auditionAudio = null
+  }
+  if (auditionUrl) URL.revokeObjectURL(auditionUrl)
+  auditionUrl = URL.createObjectURL(blob)
+  const audio = new Audio(auditionUrl)
+  auditionAudio = audio
+  audio.onended = () => {
+    stopAudition()
+  }
+  audio.onerror = () => {
+    stopAudition()
+    toast.add({ title: '音色试听播放失败', color: 'error' })
+  }
+  await audio.play()
+  isAuditionPlaying.value = true
+  isAuditionLoading.value = false
+}
+
 async function toggleAudition(voice: string) {
   const shouldStop = auditionVoice.value === voice
   stopAudition()
   if (shouldStop) return
-  const controller = new AbortController()
-  auditionController = controller
+
   auditionVoice.value = voice
+
+  const cacheKey = `${voice}:${draft.value.ttsRate}:${draft.value.ttsPitch}:${draft.value.ttsVolume}`
+  const cachedBlob = ttsAuditionCache.get(cacheKey)
+  if (cachedBlob) {
+    try {
+      await playAuditionBlob(cachedBlob)
+    } catch (error) {
+      stopAudition()
+      toast.add({ title: '音色试听播放失败', description: errorMessage(error), color: 'error' })
+    }
+    return
+  }
+
   isAuditionLoading.value = true
-  try {
-    const blob = await $fetch<Blob>('/api/tts/preview', {
+  const voiceItem = ttsVoices.find((v) => v.value === voice)
+  const voiceLabel = voiceItem?.label || voice
+
+  let fetchPromise = inFlightTtsFetches.get(cacheKey)
+  if (!fetchPromise) {
+    fetchPromise = $fetch<Blob>('/api/tts/preview', {
       method: 'POST',
-      signal: controller.signal,
       responseType: 'blob',
       body: {
         voice,
+        voiceLabel,
         rate: `${draft.value.ttsRate >= 0 ? '+' : ''}${draft.value.ttsRate}%`,
         pitch: `${draft.value.ttsPitch >= 0 ? '+' : ''}${draft.value.ttsPitch}Hz`,
         volume: `${draft.value.ttsVolume >= 0 ? '+' : ''}${draft.value.ttsVolume}%`
       }
     })
-    if (controller.signal.aborted) return
-    auditionUrl = URL.createObjectURL(blob)
-    const audio = new Audio(auditionUrl)
-    auditionAudio = audio
-    audio.onended = stopAudition
-    audio.onerror = () => {
-      stopAudition()
-      toast.add({ title: '音色试听播放失败', color: 'error' })
+      .then((blob) => {
+        ttsAuditionCache.set(cacheKey, blob)
+        inFlightTtsFetches.delete(cacheKey)
+        void refresh()
+        return blob
+      })
+      .catch((err) => {
+        inFlightTtsFetches.delete(cacheKey)
+        void refresh()
+        throw err
+      })
+    inFlightTtsFetches.set(cacheKey, fetchPromise)
+    void refresh()
+  }
+
+  try {
+    const blob = await fetchPromise
+    if (auditionVoice.value === voice && voiceMenuOpen.value) {
+      await playAuditionBlob(blob)
     }
-    await audio.play()
-    if (!controller.signal.aborted) isAuditionPlaying.value = true
   } catch (error) {
-    if (controller.signal.aborted) return
-    stopAudition()
-    toast.add({ title: '音色试听失败', description: errorMessage(error), color: 'error' })
+    if (auditionVoice.value === voice) {
+      stopAudition()
+      toast.add({ title: '音色试听失败', description: errorMessage(error), color: 'error' })
+    }
   } finally {
-    if (auditionController === controller) isAuditionLoading.value = false
+    if (auditionVoice.value === voice) {
+      isAuditionLoading.value = false
+    }
   }
 }
 
 watch(voiceMenuOpen, (open) => {
-  if (!open) stopAudition()
+  if (!open) {
+    if (auditionAudio) {
+      auditionAudio.pause()
+      auditionAudio = null
+    }
+    if (auditionUrl) {
+      URL.revokeObjectURL(auditionUrl)
+      auditionUrl = ''
+    }
+    isAuditionPlaying.value = false
+  }
 })
 watch(
   () => draft.value.ttsVoice,
@@ -121,7 +184,15 @@ watch(
   }
 )
 onBeforeUnmount(() => {
-  stopAudition()
+  if (auditionAudio) {
+    auditionAudio.pause()
+    auditionAudio = null
+  }
+  if (auditionUrl) {
+    URL.revokeObjectURL(auditionUrl)
+    auditionUrl = ''
+  }
+  isAuditionPlaying.value = false
 })
 </script>
 <template>

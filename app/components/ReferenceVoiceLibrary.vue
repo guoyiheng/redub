@@ -4,7 +4,7 @@ const open = defineModel<boolean>('open', { default: false })
 withDefaults(defineProps<{ selectable?: boolean }>(), { selectable: false })
 const emit = defineEmits<{ select: [voice: ReferenceVoice] }>()
 const { voices, load, add, rename } = useReferenceVoices()
-const { errorMessage } = useStudio()
+const { errorMessage, settings } = useStudio()
 const file = ref<File | null>(null)
 const name = ref('')
 const error = ref('')
@@ -146,6 +146,13 @@ function selectVoice(voice: ReferenceVoice) {
               <span class="min-w-0 flex-1 truncate text-sm font-medium" :title="voice.name">{{
                 voice.name
               }}</span>
+              <UBadge
+                v-if="settings?.defaultReferenceVoice === voice.id"
+                color="primary"
+                variant="solid"
+                size="xs"
+                >默认音色</UBadge
+              >
               <UButton
                 color="neutral"
                 variant="outline"

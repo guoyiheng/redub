@@ -12,6 +12,7 @@ const { input: _input, result: _result, ...columns } = getTableColumns(jobs)
 export const jobColumns = columns
 export const jobListColumns = {
   ...columns,
+  input: sql<unknown>`CASE WHEN ${jobs.stage} = 'preview-voice' THEN ${jobs.input} ELSE NULL END`,
   segmentIndex: sql<number | null>`(SELECT COUNT(*) FROM segments AS preceding
     WHERE preceding.projectId = jobs.projectId AND
     (preceding.start < (SELECT start FROM segments WHERE id = jobs.segmentId) OR
@@ -32,16 +33,15 @@ export async function getJobDetail(id: string): Promise<JobDetail> {
   const [row] = await db.select().from(jobs).where(eq(jobs.id, id))
   if (!row) throw createError({ statusCode: 404, statusMessage: '任务不存在' })
   const { input, result, ...job } = row
-  const [project] = await db
-    .select({ name: projects.name })
-    .from(projects)
-    .where(eq(projects.id, job.projectId))
+  const [project] = job.projectId
+    ? await db.select({ name: projects.name }).from(projects).where(eq(projects.id, job.projectId))
+    : []
   const requests = await db
     .select(requestColumns)
     .from(jobRequests)
     .where(eq(jobRequests.jobId, id))
     .orderBy(asc(jobRequests.startedAt), asc(jobRequests.id))
-  return { job, projectName: project?.name || '项目', input, result, requests }
+  return { job, projectName: project?.name || '', input, result, requests }
 }
 
 export async function getJobRequest(jobId: string, id: string): Promise<JobRequest> {

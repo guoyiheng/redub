@@ -15,10 +15,14 @@ npm run dev
 本地人声分离和台词识别需要一次安装 Python 运行环境：
 
 ```bash
+# macOS / Linux
 npm run models:install
+
+# Windows (自动配置 PyTorch CUDA 12.4 与 NVIDIA 运行库加速)
+npm run models:install:win
 ```
 
-首次使用 Demucs / Whisper 模型时会下载模型文件。视频处理需要本机可用的 FFmpeg；开发环境会优先使用项目依赖中的二进制，也可用 `REDUB_FFMPEG`、`REDUB_FFPROBE` 指定路径。
+应用会自动检测 CUDA 硬件加速：若具备可用显卡，Demucs 人声分离与 Faster-Whisper 台词识别将自动启用 GPU 推理（若遇到显存不足或驱动异常会自动优雅回退至 CPU；也可通过 `REDUB_DEVICE=cpu` 显式禁用）。首次使用 Demucs / Whisper 模型时会下载模型权重文件。视频处理需要本机可用的 FFmpeg；开发环境会优先使用项目依赖中的二进制，也可用 `REDUB_FFMPEG`、`REDUB_FFPROBE` 指定路径。
 
 ## 使用流程
 

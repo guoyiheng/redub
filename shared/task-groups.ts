@@ -129,7 +129,7 @@ export function groupJobs(allJobs: Job[], recentLimit = 8): TaskGroup[] {
           .join(':')
       }`,
       kind,
-      projectId: jobs[0]!.projectId,
+      projectId: jobs[0]!.projectId || '',
       title: titleOf(kind, jobs.length),
       status: statusOf(jobs),
       progress: progressOf(jobs),

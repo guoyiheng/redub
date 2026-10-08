@@ -92,14 +92,14 @@ onBeforeUnmount(() => {
       <UAlert v-if="detail.job.error" color="error" title="任务执行失败" :description="detail.job.error" />
       <div class="row-actions">
         <UButton
-          v-if="['failed', 'completed'].includes(detail.job.status)"
+          v-if="['failed', 'completed'].includes(detail.job.status) && detail.job.stage !== 'preview-voice'"
           :loading="busy"
           icon="i-carbon-renew"
           @click="action('retry')"
           >重试任务</UButton
         >
         <UButton
-          v-if="['queued', 'running'].includes(detail.job.status)"
+          v-if="['queued', 'running'].includes(detail.job.status) && detail.job.stage !== 'preview-voice'"
           :disabled="busy"
           color="neutral"
           variant="outline"
@@ -148,8 +148,10 @@ onBeforeUnmount(() => {
               @click="copyId"
             />
           </dd>
-          <dt>项目</dt>
-          <dd>{{ detail.projectName }}</dd>
+          <template v-if="detail.job.projectId && detail.job.stage !== 'preview-voice'">
+            <dt>项目</dt>
+            <dd>{{ detail.projectName }}</dd>
+          </template>
           <dt>创建时间</dt>
           <dd>{{ new Date(detail.job.createdAt).toLocaleString('zh-CN') }}</dd>
           <dt>更新时间</dt>

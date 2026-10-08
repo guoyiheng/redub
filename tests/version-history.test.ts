@@ -6,6 +6,7 @@ import { projects, segments, channels } from '../server/db/schema'
 import { getProject, getSegments } from '../server/services/store'
 import { executeJob } from '../server/services/pipeline'
 import { formatVersionName, createVersionName } from '../shared/version'
+import { formatVoiceName } from '../shared/voice'
 import type { Job, Segment, TranslationVersion, AudioVersion } from '../shared/types'
 
 describe('历史版本系统与译文覆盖保留配音', () => {
@@ -188,5 +189,15 @@ describe('历史版本系统与译文覆盖保留配音', () => {
     expect(seg.generatedDuration).toBe(1.8)
     expect(seg.synthesisMode).toBe('tts')
     expect(seg.ttsVoice).toBe('zh-CN-XiaoxiaoNeural')
+  })
+
+  it('历史版本与音色显示支持友好名称映射（如 zh_female_vv_uranus_bigtts -> Vivi 2.0，小何 2.0，微软晓晓）', () => {
+    expect(formatVoiceName('zh_female_vv_uranus_bigtts')).toBe('Vivi 2.0')
+    expect(formatVoiceName('zh_female_xiaohe_uranus_bigtts')).toBe('小何 2.0')
+    expect(formatVoiceName('zh-CN-XiaoxiaoNeural', 'tts')).toBe('晓晓')
+    expect(formatVoiceName('zh-CN-YunxiNeural', 'tts')).toBe('云希')
+    expect(formatVoiceName('')).toBe('')
+    expect(formatVoiceName(null)).toBe('')
+    expect(formatVoiceName('custom_unknown_speaker')).toBe('custom_unknown_speaker')
   })
 })

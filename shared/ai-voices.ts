@@ -2,12 +2,21 @@
  * ID 按文档原样保存；实际可用性取决于所启用渠道的模型与权限。
  * 保留接口限制备注，不推断其他模型的兼容性。
  */
+export type VoiceGender = 'female' | 'male'
+
+export function getVoiceGender(value: string): VoiceGender | undefined {
+  if (value.includes('_female_')) return 'female'
+  if (value.includes('_male_')) return 'male'
+  return undefined
+}
+
 export interface AiVoice {
   label: string
   value: string
   language: string
   category: string
   note: string
+  gender: VoiceGender
 }
 
 export const aiVoices: AiVoice[] = [
@@ -701,5 +710,6 @@ export const aiVoices: AiVoice[] = [
   value: value!,
   language: language!,
   category: category!,
-  note: note!
+  note: note!,
+  gender: (value?.includes('_female_') ? 'female' : 'male') as VoiceGender
 }))

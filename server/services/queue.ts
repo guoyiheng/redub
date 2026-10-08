@@ -25,7 +25,11 @@ export function workflowStages(kind: MediaKind): Stage[] {
 }
 type ConcurrencySettings = Pick<Settings, 'translationConcurrency' | 'synthesisConcurrency'>
 function poolOf(stage: Stage) {
-  return stage === 'translate' || stage === 'synthesize' ? stage : 'local'
+  return stage === 'translate' || stage === 'synthesize' || stage === 'preview-voice'
+    ? stage === 'preview-voice'
+      ? 'synthesize'
+      : stage
+    : 'local'
 }
 export function eligibleJobs(
   all: Job[],
@@ -46,7 +50,12 @@ export function eligibleJobs(
   for (const job of all)
     if (runningJobIds.has(job.id) || job.status === 'running') capacity[poolOf(job.stage)]--
   for (const job of all) {
-    if (job.status !== 'queued' || paused.has(job.projectId) || used.has(job.id) || blocked.has(job.id))
+    if (
+      job.status !== 'queued' ||
+      (job.projectId && paused.has(job.projectId)) ||
+      used.has(job.id) ||
+      blocked.has(job.id)
+    )
       continue
     const pool = poolOf(job.stage)
     if (capacity[pool] <= 0) continue
@@ -121,7 +130,7 @@ export function enqueue(
       ? batchPlan(p, availableLines, batch)
       : stages
         ? stages.flatMap((stage): { stage: Stage; segmentId?: string }[] => {
-            if (!segmentId && stage === 'synthesize')
+            if (!segmentId && ['synthesize', 'translate'].includes(stage))
               return availableLines
                 .filter((line) => line.enabled)
                 .map((line) => ({ stage, segmentId: line.id }))
@@ -382,7 +391,7 @@ async function execute(job: Job, signal: AbortSignal) {
         updatedAt: Date.now()
       })
       .where(and(eq(jobs.id, job.id), eq(jobs.status, 'running')))
-    if (!signal.aborted && (await getSettings()).pauseOnFailure)
+    if (!signal.aborted && job.projectId && (await getSettings()).pauseOnFailure)
       await db.update(projects).set({ paused: true }).where(eq(projects.id, job.projectId))
   } finally {
     executions.delete(job.id)
@@ -402,8 +411,9 @@ export async function cancelJob(id: string) {
     .update(jobs)
     .set({ status: 'cancelled', error: null, message: '任务已取消', updatedAt: Date.now() })
     .where(and(eq(jobs.id, id), inArray(jobs.status, ['queued', 'running'])))
-  await execution?.done
-  const projectJobs = await db.select().from(jobs).where(eq(jobs.projectId, job.projectId))
+  const projectJobs = job.projectId
+    ? await db.select().from(jobs).where(eq(jobs.projectId, job.projectId))
+    : []
   const descendants = new Set([id])
   let size = 0
   while (size !== descendants.size) {
@@ -455,15 +465,10 @@ export async function startQueue() {
         updatedAt: Date.now()
       })
       .where(eq(jobs.status, 'running'))
-    await db
-      .update(projects)
-      .set({ paused: true })
-      .where(
-        inArray(
-          projects.id,
-          interrupted.map((j) => j.projectId)
-        )
-      )
+    const projectIds = [...new Set(interrupted.flatMap((j) => (j.projectId ? [j.projectId] : [])))]
+    if (projectIds.length) {
+      await db.update(projects).set({ paused: true }).where(inArray(projects.id, projectIds))
+    }
   }
   timer = setInterval(() => {
     void tick().catch(console.error)

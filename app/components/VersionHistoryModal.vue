@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Segment, TranslationVersion, AudioVersion } from '../../shared/types'
 import { mediaUrl } from '../composables/useStudio'
+import { formatVoiceName } from '../../shared/voice'
 
 const props = defineProps<{
   segment: Segment | null
@@ -197,7 +198,7 @@ async function restoreVersion(type: 'translation' | 'audio', item: { id: string;
                   <span v-if="isCurrentAudio(item)" class="current-draft-badge">当前终稿</span>
                   <span class="version-voice-meta">
                     {{ item.synthesisMode === 'tts' ? '微软 TTS' : 'AI 配音' }}
-                    <span v-if="item.speaker">· {{ item.speaker }}</span>
+                    <span v-if="item.speaker">· {{ formatVoiceName(item.speaker, item.synthesisMode) }}</span>
                   </span>
                   <span v-if="item.duration" class="version-duration">{{ item.duration.toFixed(1) }}s</span>
                   <time class="version-time">{{ formatTime(item.createdAt) }}</time>

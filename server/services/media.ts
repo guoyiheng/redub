@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { join, resolve, sep } from 'node:path'
+import { join, resolve, relative as pathRelative, isAbsolute, sep } from 'node:path'
 import { dataDir } from '../db'
 
 const require = createRequire(import.meta.url)
@@ -23,9 +23,10 @@ export function python() {
   const local = resolve('.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python')
   return existsSync(local) ? local : 'python3.11'
 }
-export function assetPath(relative: string) {
-  const absolute = resolve(dataDir, relative)
-  if (!absolute.startsWith(dataDir + sep)) throw new Error('无效的文件路径')
+export function assetPath(relPath: string) {
+  const absolute = resolve(dataDir, relPath)
+  const rel = pathRelative(dataDir, absolute)
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) throw new Error('无效的文件路径')
   return absolute
 }
 export async function projectDir(id: string) {
@@ -249,6 +250,30 @@ export async function localModel(action: 'segment' | 'transcribe', input: object
   await runProcess(python(), [script, action, inputFile, output])
   return JSON.parse(await readFile(output, 'utf-8'))
 }
+
+let cachedDevice: 'cuda' | 'cpu' | null = null
+export async function getInferenceDevice(): Promise<'cuda' | 'cpu'> {
+  if (process.env.REDUB_DEVICE === 'cpu' || process.env.REDUB_DEVICE === 'cuda') {
+    return process.env.REDUB_DEVICE
+  }
+  if (cachedDevice) return cachedDevice
+  try {
+    const out = await runProcess(
+      python(),
+      ['-c', 'import torch; print("cuda" if torch.cuda.is_available() else "cpu")'],
+      10000
+    )
+    cachedDevice = out.trim().toLowerCase().includes('cuda') ? 'cuda' : 'cpu'
+  } catch {
+    cachedDevice = 'cpu'
+  }
+  return cachedDevice
+}
+
+export function resetCachedDevice() {
+  cachedDevice = null
+}
+
 export async function mediaHealth() {
   const check = async (command: string, args: string[]) => {
     try {
@@ -258,14 +283,22 @@ export async function mediaHealth() {
       return { ready: false, output: '' }
     }
   }
-  const [ffmpegCheck, ffprobeCheck, pythonCheck, demucsCheck, whisperCheck, openccCheck] = await Promise.all([
-    check(binary('ffmpeg'), ['-version']),
-    check(binary('ffprobe'), ['-version']),
-    check(python(), ['-c', 'import platform; print(platform.python_version())']),
-    check(python(), ['-c', 'import demucs']),
-    check(python(), ['-c', 'import faster_whisper']),
-    check(python(), ['-c', 'import opencc'])
-  ])
+  const [ffmpegCheck, ffprobeCheck, pythonCheck, demucsCheck, whisperCheck, openccCheck, cudaCheck] =
+    await Promise.all([
+      check(binary('ffmpeg'), ['-version']),
+      check(binary('ffprobe'), ['-version']),
+      check(python(), ['-c', 'import platform; print(platform.python_version())']),
+      check(python(), ['-c', 'import demucs']),
+      check(python(), ['-c', 'import faster_whisper']),
+      check(python(), ['-c', 'import opencc']),
+      check(python(), [
+        '-c',
+        "import torch; print(str(torch.cuda.is_available()) + '|' + (torch.cuda.get_device_name(0) if torch.cuda.is_available() else ''))"
+      ])
+    ])
+  const [cudaAvailableStr, cudaDeviceName] =
+    cudaCheck.ready && cudaCheck.output ? cudaCheck.output.split('|') : ['False', '']
+  const cudaAvailable = cudaAvailableStr?.trim() === 'True'
   const modelStatus = {
     demucs: demucsCheck.ready,
     fasterWhisper: whisperCheck.ready,
@@ -275,6 +308,8 @@ export async function mediaHealth() {
     ffmpeg: ffmpegCheck.ready,
     ffprobe: ffprobeCheck.ready,
     models: Object.values(modelStatus).every(Boolean),
+    cuda: cudaAvailable,
+    cudaDevice: cudaAvailable ? cudaDeviceName?.trim() || 'CUDA GPU' : undefined,
     versions: {
       ffmpeg: ffmpegCheck.output,
       ffprobe: ffprobeCheck.output,

@@ -5,7 +5,7 @@ import type { ExportResult } from '../../shared/export'
 import type { PreviewTracks } from '../../shared/preview'
 import type { Segment } from '../../shared/types'
 import { languageOptions, normalizeLanguage } from '../../shared/languages'
-import { speakerName, dubbedText } from '../../shared/voice'
+import { speakerName, dubbedText, formatVoiceName } from '../../shared/voice'
 
 type PreviewTrackKey = 'optimized' | 'original' | 'background' | 'dubbed'
 const trackKeys: PreviewTrackKey[] = ['optimized', 'original', 'background', 'dubbed']
@@ -203,7 +203,7 @@ const taskNavigation = useTaskNavigation()
 watch(
   [taskNavigation, () => detail.value?.project.id],
   async ([target, projectId]) => {
-    if (!target || target.projectId !== projectId || !target.segmentId) return
+    if (!target || target.type === 'voice' || target.projectId !== projectId || !target.segmentId) return
     const index = lines.value.findIndex((line) => line.id === target.segmentId)
     if (index < 0) {
       toast.add({ title: '这句台词已被删除', color: 'warning' })
@@ -433,6 +433,27 @@ const addReason = computed(() =>
 )
 const lineJob = (id: string) =>
   detail.value?.jobs.find((j) => j.segmentId === id && ['queued', 'running'].includes(j.status))
+const lineVoiceLabel = (line: Segment) => {
+  if (!line.generatedPath) return ''
+  const currentAudio = line.audioHistory?.find((a) => a.audioPath === line.generatedPath)
+  const mode = currentAudio?.synthesisMode ?? line.synthesisMode
+  const speaker = currentAudio?.speaker ?? (mode === 'tts' ? line.ttsVoice : line.aiSpeaker)
+
+  if (mode === 'ai') {
+    if (speaker?.trim()) {
+      return formatVoiceName(speaker, 'ai')
+    }
+    if (line.aiUseReference) {
+      return '原声参考'
+    }
+    return '自动音色'
+  }
+
+  if (speaker?.trim()) {
+    return formatVoiceName(speaker, 'tts')
+  }
+  return ''
+}
 function openBatch(action: BatchInput['action'] | 'speaker') {
   batchAction.value = action
   showBatch.value = true
@@ -1101,30 +1122,15 @@ async function onSegmentRestored(updated: Segment) {
               :aria-label="`第 ${getGlobalIndex(line.id)} 句`"
               :class="{ selected: current === line.id, 'not-replaced': !line.enabled }"
             >
-              <div class="row-meta">
-                <div class="segment-meta-header">
-                  <span class="segment-idx">#{{ String(getGlobalIndex(line.id)).padStart(2, '0') }}</span>
-                  <span class="segment-speaker">{{ speakerName(line.speaker) }}</span>
-                </div>
-                <time class="segment-time">{{ formatTime(line.start) }} – {{ formatTime(line.end) }}</time>
+              <!-- Row 1: 片段序号、原文、翻译、状态 -->
+              <div class="segment-meta-header">
+                <span class="segment-idx">#{{ String(getGlobalIndex(line.id)).padStart(2, '0') }}</span>
+                <span class="segment-speaker">{{ speakerName(line.speaker) }}</span>
               </div>
 
               <div class="row-source-text">
                 <span class="comparison-label">原文与原声</span>
                 <p class="dialogue-original">{{ line.text || '尚未填写原文' }}</p>
-              </div>
-
-              <div class="row-source-audio">
-                <AudioPlayer
-                  :src="
-                    project.kind !== 'text' && project.sourcePath
-                      ? `/api/segments/${line.id}/original?t=${line.start}-${line.end}`
-                      : undefined
-                  "
-                  :label="`第 ${getGlobalIndex(line.id)} 句原声`"
-                  :empty="project.kind === 'text' ? '文本台词，无原声音频' : '尚无可试听的原声素材'"
-                  :duration="line.end - line.start"
-                />
               </div>
 
               <div class="row-dub-text">
@@ -1139,6 +1145,49 @@ async function onSegmentRestored(updated: Segment) {
                       : line.translation.trim() || '待翻译'
                   }}
                 </p>
+              </div>
+
+              <div class="status-wrapper">
+                <UBadge v-if="lineJob(line.id)" color="warning" variant="subtle" size="xs">
+                  <UIcon name="i-carbon-renew" class="animate-spin" />
+                  <span>{{ lineJob(line.id)?.status === 'running' ? '生成中' : '排队中' }}</span>
+                </UBadge>
+                <UBadge v-else-if="!line.enabled" color="neutral" variant="subtle" size="xs">
+                  保留原声
+                </UBadge>
+                <template v-else-if="line.generatedPath">
+                  <UBadge color="primary" variant="subtle" size="xs">
+                    <UIcon name="i-carbon-checkmark" />
+                    <span>{{ line.synthesisMode === 'tts' ? '微软 TTS' : 'AI 配音' }}</span>
+                  </UBadge>
+                  <UBadge
+                    v-if="lineVoiceLabel(line)"
+                    color="neutral"
+                    variant="subtle"
+                    size="xs"
+                    :title="`音色：${lineVoiceLabel(line)}`"
+                  >
+                    <span>{{ lineVoiceLabel(line) }}</span>
+                  </UBadge>
+                </template>
+              </div>
+
+              <!-- Row 2: 时间戳、原声音频、生成配音音频、操作按钮组 -->
+              <time class="segment-time">{{ formatTime(line.start) }} – {{ formatTime(line.end) }}</time>
+
+              <div class="row-source-audio">
+                <AudioPlayer
+                  :src="
+                    line.referencePath
+                      ? mediaUrl(line.referencePath)
+                      : project.kind !== 'text' && project.sourcePath
+                        ? `/api/segments/${line.id}/original?t=${line.start}-${line.end}`
+                        : undefined
+                  "
+                  :label="`第 ${getGlobalIndex(line.id)} 句原声`"
+                  :empty="project.kind === 'text' ? '文本台词，无原声音频' : '尚无可试听的原声素材'"
+                  :duration="line.end - line.start"
+                />
               </div>
 
               <div class="row-dub-audio">
@@ -1160,55 +1209,39 @@ async function onSegmentRestored(updated: Segment) {
                 </div>
               </div>
 
-              <div class="row-actions-col">
-                <div v-if="lineJob(line.id) || !line.enabled || line.generatedPath" class="status-wrapper">
-                  <UBadge v-if="lineJob(line.id)" color="warning" variant="subtle" size="xs">
-                    <UIcon name="i-carbon-renew" class="animate-spin" />
-                    <span>{{ lineJob(line.id)?.status === 'running' ? '生成中' : '排队中' }}</span>
-                  </UBadge>
-                  <UBadge v-else-if="!line.enabled" color="neutral" variant="subtle" size="xs">
-                    保留原声
-                  </UBadge>
-                  <UBadge v-else-if="line.generatedPath" color="primary" variant="subtle" size="xs">
-                    <UIcon name="i-carbon-checkmark" />
-                    <span>{{ line.synthesisMode === 'tts' ? '微软 TTS' : 'AI 配音' }}</span>
-                  </UBadge>
-                </div>
-
-                <div class="action-buttons-group">
-                  <UButton
-                    variant="outline"
-                    color="neutral"
-                    size="md"
-                    icon="i-carbon-microphone"
-                    :disabled="!!lineTaskReason(line.id)"
-                    :title="lineTaskReason(line.id) || undefined"
-                    :aria-label="`第 ${getGlobalIndex(line.id)} 句配音`"
-                    @click="generateLine(line.id)"
-                    >配音</UButton
-                  >
-                  <UButton
-                    variant="outline"
-                    color="neutral"
-                    size="md"
-                    icon="i-carbon-translate"
-                    :disabled="!!lineTaskReason(line.id) || !line.text?.trim()"
-                    :title="lineTaskReason(line.id) || undefined"
-                    :aria-label="`第 ${getGlobalIndex(line.id)} 句翻译`"
-                    @click="openTranslation(line)"
-                    >翻译</UButton
-                  >
-                  <UButton
-                    variant="outline"
-                    color="neutral"
-                    size="md"
-                    icon="i-carbon-time"
-                    :aria-label="`第 ${getGlobalIndex(line.id)} 句历史版本`"
-                    title="历史版本"
-                    @click="openHistory(line)"
-                    >历史</UButton
-                  >
-                </div>
+              <div class="action-buttons-group">
+                <UButton
+                  variant="outline"
+                  color="neutral"
+                  size="md"
+                  icon="i-carbon-microphone"
+                  :disabled="!!lineTaskReason(line.id)"
+                  :title="lineTaskReason(line.id) || undefined"
+                  :aria-label="`第 ${getGlobalIndex(line.id)} 句配音`"
+                  @click="generateLine(line.id)"
+                  >配音</UButton
+                >
+                <UButton
+                  variant="outline"
+                  color="neutral"
+                  size="md"
+                  icon="i-carbon-translate"
+                  :disabled="!!lineTaskReason(line.id) || !line.text?.trim()"
+                  :title="lineTaskReason(line.id) || undefined"
+                  :aria-label="`第 ${getGlobalIndex(line.id)} 句翻译`"
+                  @click="openTranslation(line)"
+                  >翻译</UButton
+                >
+                <UButton
+                  variant="outline"
+                  color="neutral"
+                  size="md"
+                  icon="i-carbon-time"
+                  :aria-label="`第 ${getGlobalIndex(line.id)} 句历史版本`"
+                  title="历史版本"
+                  @click="openHistory(line)"
+                  >历史</UButton
+                >
               </div>
             </article>
           </div>
@@ -1271,9 +1304,7 @@ async function onSegmentRestored(updated: Segment) {
                   class="nsfw-overlay"
                   :style="{ '--nsfw-alpha': `${1 - nsfwTransparency / 100}` }"
                   aria-label="NSFW 毛玻璃遮罩已开启"
-                >
-                  <span>NSFW</span>
-                </div>
+                />
               </template>
               <template v-else>
                 <UIcon

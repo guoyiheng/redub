@@ -6,21 +6,142 @@ import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import * as schema from './schema'
 
+class AsyncMutex {
+  private queue: (() => void)[] = []
+  private locked = false
+
+  acquire(): Promise<() => void> {
+    if (this.locked) {
+      return new Promise<() => void>((resolve) => {
+        this.queue.push(() => {
+          let released = false
+          resolve(() => {
+            if (released) return
+            released = true
+            const next = this.queue.shift()
+            if (next) next()
+            else this.locked = false
+          })
+        })
+      })
+    }
+    this.locked = true
+    let released = false
+    return Promise.resolve(() => {
+      if (released) return
+      released = true
+      const next = this.queue.shift()
+      if (next) next()
+      else this.locked = false
+    })
+  }
+
+  async runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const release = await this.acquire()
+    try {
+      return await fn()
+    } finally {
+      release()
+    }
+  }
+}
+
+function isWriteStatement(stmtOrSql: unknown): boolean {
+  if (!stmtOrSql) return false
+  const sql = typeof stmtOrSql === 'string' ? stmtOrSql : (stmtOrSql as { sql?: string }).sql
+  if (typeof sql !== 'string') return false
+  const s = sql.trim().toUpperCase()
+  return (
+    s.startsWith('INSERT') ||
+    s.startsWith('UPDATE') ||
+    s.startsWith('DELETE') ||
+    s.startsWith('CREATE') ||
+    s.startsWith('DROP') ||
+    s.startsWith('ALTER') ||
+    s.startsWith('PRAGMA') ||
+    s.startsWith('BEGIN') ||
+    s.startsWith('REPLACE')
+  )
+}
+
+export function createSafeLibsqlClient(config: Parameters<typeof createClient>[0]) {
+  const client = createClient({ ...config, timeout: 10000 })
+  const mutex = new AsyncMutex()
+
+  const rawExecute = client.execute.bind(client)
+  const rawBatch = client.batch.bind(client)
+  const rawExecuteMultiple = client.executeMultiple.bind(client)
+  const rawTransaction = client.transaction.bind(client)
+
+  client.execute = function (stmt: any, args?: any) {
+    if (isWriteStatement(stmt)) {
+      return mutex.runExclusive(() => rawExecute(stmt, args))
+    }
+    return rawExecute(stmt, args)
+  }
+
+  client.batch = function (stmts: any, mode?: any) {
+    return mutex.runExclusive(() => rawBatch(stmts, mode))
+  }
+
+  client.executeMultiple = function (sql: string) {
+    return mutex.runExclusive(() => rawExecuteMultiple(sql))
+  }
+
+  client.transaction = async function (mode: any = 'write') {
+    if (mode === 'deferred') return rawTransaction(mode)
+    const release = await mutex.acquire()
+    try {
+      const tx = await rawTransaction(mode)
+      const rawCommit = tx.commit.bind(tx)
+      const rawRollback = tx.rollback.bind(tx)
+      let done = false
+      const cleanup = () => {
+        if (!done) {
+          done = true
+          release()
+        }
+      }
+      tx.commit = async () => {
+        try {
+          return await rawCommit()
+        } finally {
+          cleanup()
+        }
+      }
+      tx.rollback = async () => {
+        try {
+          return await rawRollback()
+        } finally {
+          cleanup()
+        }
+      }
+      return tx
+    } catch (err) {
+      release()
+      throw err
+    }
+  }
+
+  return client
+}
+
 export const dataDir = resolve(process.env.REDUB_DATA_DIR || '.data')
 mkdirSync(dataDir, { recursive: true })
-const client = createClient({ url: pathToFileURL(join(dataDir, 'redub.sqlite')).href })
+const client = createSafeLibsqlClient({ url: pathToFileURL(join(dataDir, 'redub.sqlite')).href })
 export const db = drizzle(client, { schema })
 let ready: Promise<void> | undefined
 export function initDb() {
   return (ready ??= (async () => {
     await client.execute('PRAGMA journal_mode=WAL')
     await client.execute('PRAGMA foreign_keys=ON')
+    await client.execute('PRAGMA busy_timeout = 10000')
     await client.executeMultiple(`
       CREATE TABLE IF NOT EXISTS projects (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, sourcePath TEXT, duration REAL NOT NULL DEFAULT 0,
         sourceLanguage TEXT NOT NULL DEFAULT 'auto', targetLanguage TEXT NOT NULL DEFAULT '中文',
         channelId TEXT NOT NULL DEFAULT 'volcengine-default', paused INTEGER NOT NULL DEFAULT 0,
-        pinned INTEGER NOT NULL DEFAULT 0,
+        pinned INTEGER NOT NULL DEFAULT 0, archived INTEGER NOT NULL DEFAULT 0,
         audioPath TEXT, vocalsPath TEXT, backgroundPath TEXT, mixedPath TEXT, outputPath TEXT,
         createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL
       );
@@ -38,7 +159,7 @@ export function initDb() {
       );
       CREATE INDEX IF NOT EXISTS segments_project ON segments(projectId);
       CREATE TABLE IF NOT EXISTS jobs (
-        id TEXT PRIMARY KEY, projectId TEXT NOT NULL REFERENCES projects(id), stage TEXT NOT NULL, segmentId TEXT,
+        id TEXT PRIMARY KEY, projectId TEXT REFERENCES projects(id), stage TEXT NOT NULL, segmentId TEXT,
         status TEXT NOT NULL DEFAULT 'queued', progress INTEGER NOT NULL DEFAULT 0, message TEXT NOT NULL DEFAULT '等待执行',
         error TEXT, dependsOn TEXT, attempts INTEGER NOT NULL DEFAULT 0, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL
       );
@@ -69,6 +190,26 @@ export function initDb() {
     for (const column of ['input', 'result', 'batchId'])
       if (!jobColumns.rows.some((row) => row.name === column))
         await client.execute(`ALTER TABLE jobs ADD COLUMN ${column} TEXT`)
+    const projectIdCol = jobColumns.rows.find((row) => row.name === 'projectId')
+    if (projectIdCol && Number(projectIdCol.notnull) === 1) {
+      await client.execute('PRAGMA foreign_keys=OFF')
+      await client.executeMultiple(`
+        CREATE TABLE jobs_migration (
+          id TEXT PRIMARY KEY, projectId TEXT REFERENCES projects(id), stage TEXT NOT NULL, segmentId TEXT,
+          status TEXT NOT NULL DEFAULT 'queued', progress INTEGER NOT NULL DEFAULT 0, message TEXT NOT NULL DEFAULT '等待执行',
+          error TEXT, dependsOn TEXT, attempts INTEGER NOT NULL DEFAULT 0, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL,
+          input TEXT, result TEXT, batchId TEXT
+        );
+        INSERT INTO jobs_migration SELECT id, projectId, stage, segmentId, status, progress, message, error, dependsOn, attempts, createdAt, updatedAt, input, result, batchId FROM jobs;
+        DROP TABLE jobs;
+        ALTER TABLE jobs_migration RENAME TO jobs;
+        CREATE INDEX IF NOT EXISTS jobs_status ON jobs(status);
+        CREATE INDEX IF NOT EXISTS jobs_project ON jobs(projectId);
+      `)
+      await client.execute('PRAGMA foreign_keys=ON')
+    }
+    await client.execute("UPDATE jobs SET projectId = NULL WHERE stage = 'preview-voice'")
+    await client.execute("DELETE FROM projects WHERE id = 'system-preview-project'")
     const columns = await client.execute('PRAGMA table_info(channels)')
     if (!columns.rows.some((row) => row.name === 'apiKey'))
       await client.execute('ALTER TABLE channels ADD COLUMN apiKey TEXT')
@@ -77,6 +218,8 @@ export function initDb() {
     const projectColumns = await client.execute('PRAGMA table_info(projects)')
     if (!projectColumns.rows.some((row) => row.name === 'pinned'))
       await client.execute('ALTER TABLE projects ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0')
+    if (!projectColumns.rows.some((row) => row.name === 'archived'))
+      await client.execute('ALTER TABLE projects ADD COLUMN archived INTEGER NOT NULL DEFAULT 0')
     const segmentColumns = await client.execute('PRAGMA table_info(segments)')
     const segmentColumnNames = new Set(segmentColumns.rows.map((row) => row.name))
     const segmentMigrations: Record<string, string> = {

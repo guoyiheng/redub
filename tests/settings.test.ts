@@ -26,10 +26,13 @@ it('NSFW 默认开启且遮罩默认为 0%，音色默认与置顶字段校验�
   expect(defaults.nsfwDefaultEnabled).toBe(true)
   expect(defaults.nsfwDefaultTransparency).toBe(0)
   expect(defaults.defaultTtsVoice).toBe('zh-CN-XiaoxiaoNeural')
+  expect(defaults.defaultAiSpeaker).toBe('')
+  expect(defaults.defaultReferenceVoice).toBe('')
   expect(defaults.pinnedVoices).toEqual([])
 
   expect(settingsSchema.safeParse({ nsfwDefaultTransparency: -1 }).success).toBe(false)
   expect(settingsSchema.safeParse({ nsfwDefaultTransparency: 101 }).success).toBe(false)
   expect(settingsSchema.safeParse({ nsfwDefaultTransparency: 50 }).success).toBe(true)
+  expect(settingsSchema.safeParse({ defaultReferenceVoice: 'ref-123' }).success).toBe(true)
   expect(settingsSchema.safeParse({ pinnedVoices: ['voice-1', 'voice-2'] }).success).toBe(true)
 })

@@ -12,6 +12,7 @@ export const projects = sqliteTable('projects', {
   channelId: text().notNull().default('volcengine-default'),
   paused: integer({ mode: 'boolean' }).notNull().default(false),
   pinned: integer({ mode: 'boolean' }).notNull().default(false),
+  archived: integer({ mode: 'boolean' }).notNull().default(false),
   audioPath: text(),
   vocalsPath: text(),
   backgroundPath: text(),
@@ -63,9 +64,7 @@ export const jobs = sqliteTable(
   'jobs',
   {
     id: text().primaryKey(),
-    projectId: text()
-      .notNull()
-      .references(() => projects.id),
+    projectId: text().references(() => projects.id),
     stage: text().$type<Stage>().notNull(),
     segmentId: text(),
     batchId: text(),

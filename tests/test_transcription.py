@@ -3,7 +3,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from scripts.audio import transcribe_segments
+from scripts.audio import transcribe_segments, get_whisper_model
+from unittest.mock import patch
 
 
 def transcript(text, language):
@@ -59,6 +60,19 @@ class TranscriptionTests(unittest.TestCase):
 
         self.assertIsNone(model.transcribe.call_args.kwargs["language"])
         self.assertEqual(result[0]["text"], "这句话保持原来的语气。")
+
+    @patch("faster_whisper.WhisperModel")
+    def test_whisper_model_cuda_selection(self, mock_whisper):
+        get_whisper_model("small", preferred_device="cuda")
+        mock_whisper.assert_called_with("small", device="cuda", compute_type="float16")
+
+    @patch("faster_whisper.WhisperModel")
+    def test_whisper_model_cuda_fallback_on_error(self, mock_whisper):
+        # Simulate CUDA initialization failure
+        mock_whisper.side_effect = [RuntimeError("CUDA driver missing"), Mock()]
+        get_whisper_model("small", preferred_device="cuda")
+        self.assertEqual(mock_whisper.call_count, 2)
+        mock_whisper.assert_called_with("small", device="cpu", compute_type="int8")
 
 
 if __name__ == "__main__":

@@ -1,12 +1,17 @@
 <script setup lang="ts">
 import type { Channel } from '../../shared/types'
-import { ttsVoices } from '../../shared/voice'
+import { ttsVoices, formatVoiceName } from '../../shared/voice'
+import { aiVoices } from '../../shared/ai-voices'
 import { mediaUrl } from '../composables/useStudio'
+import { useIntersectionObserver } from '@vueuse/core'
+import { useTaskNavigation, type TaskNavigationTarget } from '../composables/useTaskNavigation'
 
 interface Health {
   ffmpeg: boolean
   ffprobe: boolean
   models: boolean
+  cuda?: boolean
+  cudaDevice?: string
   versions?: {
     ffmpeg?: string
     ffprobe?: string
@@ -300,7 +305,7 @@ async function onWhisperModelChange(model: unknown) {
 }
 
 // 音色管理状态
-const voiceSourceTab = ref<'tts' | 'reference'>('tts')
+const voiceSourceTab = ref<'ark' | 'tts' | 'reference'>('ark')
 const auditionVoice = ref('')
 const isAuditionLoading = ref(false)
 const isAuditionPlaying = ref(false)
@@ -332,16 +337,84 @@ async function toggleTtsAudition(voice: string) {
   auditionController = controller
   auditionVoice.value = voice
   isAuditionLoading.value = true
+  const voiceLabel = formatVoiceName(voice, 'tts') || voice
   try {
     const blob = await $fetch<Blob>('/api/tts/preview', {
       method: 'POST',
       signal: controller.signal,
       responseType: 'blob',
-      body: { voice }
+      body: { voice, voiceLabel }
     })
     if (controller.signal.aborted) return
     auditionUrl = URL.createObjectURL(blob)
     const audio = new Audio(auditionUrl)
+    auditionAudio = audio
+    audio.onended = stopAudition
+    audio.onerror = () => {
+      stopAudition()
+      toast.add({ title: '音色试听播放失败', color: 'error' })
+    }
+    await audio.play()
+    if (!controller.signal.aborted) isAuditionPlaying.value = true
+  } catch (error) {
+    if (controller.signal.aborted) return
+    stopAudition()
+    toast.add({ title: '音色试听失败', description: errorMessage(error), color: 'error' })
+  } finally {
+    if (auditionController === controller) isAuditionLoading.value = false
+  }
+}
+
+async function toggleAiAudition(speaker: string, speakerLabel?: string) {
+  if (auditionVoice.value === speaker && (isAuditionPlaying.value || isAuditionLoading.value)) {
+    stopAudition()
+    return
+  }
+  stopAudition()
+  const controller = new AbortController()
+  auditionController = controller
+  auditionVoice.value = speaker
+  isAuditionLoading.value = true
+  const resolvedSpeakerLabel = speakerLabel || aiVoices.find((v) => v.value === speaker)?.label || speaker
+  try {
+    const blob = await $fetch<Blob>('/api/tts/preview', {
+      method: 'POST',
+      signal: controller.signal,
+      responseType: 'blob',
+      body: { speaker, speakerLabel: resolvedSpeakerLabel }
+    })
+    if (controller.signal.aborted) return
+    auditionUrl = URL.createObjectURL(blob)
+    const audio = new Audio(auditionUrl)
+    auditionAudio = audio
+    audio.onended = stopAudition
+    audio.onerror = () => {
+      stopAudition()
+      toast.add({ title: '音色试听播放失败', color: 'error' })
+    }
+    await audio.play()
+    if (!controller.signal.aborted) isAuditionPlaying.value = true
+  } catch (error) {
+    if (controller.signal.aborted) return
+    stopAudition()
+    toast.add({ title: '音色试听失败', description: errorMessage(error), color: 'error' })
+  } finally {
+    if (auditionController === controller) isAuditionLoading.value = false
+  }
+}
+
+async function toggleRefAudition(voice: { id: string; path: string }) {
+  if (auditionVoice.value === voice.id && (isAuditionPlaying.value || isAuditionLoading.value)) {
+    stopAudition()
+    return
+  }
+  stopAudition()
+  const controller = new AbortController()
+  auditionController = controller
+  auditionVoice.value = voice.id
+  isAuditionLoading.value = true
+  try {
+    const audio = new Audio(mediaUrl(voice.path))
     auditionAudio = audio
     audio.onended = stopAudition
     audio.onerror = () => {
@@ -364,6 +437,146 @@ async function setAsDefaultTtsVoice(voice: string) {
     () => $fetch('/api/settings', { method: 'PATCH', body: { defaultTtsVoice: voice } }),
     '已设置为默认音色'
   )
+}
+
+async function setAsDefaultAiVoice(speaker: string) {
+  await act(
+    () => $fetch('/api/settings', { method: 'PATCH', body: { defaultAiSpeaker: speaker } }),
+    speaker ? '已设置为默认 AI 音色' : '已恢复为自动音色'
+  )
+}
+
+const currentDefaultAiLabel = computed(() => {
+  const speaker = settings.value?.defaultAiSpeaker
+  if (!speaker) return '自动音色'
+  return aiVoices.find((v) => v.value === speaker)?.label || speaker
+})
+
+// 火山方舟 AI 音色筛选与列表
+const arkSearch = ref('')
+const arkGender = ref<'all' | 'female' | 'male'>('all')
+const arkCategory = ref('全部')
+const arkLimit = ref(20)
+
+const arkGenderOptions = [
+  { label: '全部性别', value: 'all' },
+  { label: '女声', value: 'female' },
+  { label: '男声', value: 'male' }
+]
+
+const arkCategories = computed(() => {
+  const set = new Set<string>()
+  for (const v of aiVoices) {
+    if (v.category) {
+      for (const cat of v.category.split(/[,，]/)) {
+        const trimmed = cat.trim()
+        if (trimmed) set.add(trimmed)
+      }
+    }
+  }
+  return ['全部', ...Array.from(set)]
+})
+
+const sortedArkVoices = computed(() => {
+  const terms = arkSearch.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
+  const cat = arkCategory.value
+  const gender = arkGender.value
+  const pinned = new Set(settings.value?.pinnedVoices || [])
+
+  const matched = aiVoices.filter((voice) => {
+    if (gender !== 'all' && voice.gender !== gender) {
+      return false
+    }
+    if (cat !== '全部' && !voice.category.includes(cat)) {
+      return false
+    }
+    if (terms.length) {
+      const genderKeyword = voice.gender === 'female' ? '女声 女' : '男声 男'
+      const text = [voice.label, voice.value, voice.language, voice.category, genderKeyword]
+        .join(' ')
+        .toLocaleLowerCase()
+      if (!terms.every((term) => text.includes(term))) {
+        return false
+      }
+    }
+    return true
+  })
+
+  return matched.sort((a, b) => {
+    const aPinned = pinned.has(a.value) ? 1 : 0
+    const bPinned = pinned.has(b.value) ? 1 : 0
+    if (aPinned !== bPinned) return bPinned - aPinned
+    return 0
+  })
+})
+
+const visibleArkVoices = computed(() => {
+  return sortedArkVoices.value.slice(0, arkLimit.value)
+})
+
+watch([arkSearch, arkCategory, arkGender], () => {
+  arkLimit.value = 20
+})
+
+watch(voiceSourceTab, () => {
+  stopAudition()
+})
+
+const taskNavigation = useTaskNavigation()
+const highlightedVoice = ref('')
+let highlightTimer: ReturnType<typeof setTimeout> | null = null
+
+function handleVoiceNavigation(target: TaskNavigationTarget | null) {
+  if (!target || target.type !== 'voice') return
+  activeSection.value = 'voices'
+  voiceSourceTab.value = target.voiceType
+  if (target.voiceType === 'ark') {
+    arkGender.value = 'all'
+    arkCategory.value = '全部'
+    arkSearch.value = target.voiceLabel || target.voiceKey
+  }
+  highlightedVoice.value = target.voiceKey
+  if (highlightTimer) clearTimeout(highlightTimer)
+  highlightTimer = setTimeout(() => {
+    highlightedVoice.value = ''
+  }, 4000)
+
+  nextTick(() => {
+    const el = document.getElementById(`settings-voice-${target.voiceKey}`)
+    if (el) {
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }
+  })
+}
+
+watch(taskNavigation, (target) => {
+  handleVoiceNavigation(target)
+})
+
+const arkSentinelRef = ref<HTMLElement | null>(null)
+
+function loadMoreArkVoices() {
+  if (arkLimit.value >= sortedArkVoices.value.length) return
+  arkLimit.value = Math.min(arkLimit.value + 30, sortedArkVoices.value.length)
+}
+
+useIntersectionObserver(
+  arkSentinelRef,
+  ([entry]) => {
+    if (entry?.isIntersecting && arkLimit.value < sortedArkVoices.value.length) {
+      loadMoreArkVoices()
+    }
+  },
+  { rootMargin: '200px' }
+)
+
+function onWindowScroll() {
+  if (activeSection.value !== 'voices' || voiceSourceTab.value !== 'ark') return
+  if (arkLimit.value >= sortedArkVoices.value.length) return
+  const scrollBottom = window.innerHeight + window.scrollY
+  if (scrollBottom >= document.documentElement.scrollHeight - 300) {
+    loadMoreArkVoices()
+  }
 }
 
 async function togglePinVoice(id: string) {
@@ -449,6 +662,19 @@ async function saveReferenceName() {
   }
 }
 
+async function setAsDefaultRefVoice(voiceId: string) {
+  await act(
+    () => $fetch('/api/settings', { method: 'PATCH', body: { defaultReferenceVoice: voiceId } }),
+    voiceId ? '已设置为默认参考音色' : '已取消默认参考音色'
+  )
+}
+
+const currentDefaultRefLabel = computed(() => {
+  const id = settings.value?.defaultReferenceVoice
+  if (!id) return ''
+  return refVoices.value.find((v) => v.id === id)?.name || id
+})
+
 // 通用设置（NSFW与偏好）
 const generalDraft = ref({
   nsfwDefaultEnabled: true,
@@ -516,6 +742,8 @@ watch(activeSection, (sec) => {
 onMounted(async () => {
   check()
   void loadRefVoices()
+  handleVoiceNavigation(taskNavigation.value)
+  window.addEventListener('scroll', onWindowScroll, { passive: true })
   if (!desktop.value) return
   stopUpdateListener = (window as any).redub.onUpdateStatus?.((state: DesktopUpdateState) => {
     desktopUpdate.value = state
@@ -525,7 +753,9 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   stopAudition()
+  if (highlightTimer) clearTimeout(highlightTimer)
   stopUpdateListener?.()
+  window.removeEventListener('scroll', onWindowScroll)
 })
 </script>
 
@@ -673,21 +903,194 @@ onBeforeUnmount(() => {
               <h2>音色管理</h2>
               <p class="help">按渠道管理和试听音色，可将音色置顶或设置为全局默认音色。</p>
             </div>
-            <div class="flex items-center gap-2">
-              <USelect
-                v-model="voiceSourceTab"
-                class="w-44"
-                :items="[
-                  { label: '微软 Edge TTS', value: 'tts' },
-                  { label: '本地参考音色', value: 'reference' }
-                ]"
+          </div>
+
+          <div class="mb-4 border-b border-default pb-px">
+            <UTabs
+              v-model="voiceSourceTab"
+              color="neutral"
+              variant="link"
+              :content="false"
+              aria-label="音色渠道分类"
+              :items="[
+                { label: '火山方舟 (AI 音色)', value: 'ark', icon: 'i-carbon-machine-learning-model' },
+                { label: '微软 Edge TTS', value: 'tts', icon: 'i-carbon-volume-up' },
+                { label: '本地参考音色', value: 'reference', icon: 'i-carbon-waveform' }
+              ]"
+            />
+          </div>
+
+          <!-- 火山方舟 (AI 音色) 列表 -->
+          <div v-if="voiceSourceTab === 'ark'" class="flex flex-col gap-3">
+            <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+              <UInput
+                v-model="arkSearch"
+                icon="i-carbon-search"
+                aria-label="搜索方舟音色"
+                placeholder="搜索音色名称、ID、语言或适用场景..."
+                class="flex-1"
               />
+              <USelect
+                v-model="arkGender"
+                :items="arkGenderOptions"
+                class="w-full sm:w-32 shrink-0"
+                aria-label="按性别筛选"
+              />
+              <USelect
+                v-model="arkCategory"
+                :items="arkCategories"
+                class="w-full sm:w-36 shrink-0"
+                aria-label="按分类筛选"
+              />
+            </div>
+
+            <div
+              v-if="settings.defaultAiSpeaker"
+              class="flex items-center justify-between p-2.5 rounded-lg bg-primary/5 border border-primary/20 text-xs"
+            >
+              <div class="flex items-center gap-1.5 min-w-0 flex-1 truncate">
+                <UIcon name="i-carbon-checkmark-filled" class="size-3.5 text-primary shrink-0" />
+                <span class="truncate">
+                  当前全局默认 AI 音色：<strong class="text-default">{{ currentDefaultAiLabel }}</strong>
+                  <span class="text-muted font-mono ml-1">({{ settings.defaultAiSpeaker }})</span>
+                </span>
+              </div>
+              <UButton
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                class="shrink-0"
+                @click="setAsDefaultAiVoice('')"
+              >
+                恢复自动音色
+              </UButton>
+            </div>
+
+            <div class="flex flex-col gap-2.5">
+              <div
+                v-for="voice in visibleArkVoices"
+                :id="`settings-voice-${voice.value}`"
+                :key="voice.value"
+                class="settings-voice-row"
+                :class="{ 'is-highlighted': highlightedVoice === voice.value }"
+              >
+                <div class="flex items-center gap-3 min-w-0 flex-1">
+                  <div
+                    class="flex items-center justify-center w-9 h-9 rounded-lg bg-elevated border border-default text-primary shrink-0"
+                  >
+                    <UIcon name="i-carbon-machine-learning-model" class="w-5 h-5" />
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-2">
+                      <strong class="text-sm font-semibold text-default truncate">{{ voice.label }}</strong>
+                      <UBadge color="neutral" variant="subtle" size="xs" class="gap-0.5">
+                        <UIcon
+                          :name="
+                            voice.gender === 'female' ? 'i-carbon-gender-female' : 'i-carbon-gender-male'
+                          "
+                          class="size-3"
+                        />
+                        {{ voice.gender === 'female' ? '女声' : '男声' }}
+                      </UBadge>
+                      <UBadge
+                        v-if="settings.defaultAiSpeaker === voice.value"
+                        color="primary"
+                        variant="solid"
+                        size="xs"
+                        >默认音色</UBadge
+                      >
+                      <UBadge
+                        v-if="settings.pinnedVoices?.includes(voice.value)"
+                        color="neutral"
+                        variant="soft"
+                        size="xs"
+                        >已置顶</UBadge
+                      >
+                    </div>
+                    <p class="text-xs text-muted font-mono mt-0.5 truncate">
+                      {{ voice.value }} · {{ voice.language }} · {{ voice.category }}
+                    </p>
+                    <p v-if="voice.note" class="text-xs text-muted mt-0.5 whitespace-normal">
+                      {{ voice.note }}
+                    </p>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2 shrink-0">
+                  <UButton
+                    color="neutral"
+                    variant="outline"
+                    size="xs"
+                    :icon="
+                      auditionVoice === voice.value && isAuditionPlaying
+                        ? 'i-carbon-stop-filled'
+                        : 'i-carbon-play-filled-alt'
+                    "
+                    :loading="auditionVoice === voice.value && isAuditionLoading"
+                    @click="toggleAiAudition(voice.value, voice.label)"
+                  >
+                    {{
+                      auditionVoice === voice.value && isAuditionPlaying
+                        ? '停止'
+                        : auditionVoice === voice.value && isAuditionLoading
+                          ? '加载'
+                          : '试听'
+                    }}
+                  </UButton>
+                  <UButton
+                    color="neutral"
+                    variant="ghost"
+                    size="xs"
+                    :disabled="settings.defaultAiSpeaker === voice.value"
+                    @click="setAsDefaultAiVoice(voice.value)"
+                  >
+                    设为默认
+                  </UButton>
+                  <UButton
+                    color="neutral"
+                    variant="ghost"
+                    size="xs"
+                    :icon="
+                      settings.pinnedVoices?.includes(voice.value) ? 'i-carbon-pin-filled' : 'i-carbon-pin'
+                    "
+                    :title="settings.pinnedVoices?.includes(voice.value) ? '取消置顶' : '置顶音色'"
+                    @click="togglePinVoice(voice.value)"
+                  >
+                    {{ settings.pinnedVoices?.includes(voice.value) ? '取消' : '置顶' }}
+                  </UButton>
+                </div>
+              </div>
+
+              <div
+                v-if="arkLimit < sortedArkVoices.length"
+                ref="arkSentinelRef"
+                class="flex items-center justify-center p-3 text-xs text-muted cursor-pointer hover:text-default transition-colors border border-dashed border-default rounded-lg"
+                @click="loadMoreArkVoices"
+              >
+                <UIcon name="i-carbon-circle-dash" class="animate-spin mr-1.5 size-4" />
+                正在加载更多音色... (已显示 {{ arkLimit }} / 共 {{ sortedArkVoices.length }} 个)
+              </div>
+              <div
+                v-else-if="sortedArkVoices.length > 20"
+                class="flex items-center justify-center p-3 text-xs text-muted border border-default/40 rounded-lg bg-elevated/40"
+              >
+                已加载全部 {{ sortedArkVoices.length }} 个音色
+              </div>
+
+              <div v-if="!sortedArkVoices.length" role="status" class="text-muted p-8 text-center text-sm">
+                没有找到匹配的方舟音色
+              </div>
             </div>
           </div>
 
           <!-- 微软 Edge TTS 音色列表 -->
-          <div v-if="voiceSourceTab === 'tts'" class="flex flex-col gap-2.5">
-            <div v-for="voice in sortedTtsVoices" :key="voice.value" class="settings-voice-row">
+          <div v-else-if="voiceSourceTab === 'tts'" class="flex flex-col gap-2.5">
+            <div
+              v-for="voice in sortedTtsVoices"
+              :id="`settings-voice-${voice.value}`"
+              :key="voice.value"
+              class="settings-voice-row"
+              :class="{ 'is-highlighted': highlightedVoice === voice.value }"
+            >
               <div class="flex items-center gap-3 min-w-0 flex-1">
                 <div
                   class="flex items-center justify-center w-9 h-9 rounded-lg bg-elevated border border-default text-primary shrink-0"
@@ -730,7 +1133,13 @@ onBeforeUnmount(() => {
                   :loading="auditionVoice === voice.value && isAuditionLoading"
                   @click="toggleTtsAudition(voice.value)"
                 >
-                  {{ auditionVoice === voice.value && isAuditionPlaying ? '停止' : '试听' }}
+                  {{
+                    auditionVoice === voice.value && isAuditionPlaying
+                      ? '停止'
+                      : auditionVoice === voice.value && isAuditionLoading
+                        ? '加载'
+                        : '试听'
+                  }}
                 </UButton>
                 <UButton
                   color="neutral"
@@ -751,7 +1160,7 @@ onBeforeUnmount(() => {
                   :title="settings.pinnedVoices?.includes(voice.value) ? '取消置顶' : '置顶音色'"
                   @click="togglePinVoice(voice.value)"
                 >
-                  {{ settings.pinnedVoices?.includes(voice.value) ? '取消置顶' : '置顶' }}
+                  {{ settings.pinnedVoices?.includes(voice.value) ? '取消' : '置顶' }}
                 </UButton>
               </div>
             </div>
@@ -794,6 +1203,28 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
+            <div
+              v-if="settings.defaultReferenceVoice"
+              class="flex items-center justify-between p-2.5 rounded-lg bg-primary/5 border border-primary/20 text-xs"
+            >
+              <div class="flex items-center gap-1.5 min-w-0 flex-1 truncate">
+                <UIcon name="i-carbon-checkmark-filled" class="size-3.5 text-primary shrink-0" />
+                <span class="truncate">
+                  当前默认参考音色：<strong class="text-default">{{ currentDefaultRefLabel }}</strong>
+                  <span class="text-muted font-mono ml-1">({{ settings.defaultReferenceVoice }})</span>
+                </span>
+              </div>
+              <UButton
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                class="shrink-0"
+                @click="setAsDefaultRefVoice('')"
+              >
+                取消默认
+              </UButton>
+            </div>
+
             <div v-if="sortedRefVoices.length" class="flex flex-col gap-2.5">
               <div v-for="voice in sortedRefVoices" :key="voice.id" class="settings-voice-row">
                 <div class="flex items-center gap-3 min-w-0 flex-1">
@@ -821,32 +1252,71 @@ onBeforeUnmount(() => {
                       </div>
                     </template>
                     <template v-else>
-                      <div class="flex items-center gap-2">
+                      <div class="flex items-center gap-1.5 min-w-0">
                         <strong class="text-sm font-semibold text-default truncate">{{ voice.name }}</strong>
+                        <UButton
+                          color="neutral"
+                          variant="ghost"
+                          size="xs"
+                          icon="i-carbon-edit"
+                          title="重命名"
+                          aria-label="重命名参考音色"
+                          class="shrink-0 text-muted hover:text-default"
+                          @click="startReferenceRename(voice)"
+                        />
+                        <UBadge
+                          v-if="settings.defaultReferenceVoice === voice.id"
+                          color="primary"
+                          variant="solid"
+                          size="xs"
+                          class="shrink-0"
+                          >默认音色</UBadge
+                        >
                         <UBadge
                           v-if="settings.pinnedVoices?.includes(voice.id)"
                           color="neutral"
                           variant="soft"
                           size="xs"
+                          class="shrink-0"
                           >已置顶</UBadge
                         >
                       </div>
-                      <p class="text-xs text-muted mt-0.5">时长 {{ voice.duration.toFixed(1) }}s</p>
+                      <p class="text-xs text-muted font-mono mt-0.5 truncate">
+                        {{ voice.id }} · 时长 {{ voice.duration.toFixed(1) }}s
+                      </p>
                     </template>
                   </div>
                 </div>
                 <div class="flex items-center gap-2 shrink-0">
-                  <ClipAudio :src="mediaUrl(voice.path)" :label="`试听 ${voice.name}`" />
                   <UButton
-                    v-if="refEditing !== voice.id"
+                    color="neutral"
+                    variant="outline"
+                    size="xs"
+                    :icon="
+                      auditionVoice === voice.id && isAuditionPlaying
+                        ? 'i-carbon-stop-filled'
+                        : 'i-carbon-play-filled-alt'
+                    "
+                    :loading="auditionVoice === voice.id && isAuditionLoading"
+                    @click="toggleRefAudition(voice)"
+                  >
+                    {{
+                      auditionVoice === voice.id && isAuditionPlaying
+                        ? '停止'
+                        : auditionVoice === voice.id && isAuditionLoading
+                          ? '加载'
+                          : '试听'
+                    }}
+                  </UButton>
+                  <UButton
                     color="neutral"
                     variant="ghost"
                     size="xs"
-                    icon="i-carbon-edit"
-                    title="重命名"
-                    aria-label="重命名参考音色"
-                    @click="startReferenceRename(voice)"
-                  />
+                    :disabled="settings.defaultReferenceVoice === voice.id"
+                    @click="setAsDefaultRefVoice(voice.id)"
+                  >
+                    设为默认
+                  </UButton>
                   <UButton
                     color="neutral"
                     variant="ghost"
@@ -855,7 +1325,7 @@ onBeforeUnmount(() => {
                     :title="settings.pinnedVoices?.includes(voice.id) ? '取消置顶' : '置顶音色'"
                     @click="togglePinVoice(voice.id)"
                   >
-                    {{ settings.pinnedVoices?.includes(voice.id) ? '取消置顶' : '置顶' }}
+                    {{ settings.pinnedVoices?.includes(voice.id) ? '取消' : '置顶' }}
                   </UButton>
                 </div>
               </div>
@@ -954,9 +1424,20 @@ onBeforeUnmount(() => {
                 <h3>本地模型</h3>
                 <p class="help">用于人声分离、语音活动检测和台词识别，首次使用时可能自动下载权重。</p>
               </div>
-              <UBadge :color="modelReady ? 'success' : 'warning'" variant="soft">{{
-                modelReady ? '环境已就绪' : '环境待安装'
-              }}</UBadge>
+              <div class="flex items-center gap-2">
+                <UBadge
+                  v-if="health?.cuda"
+                  color="success"
+                  variant="soft"
+                  :title="health?.cudaDevice || 'NVIDIA CUDA'"
+                >
+                  <UIcon name="i-carbon-chip" class="mr-1" />
+                  CUDA 加速已启用 ({{ health?.cudaDevice || 'GPU' }})
+                </UBadge>
+                <UBadge :color="modelReady ? 'success' : 'warning'" variant="soft">{{
+                  modelReady ? '环境已就绪' : '环境待安装'
+                }}</UBadge>
+              </div>
             </div>
             <div class="model-list">
               <article>
@@ -971,7 +1452,11 @@ onBeforeUnmount(() => {
                       >{{ health?.modelStatus?.demucs ? '已安装' : '待安装' }}</UBadge
                     >
                   </div>
-                  <p>把原始音轨分离为人声和背景音。当前版本固定使用 htdemucs，页面中不可切换。</p>
+                  <p>
+                    把原始音轨分离为人声和背景音。当前版本固定使用 htdemucs{{
+                      health?.cuda ? '（已启用 CUDA 显卡加速）' : ''
+                    }}。
+                  </p>
                 </div>
               </article>
               <article>
@@ -986,7 +1471,11 @@ onBeforeUnmount(() => {
                       >{{ health?.modelStatus?.fasterWhisper ? '已安装' : '待安装' }}</UBadge
                     >
                   </div>
-                  <p>把语音识别为文字。可在下方直接选择识别模型，模型首次使用时会自动下载权重。</p>
+                  <p>
+                    把语音识别为文字。可在下方直接选择识别模型，模型首次使用时会自动下载权重。{{
+                      health?.cuda ? '已启用 CUDA float16 推理加速。' : ''
+                    }}
+                  </p>
                   <div
                     class="mt-3 pt-3 border-t border-default/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                   >

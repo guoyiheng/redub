@@ -15,8 +15,10 @@
     "desktop:pack": "npm run build && electron-builder --config electron-builder.config.cjs --dir",
     "desktop:dist": "npm run build && electron-builder --config electron-builder.config.cjs",
     "models:install": "bash scripts/install-models.sh",
+    "models:install:win": "powershell -ExecutionPolicy Bypass -File scripts/install-models.ps1",
     "format": "prettier --write app server shared scripts electron tests *.ts *.cjs *.json",
     "format:check": "prettier --check app server shared scripts electron tests *.ts *.cjs *.json",
+    "voices:cache-female": "tsx scripts/cache-female-voices.ts",
     "test:integration": "npm run build && vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {

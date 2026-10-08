@@ -48,83 +48,25 @@ const defaultPeaks = [
   0.55, 0.8, 0.95, 0.6, 0.45, 0.7, 0.5, 0.35, 0.65, 0.8, 0.4, 0.55, 0.3, 0.45, 0.35, 0.25
 ]
 
-const peaksCache = new Map<string, number[]>()
 const peaks = ref<number[]>([...defaultPeaks])
-
-let sharedAudioCtx: AudioContext | null = null
-function getAudioContext() {
-  if (!sharedAudioCtx && typeof window !== 'undefined') {
-    const AudioCtx =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-    if (AudioCtx) {
-      sharedAudioCtx = new AudioCtx()
-    }
-  }
-  return sharedAudioCtx
-}
-
-async function extractPeaks(url: string) {
-  if (!url) {
-    peaks.value = [...defaultPeaks]
-    return
-  }
-  if (peaksCache.has(url)) {
-    peaks.value = peaksCache.get(url)!
-    return
-  }
-
-  try {
-    const res = await fetch(url)
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const arrayBuffer = await res.arrayBuffer()
-    const ctx = getAudioContext()
-    if (!ctx) return
-    const audioBuffer = await ctx.decodeAudioData(arrayBuffer)
-    const raw = audioBuffer.getChannelData(0)
-    const buckets = 36
-    const bucketSize = Math.floor(raw.length / buckets)
-    const extracted: number[] = []
-
-    for (let i = 0; i < buckets; i++) {
-      let max = 0
-      const start = i * bucketSize
-      const end = Math.min(start + bucketSize, raw.length)
-      const step = Math.max(1, Math.floor((end - start) / 40))
-      for (let j = start; j < end; j += step) {
-        const val = Math.abs(raw[j] || 0)
-        if (val > max) max = val
-      }
-      extracted.push(max)
-    }
-
-    const peakMax = Math.max(...extracted, 0.01)
-    const normalized = extracted.map((p) => Math.max(0.15, Math.min(1, p / peakMax)))
-    peaksCache.set(url, normalized)
-    peaks.value = normalized
-  } catch {
-    // 解码失败时保留优雅默认波形，不影响正常播放
-    peaks.value = [...defaultPeaks]
-  }
-}
 
 watch(
   () => props.src,
-  (newSrc) => {
+  () => {
     failed.value = false
     currentTime.value = 0
     isPlaying.value = false
-    if (newSrc) {
-      void extractPeaks(newSrc)
-    } else {
-      peaks.value = [...defaultPeaks]
-    }
+    peaks.value = [...defaultPeaks]
   },
   { immediate: true }
 )
 
 function togglePlay() {
   if (!audioRef.value || !props.src) return
+  if (failed.value) {
+    failed.value = false
+    audioRef.value.load()
+  }
   if (isPlaying.value) {
     audioRef.value.pause()
   } else {
@@ -132,7 +74,8 @@ function togglePlay() {
     document.querySelectorAll('audio, video').forEach((el) => {
       if (el !== audioRef.value) (el as HTMLMediaElement).pause()
     })
-    audioRef.value.play().catch(() => {
+    audioRef.value.play().catch((err) => {
+      console.warn('播放失败:', props.src, err)
       isPlaying.value = false
     })
   }
@@ -168,7 +111,10 @@ function onLoadedMetadata() {
   }
 }
 
-function onError() {
+function onError(e: Event) {
+  if (!props.src) return
+  const err = audioRef.value?.error
+  console.warn('音频加载失败:', props.src, 'code:', err?.code, 'message:', err?.message)
   failed.value = true
   isPlaying.value = false
 }
@@ -177,6 +123,9 @@ function retry() {
   failed.value = false
   if (audioRef.value) {
     audioRef.value.load()
+    audioRef.value.play().catch(() => {
+      isPlaying.value = false
+    })
   }
 }
 
@@ -242,7 +191,7 @@ onBeforeUnmount(() => {
       v-if="src"
       ref="audioRef"
       :src="src"
-      preload="metadata"
+      preload="none"
       class="hidden"
       @play="onPlay"
       @pause="onPause"

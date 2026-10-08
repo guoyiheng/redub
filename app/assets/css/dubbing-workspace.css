@@ -74,30 +74,33 @@
   }
   .studio-row {
     grid-template-areas:
-      'meta source-text dub-text actions'
-      'meta source-audio dub-audio actions';
-    grid-template-rows: minmax(28px, auto) auto;
+      'meta-header source-text dub-text status'
+      'meta-time   source-audio dub-audio actions';
+    grid-template-rows: auto auto;
     align-items: start;
     row-gap: 8px;
     padding-block: 12px;
     border-bottom: 1px solid var(--ui-border);
+    background: var(--ui-bg-elevated);
+    transition: background 120ms ease;
   }
   .studio-row > * {
     min-width: 0;
-  }
-  .studio-row:nth-child(even) {
-    background: color-mix(in srgb, var(--ui-bg-muted) 25%, var(--ui-bg-elevated));
   }
   .studio-row:last-child {
     border-bottom: 0;
   }
   .studio-row:hover,
   .studio-row:focus-within {
-    background: color-mix(in srgb, var(--ui-bg-muted) 50%, var(--ui-bg-elevated));
+    background: color-mix(in srgb, var(--ui-bg-muted) 35%, var(--ui-bg-elevated));
   }
   .studio-row.selected {
-    background: color-mix(in srgb, var(--ui-primary) 5%, var(--ui-bg-elevated));
-    box-shadow: none;
+    background: color-mix(in srgb, var(--ui-primary) 14%, var(--ui-bg-elevated));
+    box-shadow: inset 3px 0 0 var(--ui-primary);
+  }
+  .studio-row.selected:hover,
+  .studio-row.selected:focus-within {
+    background: color-mix(in srgb, var(--ui-primary) 18%, var(--ui-bg-elevated));
   }
   .studio-row.not-replaced {
     opacity: 1;
@@ -105,19 +108,17 @@
   .studio-row.not-replaced .dialogue-translation {
     color: var(--ui-text-muted);
   }
-  .row-meta {
-    grid-area: meta;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 4px;
-  }
+
+  /* Row 1, Col 1: 片段序号与说话人 */
   .segment-meta-header {
+    grid-area: meta-header;
     display: flex;
     align-items: center;
     gap: 6px;
     max-width: 100%;
     min-width: 0;
+    min-height: 24px;
+    align-self: start;
   }
   .segment-idx {
     color: var(--ui-text);
@@ -125,13 +126,6 @@
     font-weight: 600;
     font-variant-numeric: tabular-nums;
     line-height: 1.4;
-  }
-  .segment-time {
-    color: var(--ui-text-muted);
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-    line-height: 1.5;
-    white-space: nowrap;
   }
   .segment-speaker {
     max-width: 100%;
@@ -144,12 +138,23 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+
+  /* Row 1, Col 2: 原文台词 */
   .row-source-text {
     grid-area: source-text;
+    align-self: start;
+    min-width: 0;
+    min-height: 24px;
   }
+
+  /* Row 1, Col 3: 翻译与配音台词 */
   .row-dub-text {
     grid-area: dub-text;
+    align-self: start;
+    min-width: 0;
+    min-height: 24px;
   }
+
   .comparison-label {
     display: none;
     margin-bottom: 6px;
@@ -163,25 +168,64 @@
     font-size: 14px;
     font-weight: 400;
     font-style: normal;
-    line-height: 1.75;
+    line-height: 1.6;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
   .dialogue-translation.is-empty {
     color: var(--ui-text-muted);
   }
+
+  /* Row 1, Col 4: 状态 */
+  .status-wrapper {
+    grid-area: status;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    row-gap: 4px;
+    min-height: 24px;
+    min-width: 0;
+    align-self: start;
+  }
+  .status-wrapper > * {
+    white-space: nowrap;
+  }
+
+  /* Row 2, Col 1: 时间戳 */
+  .segment-time {
+    grid-area: meta-time;
+    display: flex;
+    align-items: center;
+    min-height: 36px;
+    color: var(--ui-text-muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.5;
+    white-space: nowrap;
+    align-self: center;
+  }
+
+  /* Row 2, Col 2: 原声音频 */
   .row-source-audio {
     grid-area: source-audio;
     display: flex;
     align-items: center;
+    min-height: 36px;
     min-width: 0;
+    align-self: center;
   }
+
+  /* Row 2, Col 3: 配音音频 */
   .row-dub-audio {
     grid-area: dub-audio;
     display: flex;
     align-items: center;
+    min-height: 36px;
     min-width: 0;
+    align-self: center;
   }
+
   .clip-audio {
     display: grid;
     gap: 6px;
@@ -192,52 +236,42 @@
     display: block;
     width: 100%;
     min-width: 0;
-    height: 34px;
+    height: 36px;
     border-radius: 6px;
   }
   .clip-audio .help,
   .audio-placeholder {
     display: flex;
     align-items: center;
-    height: auto;
-    min-height: 34px;
+    height: 36px;
+    min-height: 36px;
     color: var(--ui-text-muted);
     font-size: 12px;
     line-height: 1.5;
   }
   .audio-placeholder {
     gap: 8px;
-    padding: 0;
-    border: 0;
-    background: transparent;
+    width: 100%;
+    padding: 0 10px;
+    border: 1px dashed var(--ui-border);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--ui-bg-muted) 50%, transparent);
+    box-sizing: border-box;
   }
   .audio-placeholder .iconify {
     flex-shrink: 0;
     font-size: 16px;
   }
-  .row-actions-col {
-    grid-area: actions;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(28px, auto) auto;
-    align-content: start;
-    align-items: center;
-    gap: 8px;
-  }
-  .status-wrapper {
-    display: flex;
-    align-items: center;
-    min-height: 28px;
-  }
-  .status-wrapper > * {
-    white-space: nowrap;
-  }
+
+  /* Row 2, Col 4: 操作按钮 */
   .action-buttons-group {
-    grid-column: 1 / -1;
-    grid-row: 2;
+    grid-area: actions;
     display: flex;
     align-items: center;
     gap: 8px;
+    min-height: 36px;
+    min-width: 0;
+    align-self: center;
   }
   .action-buttons-group > button {
     flex-shrink: 0;
@@ -261,27 +295,15 @@
     .studio-row {
       grid-template-columns: repeat(2, minmax(0, 1fr));
       grid-template-areas:
-        'meta meta'
+        'meta-header status'
+        'meta-time   actions'
         'source-text dub-text'
-        'source-audio dub-audio'
-        'actions actions';
+        'source-audio dub-audio';
       grid-template-rows: auto;
       gap: 10px 16px;
     }
-    .row-meta {
-      flex-direction: row;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 4px 12px;
-    }
     .comparison-label {
       display: block;
-    }
-    .row-actions-col {
-      display: flex;
-      flex-direction: row;
-      flex-wrap: wrap;
-      gap: 8px;
     }
     .action-buttons-group {
       margin-left: auto;
@@ -297,11 +319,13 @@
     .studio-row {
       grid-template-columns: minmax(0, 1fr);
       grid-template-areas:
-        'meta'
+        'meta-header'
+        'meta-time'
         'source-text'
         'source-audio'
         'dub-text'
         'dub-audio'
+        'status'
         'actions';
       row-gap: 10px;
       padding: 16px;
@@ -309,7 +333,7 @@
     .row-dub-text {
       margin-top: 6px;
     }
-    .row-actions-col {
+    .action-buttons-group {
       margin-top: 4px;
       padding-top: 10px;
       border-top: 1px solid var(--ui-border);

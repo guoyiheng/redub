@@ -5,7 +5,9 @@ const prepare = new Set<Stage>(['extract', 'separate', 'segment', 'transcribe'])
 /** 逐句任务只锁定自己使用的片段；预览快照不阻塞新任务。 */
 export function segmentTaskReason(jobs: Job[], segmentId: string) {
   const active = jobs.filter((job) => ['queued', 'running'].includes(job.status))
-  if (active.some((job) => !['translate', 'synthesize', 'preview-tracks'].includes(job.stage)))
+  if (
+    active.some((job) => !['translate', 'synthesize', 'preview-tracks', 'preview-voice'].includes(job.stage))
+  )
     return '项目素材正在处理中，请完成后核对台词'
   const current = active.find(
     (job) =>

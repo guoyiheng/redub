@@ -2,7 +2,7 @@ import { checkJobCancelled } from './job-context'
 import { jobTransaction } from './job-transaction'
 import { randomUUID } from 'node:crypto'
 import { join, basename } from 'node:path'
-import { copyFile, writeFile } from 'node:fs/promises'
+import { copyFile, writeFile, rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { eq } from 'drizzle-orm'
 import { db } from '../db'
@@ -17,7 +17,8 @@ import {
   alignAudio,
   python,
   runProcess,
-  localModel
+  localModel,
+  getInferenceDevice
 } from './media'
 import { synthesizeSpeech, synthesisHash, translateLines } from './providers'
 import { subtitleText } from './text'
@@ -31,6 +32,7 @@ import { translationTaskSchema } from '../../shared/translation'
 
 export async function executeJob(job: Job, progress: (value: number, message: string) => Promise<void>) {
   checkJobCancelled()
+  if (!job.projectId) throw new Error('无效的项目任务')
   const p = await getProject(job.projectId)
   if (job.stage === 'export') {
     const [row] = await db.select({ input: jobs.input }).from(jobs).where(eq(jobs.id, job.id))
@@ -72,7 +74,8 @@ export async function executeJob(job: Job, progress: (value: number, message: st
       await extractAudio(assetPath(source), join(dir, 'original.wav'))
       await update({ audioPath: rel('original.wav') })
     }
-    await runProcess(python(), [
+    const device = await getInferenceDevice()
+    const demucsArgs = (d: string) => [
       '-m',
       'demucs.separate',
       '--two-stems',
@@ -80,11 +83,22 @@ export async function executeJob(job: Job, progress: (value: number, message: st
       '-n',
       'htdemucs',
       '-d',
-      'cpu',
+      d,
       '-o',
       join(dir, 'stems'),
       join(dir, 'original.wav')
-    ])
+    ]
+    if (device === 'cuda') {
+      try {
+        await runProcess(python(), demucsArgs('cuda'))
+      } catch (e) {
+        console.warn('Demucs CUDA 分离失败，回退至 CPU 重试:', e)
+        await rm(join(dir, 'stems'), { recursive: true, force: true }).catch(() => {})
+        await runProcess(python(), demucsArgs('cpu'))
+      }
+    } else {
+      await runProcess(python(), demucsArgs('cpu'))
+    }
     const revision = randomUUID()
     const vocalsPath = rel(`vocals-${revision}.wav`)
     const backgroundPath = rel(`background-${revision}.wav`)
@@ -138,7 +152,7 @@ export async function executeJob(job: Job, progress: (value: number, message: st
       await progress(15 + Math.round((80 * (i + 1)) / spans.length), `切分人声 ${i + 1} / ${spans.length}`)
     }
     await jobTransaction(async (tx) => {
-      for (const row of rows) await tx.insert(segments).values(row)
+      if (rows.length) await tx.insert(segments).values(rows)
     })
   }
   if (job.stage === 'transcribe') {
@@ -160,12 +174,14 @@ export async function executeJob(job: Job, progress: (value: number, message: st
       inputs.push({ id: line.id, audio: assetPath(ref) })
     }
     const settings = await getSettings()
+    const device = await getInferenceDevice()
     const result: { id: string; text: string }[] = await localModel(
       'transcribe',
       {
         segments: inputs,
         model: settings.whisperModel,
-        language: p.sourceLanguage === 'auto' ? null : p.sourceLanguage
+        language: p.sourceLanguage === 'auto' ? null : p.sourceLanguage,
+        device
       },
       join(dir, 'transcript.json')
     )

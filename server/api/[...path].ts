@@ -12,7 +12,14 @@ import { z } from 'zod'
 import { eq, and, desc, inArray, notInArray } from 'drizzle-orm'
 import { db, initDb } from '../db'
 import { projects, segments, jobs, channels, settings } from '../db/schema'
-import { getProject, getSegments, getSettings, assertIdle, invalidateOutput } from '../services/store'
+import {
+  getProject,
+  getSegments,
+  getSettings,
+  getActiveChannel,
+  assertIdle,
+  invalidateOutput
+} from '../services/store'
 import { importProject } from '../services/importer'
 import { enqueue, enqueueOutput, generateSegment, serializeEnqueue, cancelJob, tick } from '../services/queue'
 import { mediaHealth, assetPath, cutAudio } from '../services/media'
@@ -20,10 +27,23 @@ import { safeError } from '../services/providers'
 import { stageLabels } from '../../shared/types'
 import type { TranslationVersion, AudioVersion } from '../../shared/types'
 import { createVersionName } from '../../shared/version'
-import { getJobDetail, getJobRequest, jobListColumns as jobColumns } from '../services/job-requests'
+import {
+  getJobDetail,
+  getJobRequest,
+  jobListColumns as jobColumns,
+  jobContext,
+  jobFetch
+} from '../services/job-requests'
 import { getPreviewTracks } from '../services/preview-tracks'
 import { edgeSpeech } from '../services/edge-speech'
+import {
+  computeVolcenginePreviewKey,
+  computeEdgePreviewKey,
+  getPreviewCache,
+  savePreviewCache
+} from '../services/preview-cache'
 import { translationTaskSchema } from '../../shared/translation'
+import { formatVoiceName } from '../../shared/voice'
 
 const segmentSchema = z
   .object({
@@ -50,6 +70,131 @@ export default defineEventHandler(async (event) => {
     if (resource === 'health' && method === 'GET') return await mediaHealth()
     if (resource === 'tts' && id === 'preview' && method === 'POST') {
       const body = (await readBody(event)) || {}
+      const speaker = typeof body.speaker === 'string' ? body.speaker.trim() : ''
+      if (speaker) {
+        const channel = await getActiveChannel('volcengine')
+        let sampleText = typeof body.text === 'string' && body.text.trim() ? body.text.trim() : ''
+        if (!sampleText) {
+          sampleText = '你好，这是火山方舟语音的声音试听效果。'
+        }
+        const prompt = `用中文配音，保持自然生动的影视口语。\n【当前台词】\n「${sampleText}」`
+        const cacheKey = computeVolcenginePreviewKey(channel, speaker, prompt)
+        const cached = await getPreviewCache(cacheKey)
+        if (cached) {
+          setHeader(event, 'Content-Type', 'audio/mpeg')
+          setHeader(event, 'X-Cache-Status', 'HIT')
+          return cached
+        }
+
+        const apiKey = channel.apiKey || process.env[channel.keyEnv]
+        if (!apiKey) {
+          throw createError({
+            statusCode: 400,
+            statusMessage: `请先在“设置 - AI 渠道”中为火山方舟配音配置 API Key（或配置 ${channel.keyEnv} 环境变量）`
+          })
+        }
+
+        const jobId = randomUUID()
+        const speakerName =
+          (typeof body.speakerLabel === 'string' && body.speakerLabel.trim()) ||
+          formatVoiceName(speaker, 'ai') ||
+          speaker
+        await db.insert(jobs).values({
+          id: jobId,
+          projectId: null,
+          stage: 'preview-voice',
+          status: 'running',
+          progress: 20,
+          message: `正在合成音色试听: ${speakerName}`,
+          input: { speaker, speakerLabel: speakerName, prompt, model: channel.model },
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        })
+
+        try {
+          const audioBuffer = await jobContext.run({ id: jobId, attempt: 1 }, async () => {
+            const res = await jobFetch(
+              channel.endpoint,
+              {
+                method: 'POST',
+                signal: AbortSignal.timeout(50000),
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-Api-Key': apiKey,
+                  'X-Api-Request-Id': randomUUID()
+                },
+                body: JSON.stringify({
+                  model: channel.model,
+                  text_prompt: prompt,
+                  references: [{ speaker }],
+                  audio_config: {
+                    format: 'mp3',
+                    sample_rate: 24000
+                  },
+                  watermark: {}
+                })
+              },
+              {
+                label: `音色试听 (${speakerName})`,
+                secrets: [apiKey],
+                credential: { header: 'X-Api-Key', env: channel.keyEnv }
+              }
+            )
+            if (!res.ok) {
+              const errText = await res.text().catch(() => '')
+              throw createError({
+                statusCode: 400,
+                statusMessage: `方舟音色试听失败 (${res.status}): ${errText.slice(0, 150)}`
+              })
+            }
+            const result = (await res.json()) as any
+            if (result.code && ![0, 20000000].includes(result.code)) {
+              throw createError({
+                statusCode: 400,
+                statusMessage: `火山方舟：${result.message || result.code}`
+              })
+            }
+            let buf: Buffer | null = null
+            if (typeof result.audio === 'string' && result.audio.length) {
+              buf = Buffer.from(result.audio, 'base64')
+            } else if (typeof result.url === 'string' && result.url.startsWith('https://')) {
+              const audioRes = await fetch(result.url)
+              buf = Buffer.from(await audioRes.arrayBuffer())
+            }
+            if (!buf) {
+              throw createError({ statusCode: 400, statusMessage: '配音服务未返回音频' })
+            }
+            return buf
+          })
+
+          await savePreviewCache(cacheKey, audioBuffer)
+          await db
+            .update(jobs)
+            .set({
+              status: 'completed',
+              progress: 100,
+              message: `音色试听合成完成: ${speakerName}`,
+              updatedAt: Date.now()
+            })
+            .where(eq(jobs.id, jobId))
+
+          setHeader(event, 'Content-Type', 'audio/mpeg')
+          setHeader(event, 'X-Cache-Status', 'MISS')
+          return audioBuffer
+        } catch (error) {
+          await db
+            .update(jobs)
+            .set({
+              status: 'failed',
+              error: safeError(error),
+              message: `音色试听合成失败: ${speakerName}`,
+              updatedAt: Date.now()
+            })
+            .where(eq(jobs.id, jobId))
+          throw error
+        }
+      }
+
       const voice = String(body.voice || 'zh-CN-XiaoxiaoNeural').trim()
       let sampleText = typeof body.text === 'string' && body.text.trim() ? body.text.trim() : ''
       if (!sampleText) {
@@ -75,21 +220,74 @@ export default defineEventHandler(async (event) => {
           sampleText = '你好，这是微软语音的声音试听。'
         }
       }
-      const audio = await edgeSpeech(sampleText, {
-        voice,
+      const edgeOptions = {
         rate: String(body.rate ?? '0%'),
         pitch: String(body.pitch ?? '0Hz'),
         volume: String(body.volume ?? '0%')
+      }
+      const edgeCacheKey = computeEdgePreviewKey(voice, sampleText, edgeOptions)
+      const cachedEdge = await getPreviewCache(edgeCacheKey)
+      if (cachedEdge) {
+        setHeader(event, 'Content-Type', 'audio/mpeg')
+        setHeader(event, 'X-Cache-Status', 'HIT')
+        return cachedEdge
+      }
+
+      const jobId = randomUUID()
+      const voiceName =
+        (typeof body.voiceLabel === 'string' && body.voiceLabel.trim()) ||
+        formatVoiceName(voice, 'tts') ||
+        voice
+      await db.insert(jobs).values({
+        id: jobId,
+        projectId: null,
+        stage: 'preview-voice',
+        status: 'running',
+        progress: 20,
+        message: `正在合成音色试听: ${voiceName}`,
+        input: { voice, voiceLabel: voiceName, text: sampleText, ...edgeOptions },
+        createdAt: Date.now(),
+        updatedAt: Date.now()
       })
-      setHeader(event, 'Content-Type', 'audio/mpeg')
-      return audio
+
+      try {
+        const audio = await edgeSpeech(sampleText, {
+          voice,
+          ...edgeOptions
+        })
+        await savePreviewCache(edgeCacheKey, audio)
+        await db
+          .update(jobs)
+          .set({
+            status: 'completed',
+            progress: 100,
+            message: `音色试听合成完成: ${voiceName}`,
+            updatedAt: Date.now()
+          })
+          .where(eq(jobs.id, jobId))
+        setHeader(event, 'Content-Type', 'audio/mpeg')
+        setHeader(event, 'X-Cache-Status', 'MISS')
+        return audio
+      } catch (error) {
+        await db
+          .update(jobs)
+          .set({
+            status: 'failed',
+            error: safeError(error),
+            message: `音色试听合成失败: ${voiceName}`,
+            updatedAt: Date.now()
+          })
+          .where(eq(jobs.id, jobId))
+        throw error
+      }
     }
     if (resource === 'settings') {
       if (method === 'GET') return await getSettings()
       if (method === 'PATCH') {
-        const data = settingsSchema.parse(await readBody(event))
+        const current = await getSettings()
+        const data = settingsSchema.parse({ ...current, ...(await readBody(event)) })
         // 渠道启用状态只在渠道设置中管理，旧客户端传入的默认渠道不覆盖它。
-        data.translationChannelId = (await getSettings()).translationChannelId
+        data.translationChannelId = current.translationChannelId
         for (const [key, value] of Object.entries(data))
           await db
             .insert(settings)
@@ -200,6 +398,15 @@ export default defineEventHandler(async (event) => {
           const [updated] = await db.select().from(projects).where(eq(projects.id, id))
           return { ok: true, project: updated }
         }
+        if (action === 'archive' && method === 'POST') {
+          const body = (await readBody(event)) as { archived: boolean }
+          await db
+            .update(projects)
+            .set({ archived: Boolean(body?.archived) })
+            .where(eq(projects.id, id))
+          const [updated] = await db.select().from(projects).where(eq(projects.id, id))
+          return { ok: true, project: updated }
+        }
         if (!action && method === 'GET')
           return {
             project,
@@ -281,8 +488,8 @@ export default defineEventHandler(async (event) => {
               segmentId: z.string().optional()
             })
             .parse(await readBody(event))
-          if (body.stage === 'export' || body.stage === 'preview-tracks')
-            throw new Error('请使用对应的预览或导出入口')
+          if (['export', 'preview-tracks', 'preview-voice'].includes(body.stage || ''))
+            throw new Error('请使用对应的预览、试听或导出入口')
           setResponseStatus(event, 202)
           if (body.segmentId) {
             const [s] = await db
@@ -371,7 +578,7 @@ export default defineEventHandler(async (event) => {
         }
       }
     }
-    if (resource === 'segments' && id && action === 'original' && method === 'GET') {
+    if (resource === 'segments' && id && action === 'original' && (method === 'GET' || method === 'HEAD')) {
       const path = await originalClip(id)
       return sendRedirect(event, `/api/media?path=${encodeURIComponent(path)}`)
     }
@@ -540,7 +747,9 @@ export default defineEventHandler(async (event) => {
           if (!['retry', 'skip'].includes(action || '')) throw createError({ statusCode: 404 })
           await db.transaction(async (tx) => {
             if (action === 'retry') {
-              const projectJobs = await tx.select().from(jobs).where(eq(jobs.projectId, job.projectId))
+              const projectJobs = job.projectId
+                ? await tx.select().from(jobs).where(eq(jobs.projectId, job.projectId))
+                : []
               const descendants = new Set([job.id])
               let size = 0
               while (size !== descendants.size) {
@@ -580,23 +789,33 @@ export default defineEventHandler(async (event) => {
             if (!changed.length)
               throw createError({ statusCode: 409, statusMessage: '任务状态已改变，请刷新后重试' })
             if (action === 'retry' && job.stage === 'synthesize') {
-              await tx
-                .update(segments)
-                .set({ generatedHash: null })
-                .where(job.segmentId ? eq(segments.id, job.segmentId) : eq(segments.projectId, job.projectId))
+              if (job.segmentId) {
+                await tx.update(segments).set({ generatedHash: null }).where(eq(segments.id, job.segmentId))
+              } else if (job.projectId) {
+                await tx
+                  .update(segments)
+                  .set({ generatedHash: null })
+                  .where(eq(segments.projectId, job.projectId))
+              }
             }
             if (action === 'skip' && job.stage === 'synthesize') {
-              const lines = await tx.select().from(segments).where(eq(segments.projectId, job.projectId))
+              const lines = job.projectId
+                ? await tx.select().from(segments).where(eq(segments.projectId, job.projectId))
+                : []
               for (const line of lines.filter(
                 (s) => (!job.segmentId || s.id === job.segmentId) && !s.generatedPath
               ))
                 await tx.update(segments).set({ enabled: false }).where(eq(segments.id, line.id))
-              await tx
-                .update(projects)
-                .set({ mixedPath: null, outputPath: null })
-                .where(eq(projects.id, job.projectId))
+              if (job.projectId) {
+                await tx
+                  .update(projects)
+                  .set({ mixedPath: null, outputPath: null })
+                  .where(eq(projects.id, job.projectId))
+              }
             }
-            await tx.update(projects).set({ paused: false }).where(eq(projects.id, job.projectId))
+            if (job.projectId) {
+              await tx.update(projects).set({ paused: false }).where(eq(projects.id, job.projectId))
+            }
           })
           void tick()
           return { ok: true }
